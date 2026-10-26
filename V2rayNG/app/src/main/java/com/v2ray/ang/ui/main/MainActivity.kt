@@ -24,7 +24,6 @@ import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsChangeManager
 import com.v2ray.ang.handler.SettingsManager
-import com.v2ray.ang.handler.SubscriptionInfoParser
 import com.v2ray.ang.ui.AboutActivity
 import com.v2ray.ang.ui.backup.BackupActivity
 import com.v2ray.ang.ui.base.HelperBaseComponentActivity
@@ -117,7 +116,6 @@ class MainActivity : HelperBaseComponentActivity() {
                     is MainAction.EditServer -> editServer(action.guid, action.profile)
                     is MainAction.ShareClipboard -> shareToClipboard(action.guid)
                     is MainAction.ShareFullContent -> shareFullContentAsync(action.guid)
-                    is MainAction.OpenSubscriptionLink -> openSubscriptionLink(action.url)
                     else -> mainViewModel.onAction(action)
                 }
             },
@@ -136,12 +134,6 @@ class MainActivity : HelperBaseComponentActivity() {
                 else toastError(R.string.toast_failure)
             }
         }
-    }
-
-    private fun openSubscriptionLink(url: String) {
-        // Links come from a remote panel, so only http(s) and tg:// are ever handed to ACTION_VIEW.
-        val safeUrl = SubscriptionInfoParser.sanitizeLink(url) ?: return
-        Utils.openUri(this, safeUrl)
     }
 
     private fun navigateTo(destination: MainDestination) {
@@ -194,7 +186,8 @@ class MainActivity : HelperBaseComponentActivity() {
             toast(R.string.title_file_chooser)
             return
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN &&
+            MmkvManager.decodeSettingsBool(AppConfig.PREF_PROXY_SHARING)
         ) {
             checkAndRequestPermission(PermissionType.ACCESS_LOCAL_NETWORK) {}
         }
