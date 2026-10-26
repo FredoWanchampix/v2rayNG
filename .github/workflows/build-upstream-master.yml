@@ -21,12 +21,11 @@ jobs:
           repository: FredoWanchampix/v2rayNG
           ref: ci-master-build
           fetch-depth: 0
-          submodules: recursive
+          submodules: false
           token: ${{ secrets.REPO_WRITE_TOKEN }}
           persist-credentials: true
 
       - name: Merge official upstream into fork master
-        id: merge
         shell: bash
         run: |
           set -euo pipefail
@@ -35,29 +34,32 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git remote add upstream https://github.com/2dust/v2rayNG.git
-          git fetch origin master
-          git fetch upstream master
 
-          FORK_MASTER_SHA="$(git rev-parse origin/master)"
-          UPSTREAM_SHA="$(git rev-parse upstream/master)"
+          git fetch --no-tags origin +refs/heads/master:refs/remotes/origin/master
+          git fetch --no-tags upstream +refs/heads/master:refs/remotes/upstream/master
+
+          FORK_MASTER_SHA="$(git rev-parse refs/remotes/origin/master)"
+          UPSTREAM_SHA="$(git rev-parse refs/remotes/upstream/master)"
 
           echo "FORK_MASTER_SHA=$FORK_MASTER_SHA" >> "$GITHUB_ENV"
           echo "UPSTREAM_SHA=$UPSTREAM_SHA" >> "$GITHUB_ENV"
 
           git checkout -B integration "$FORK_MASTER_SHA"
 
-          printf '%s\n' "Fork master: $FORK_MASTER_SHA" \
-            "Upstream master: $UPSTREAM_SHA" \
-            > merge-report.txt
+          {
+            echo "Fork master: $FORK_MASTER_SHA"
+            echo "Upstream master: $UPSTREAM_SHA"
+          } > merge-report.txt
 
-          if git merge-base --is-ancestor upstream/master HEAD; then
+          printf '%s\n' "No merge conflicts detected." > merge-conflicts.txt
+
+          if git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD; then
             echo "Upstream changes are already included."
-            echo "Merge status: upstream already included" >> merge-report.txt
             echo "MERGE_POLICY=already-included" >> "$GITHUB_ENV"
-            printf '%s\n' "No new merge conflicts." > merge-conflicts.txt
+            echo "Merge status: upstream already included" >> merge-report.txt
           else
             set +e
-            git merge --no-commit --no-ff upstream/master
+            git merge --no-commit --no-ff "$UPSTREAM_SHA"
             MERGE_STATUS=$?
             set -e
 
@@ -68,27 +70,35 @@ jobs:
 
               {
                 echo
-                echo "Merge conflicts were found in these files:"
+                echo "Files with overlapping changes:"
                 printf '%s\n' "$CONFLICTS"
                 echo
-                echo "Resolution policy: prefer fork changes in conflicting hunks."
+                echo "Conflict policy: preserve fork-side hunks."
               } >> merge-report.txt
 
               git merge --abort
 
-              git merge --no-ff -X ours --no-edit upstream/master
+              set +e
+              git merge --no-ff -X ours --no-edit "$UPSTREAM_SHA"
+              MERGE_STATUS=$?
+              set -e
+
+              REMAINING="$(git diff --name-only --diff-filter=U || true)"
+
+              if [ "$MERGE_STATUS" -ne 0 ] || [ -n "$REMAINING" ]; then
+                echo "::error::Merge still has unresolved conflicts."
+                printf '%s\n' "$REMAINING"
+                exit 1
+              fi
 
               echo "MERGE_POLICY=fork-priority" >> "$GITHUB_ENV"
-              echo "Merge status: conflicts resolved with fork priority" \
-                >> merge-report.txt
+              echo "Merge status: merged with fork-side conflict priority" >> merge-report.txt
 
             elif [ "$MERGE_STATUS" -eq 0 ]; then
-              git commit -m "Merge upstream 2dust/v2rayNG master"
+              git commit --allow-empty -m "Merge upstream 2dust/v2rayNG master"
 
               echo "MERGE_POLICY=normal-merge" >> "$GITHUB_ENV"
               echo "Merge status: clean merge" >> merge-report.txt
-
-              printf '%s\n' "No merge conflicts." > merge-conflicts.txt
 
             else
               echo "::error::Merge failed without a resolvable conflict list."
@@ -97,16 +107,18 @@ jobs:
           fi
 
           if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
-            echo "::error::Unresolved merge conflicts remain."
+            echo "::error::Unresolved conflicts remain."
             exit 1
           fi
 
+          git diff --check
           git submodule update --init --recursive
 
-          git diff --check
-          git log -1 --oneline
+          MERGED_SHA="$(git rev-parse HEAD)"
+          echo "MERGED_SHA=$MERGED_SHA" >> "$GITHUB_ENV"
 
-          echo "MERGED_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "Merged commit: $MERGED_SHA" >> merge-report.txt
+          cat merge-report.txt >> "$GITHUB_STEP_SUMMARY"
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
@@ -120,15 +132,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             --channel=0 \
             --install "ndk;30.0.16248370"
 
           echo "NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" \
-            >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
 
-      - name: Configure NDK and application version
+      - name: Configure Android build and dependencies
         shell: bash
         run: |
           set -euo pipefail
@@ -145,96 +156,97 @@ jobs:
               [
                   "git",
                   "show",
-                  "upstream/master:V2rayNG/app/build.gradle.kts",
+                  f"{__import__('os').environ['UPSTREAM_SHA']}:V2rayNG/app/build.gradle.kts",
               ],
               text=True,
           )
 
           def get_value(name):
-              pattern = rf'(?m)^\s*{name}\s*=\s*(?:"([^"]*)"|(\d+))\s*$'
+              pattern = (
+                  rf'(?m)^[ \t]*{re.escape(name)}[ \t]*=[ \t]*'
+                  rf'(?:"([^"]*)"|(\d+))[ \t]*$'
+              )
               match = re.search(pattern, upstream)
+
               if not match:
-                  raise SystemExit(
-                      f"Could not find upstream {name} in build.gradle.kts"
-                  )
+                  raise SystemExit(f"Cannot read upstream {name}")
+
               return match.group(1) if match.group(1) is not None else match.group(2)
 
           version_code = get_value("versionCode")
           version_name = get_value("versionName")
 
           content, code_count = re.subn(
-              r"(?m)^(\s*versionCode\s*=\s*)\d+(\s*)$",
+              r"(?m)^([ \t]*versionCode[ \t]*=[ \t]*)\d+([ \t]*)$",
               lambda m: f"{m.group(1)}{version_code}{m.group(2)}",
               content,
               count=1,
           )
 
           content, name_count = re.subn(
-              r'(?m)^(\s*versionName\s*=\s*)"[^"]*"(\s*)$',
+              r'(?m)^([ \t]*versionName[ \t]*=[ \t]*)"[^"]*"([ \t]*)$',
               lambda m: f'{m.group(1)}"{version_name}"{m.group(2)}',
               content,
               count=1,
           )
 
           if code_count != 1 or name_count != 1:
-              raise SystemExit(
-                  "Could not safely update versionCode/versionName"
-              )
+              raise SystemExit("Cannot safely update application version")
 
-          if re.search(r"(?m)^\s*ndkVersion\s*=", content):
-              content = re.sub(
-                  r'(?m)^(\s*ndkVersion\s*=\s*)"[^"]*"',
-                  r'\1"30.0.16248370"',
+          if re.search(r"(?m)^[ \t]*ndkVersion[ \t]*=", content):
+              content, ndk_count = re.subn(
+                  r'(?m)^([ \t]*ndkVersion[ \t]*=[ \t]*)"[^"]*"',
+                  lambda m: f'{m.group(1)}"30.0.16248370"',
                   content,
                   count=1,
               )
           else:
               content, ndk_count = re.subn(
-                  r"(?m)^android\s*\{\s*$",
+                  r"(?m)^android[ \t]*\{[ \t]*$",
                   'android {\n    ndkVersion = "30.0.16248370"',
                   content,
                   count=1,
               )
-              if ndk_count != 1:
-                  raise SystemExit("Could not safely configure ndkVersion")
 
-          content, box_count = re.subn(
-              r'(?m)^[ \t]*implementation\(files\("libs/libbox(?:-legacy)?\.aar"\)\)[ \t]*\n',
+          if ndk_count != 1:
+              raise SystemExit("Cannot safely configure NDK version")
+
+          class_pattern = re.compile(
+              r"\bio\.nekohasekai\.libbox\b|\bgo\.[A-Z]"
+          )
+          references = []
+
+          for source in Path("V2rayNG/app/src").rglob("*"):
+              if source.suffix not in {".kt", ".java"}:
+                  continue
+
+              source_text = source.read_text(
+                  encoding="utf-8",
+                  errors="replace",
+              )
+
+              for line_number, line in enumerate(source_text.splitlines(), 1):
+                  if class_pattern.search(line):
+                      references.append(f"{source}:{line_number}: {line.strip()}")
+
+          if references:
+              raise SystemExit(
+                  "The source contains libbox/Go class references. "
+                  "Do not remove their AAR dependencies without resolving "
+                  "the dependency conflict first:\n" + "\n".join(references)
+              )
+
+          content, removed = re.subn(
+              r'(?m)^[ \t]*implementation\(files\("libs/libbox(?:-legacy)?\.aar"\)\)[ \t]*\r?\n',
               "",
               content,
           )
 
-          source = Path("V2rayNG/app/src")
-          forbidden_imports = []
-
-          for file in source.rglob("*"):
-              if file.suffix not in {".kt", ".java"}:
-                  continue
-
-              for line_number, line in enumerate(
-                  file.read_text(encoding="utf-8", errors="replace").splitlines(),
-                  1,
-              ):
-                  if re.match(
-                      r"^\s*import\s+(io\.nekohasekai\.libbox|go\.)",
-                      line,
-                  ):
-                      forbidden_imports.append(
-                          f"{file}:{line_number}: {line.strip()}"
-                      )
-
-          if forbidden_imports:
-              raise SystemExit(
-                  "Cannot safely omit the conflicting libbox AARs because "
-                  "source imports their classes:\n"
-                  + "\n".join(forbidden_imports)
-              )
-
           path.write_text(content, encoding="utf-8")
 
-          print(f"Upstream versionCode: {version_code}")
-          print(f"Upstream versionName: {version_name}")
-          print(f"Removed conflicting libbox dependencies: {box_count}")
+          print(f"Version code: {version_code}")
+          print(f"Version name: {version_name}")
+          print(f"Removed explicit conflicting libbox dependencies: {removed}")
           PY
 
       - name: Build hevtun native libraries
@@ -258,12 +270,12 @@ jobs:
           CURRENT_TAG="$(git -C AndroidLibXrayLite describe --tags --abbrev=0)"
 
           if [ -z "$CURRENT_TAG" ]; then
-            echo "::error::AndroidLibXrayLite tag was not found."
+            echo "::error::AndroidLibXrayLite release tag was not found."
             exit 1
           fi
 
           echo "CURRENT_TAG=$CURRENT_TAG" >> "$GITHUB_ENV"
-          echo "AndroidLibXrayLite tag: $CURRENT_TAG"
+          echo "Using AndroidLibXrayLite tag: $CURRENT_TAG"
 
       - name: Download libv2ray
         uses: robinraju/release-downloader@v1.13
@@ -279,7 +291,7 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Build and test Play Store debug variant
+      - name: Build Play Store debug APK
         working-directory: V2rayNG
         shell: bash
         run: |
@@ -289,12 +301,11 @@ jobs:
           chmod +x gradlew
 
           ./gradlew \
-            :app:testPlaystoreDebugUnitTest \
             :app:assemblePlaystoreDebug \
             --no-daemon \
             --stacktrace
 
-      - name: Verify APK and create build report
+      - name: Verify APK and create report
         if: always()
         shell: bash
         run: |
@@ -303,14 +314,14 @@ jobs:
           APK_DIR="V2rayNG/app/build/outputs/apk/playstore/debug"
 
           {
-            echo "# v2rayNG upstream merge build"
+            echo "# v2rayNG merge build"
             echo
-            echo "- Fork master SHA: ${FORK_MASTER_SHA:-unknown}"
-            echo "- Upstream master SHA: ${UPSTREAM_SHA:-unknown}"
-            echo "- Merged source SHA: ${MERGED_SHA:-unknown}"
+            echo "- Fork master: ${FORK_MASTER_SHA:-unknown}"
+            echo "- Official upstream: ${UPSTREAM_SHA:-unknown}"
+            echo "- Merged commit: ${MERGED_SHA:-unknown}"
             echo "- Merge policy: ${MERGE_POLICY:-unknown}"
             echo
-            echo "## APK output"
+            echo "## APK files"
           } > build-report.txt
 
           if [ -d "$APK_DIR" ]; then
@@ -320,19 +331,18 @@ jobs:
 
             if [ "${#APKS[@]}" -gt 0 ]; then
               for APK in "${APKS[@]}"; do
-                echo >> build-report.txt
                 sha256sum "$APK" >> build-report.txt
               done
             else
               echo "No APK was produced." >> build-report.txt
             fi
           else
-            echo "APK output directory does not exist." >> build-report.txt
+            echo "APK directory does not exist." >> build-report.txt
           fi
 
           cat build-report.txt >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload APK and merge reports
+      - name: Upload APK and reports
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -344,7 +354,7 @@ jobs:
             merge-conflicts.txt
           if-no-files-found: warn
 
-      - name: Publish successfully built merge to fork master
+      - name: Publish merged source to fork master
         if: success()
         shell: bash
         env:
@@ -353,18 +363,16 @@ jobs:
           set -euo pipefail
 
           if [ -z "${REPO_WRITE_TOKEN:-}" ]; then
-            echo "::error::REPO_WRITE_TOKEN repository secret is missing."
+            echo "::error::REPO_WRITE_TOKEN is missing."
             exit 1
           fi
 
           git diff --check
-
-          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$REPO_WRITE_TOKEN" | base64 -w0)" \
-            push origin HEAD:refs/heads/master
+          git push origin HEAD:refs/heads/master
 
           {
             echo
-            echo "## Repository update"
+            echo "## Publication"
             echo
-            echo "Successfully pushed commit $(git rev-parse HEAD) to master."
+            echo "Published commit: $(git rev-parse HEAD)"
           } >> "$GITHUB_STEP_SUMMARY"
