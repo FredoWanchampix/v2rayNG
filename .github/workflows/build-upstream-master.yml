@@ -25,7 +25,7 @@ jobs:
           token: ${{ secrets.REPO_WRITE_TOKEN }}
           persist-credentials: true
 
-      - name: Merge official upstream into fork master
+      - name: Merge upstream into fork
         shell: bash
         run: |
           set -euo pipefail
@@ -34,7 +34,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git remote add upstream https://github.com/2dust/v2rayNG.git
-
           git fetch --no-tags origin +refs/heads/master:refs/remotes/origin/master
           git fetch --no-tags upstream +refs/heads/master:refs/remotes/upstream/master
 
@@ -51,11 +50,12 @@ jobs:
             echo "Upstream master: $UPSTREAM_SHA"
           } > merge-report.txt
 
-          printf '%s\n' "No merge conflicts detected." > merge-conflicts.txt
+          CONFLICTS=""
+          MERGE_POLICY="normal-merge"
 
           if git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD; then
-            echo "MERGE_POLICY=already-included" >> "$GITHUB_ENV"
-            echo "Merge status: upstream already included" >> merge-report.txt
+            MERGE_POLICY="already-included"
+            echo "Upstream is already included."
           else
             set +e
             git merge --no-commit --no-ff "$UPSTREAM_SHA"
@@ -69,35 +69,55 @@ jobs:
 
               {
                 echo
-                echo "Files with overlapping changes:"
+                echo "Conflicting files:"
                 printf '%s\n' "$CONFLICTS"
                 echo
-                echo "Conflicting hunks use fork-side priority."
+                echo "The following integration files will be restored from the fork."
               } >> merge-report.txt
 
               git merge --abort
 
-              set +e
               git merge --no-ff -X ours --no-edit "$UPSTREAM_SHA"
-              MERGE_STATUS=$?
-              set -e
 
-              REMAINING="$(git diff --name-only --diff-filter=U || true)"
+              MERGE_POLICY="fork-priority-with-compatible-source-files"
 
-              if [ "$MERGE_STATUS" -ne 0 ] || [ -n "$REMAINING" ]; then
-                echo "::error::Merge still has unresolved conflicts."
-                printf '%s\n' "$REMAINING"
-                exit 1
+              COMPAT_FILES=(
+                "V2rayNG/app/src/main/java/com/v2ray/ang/dto/entities/SubscriptionItem.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/dto/RealPingEvent.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/service/CoreTestService.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/service/RealPingWorkerService.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/extension/ToastExt.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainActivity.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainBottomBar.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainContract.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainDataSource.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainDialogs.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainDrawer.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainGroupTab.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainImportMenu.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainRepository.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainScreen.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainServerPager.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainServerRowModels.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainServiceEvent.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainTopBar.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt"
+                "V2rayNG/app/src/main/java/com/v2ray/ang/ui/subscription/SubEditActivity.kt"
+              )
+
+              for path in "${COMPAT_FILES[@]}"; do
+                if git cat-file -e "$FORK_MASTER_SHA:$path" 2>/dev/null; then
+                  git checkout "$FORK_MASTER_SHA" -- "$path"
+                fi
+              done
+
+              if ! git diff --cached --quiet; then
+                git commit -m "Restore coherent fork implementations for integration"
               fi
 
-              echo "MERGE_POLICY=fork-priority" >> "$GITHUB_ENV"
-              echo "Merge status: merged with fork-side conflict priority" >> merge-report.txt
-
             elif [ "$MERGE_STATUS" -eq 0 ]; then
-              git commit --allow-empty -m "Merge upstream 2dust/v2rayNG master"
-
-              echo "MERGE_POLICY=normal-merge" >> "$GITHUB_ENV"
-              echo "Merge status: clean merge" >> merge-report.txt
+              git commit -m "Merge upstream 2dust/v2rayNG master"
+              printf '%s\n' "No merge conflicts." > merge-conflicts.txt
 
             else
               echo "::error::Merge failed."
@@ -106,17 +126,15 @@ jobs:
           fi
 
           if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
-            echo "::error::Unresolved conflicts remain."
+            echo "::error::Unresolved merge conflicts remain."
             exit 1
           fi
 
           git diff --check
           git submodule update --init --recursive
 
-          MERGED_SHA="$(git rev-parse HEAD)"
-          echo "MERGED_SHA=$MERGED_SHA" >> "$GITHUB_ENV"
-          echo "Merged commit: $MERGED_SHA" >> merge-report.txt
-
+          echo "MERGE_POLICY=$MERGE_POLICY" >> "$GITHUB_ENV"
+          echo "Merged commit: $(git rev-parse HEAD)" >> merge-report.txt
           cat merge-report.txt >> "$GITHUB_STEP_SUMMARY"
 
       - name: Setup Android SDK
@@ -138,7 +156,7 @@ jobs:
           echo "NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
 
-      - name: Configure Android build and dependencies
+      - name: Configure application and fix known Kotlin errors
         shell: bash
         run: |
           set -euo pipefail
@@ -149,73 +167,117 @@ jobs:
           import subprocess
           from pathlib import Path
 
-          path = Path("V2rayNG/app/build.gradle.kts")
-          content = path.read_text(encoding="utf-8")
+          gradle = Path("V2rayNG/app/build.gradle.kts")
+          content = gradle.read_text(encoding="utf-8")
 
-          upstream_sha = os.environ["UPSTREAM_SHA"]
           upstream = subprocess.check_output(
               [
                   "git",
                   "show",
-                  f"{upstream_sha}:V2rayNG/app/build.gradle.kts",
+                  f"{os.environ['UPSTREAM_SHA']}:V2rayNG/app/build.gradle.kts",
               ],
               text=True,
           )
 
-          def get_value(name):
+          def upstream_value(name):
               pattern = (
                   rf'(?m)^[ \t]*{re.escape(name)}[ \t]*=[ \t]*'
-                  rf'(?:"([^"]*)"|(\d+))[ \t]*$'
+                  rf'(?:\"([^\"]*)\"|(\d+))[ \t]*$'
               )
               match = re.search(pattern, upstream)
-
               if not match:
                   raise SystemExit(f"Cannot read upstream {name}")
-
               return match.group(1) if match.group(1) is not None else match.group(2)
 
-          version_code = get_value("versionCode")
-          version_name = get_value("versionName")
+          version_code = upstream_value("versionCode")
+          version_name = upstream_value("versionName")
 
-          content, code_count = re.subn(
+          content, count_code = re.subn(
               r"(?m)^([ \t]*versionCode[ \t]*=[ \t]*)\d+([ \t]*)$",
               lambda m: f"{m.group(1)}{version_code}{m.group(2)}",
               content,
               count=1,
           )
 
-          content, name_count = re.subn(
+          content, count_name = re.subn(
               r'(?m)^([ \t]*versionName[ \t]*=[ \t]*)"[^"]*"([ \t]*)$',
               lambda m: f'{m.group(1)}"{version_name}"{m.group(2)}',
               content,
               count=1,
           )
 
-          if code_count != 1 or name_count != 1:
+          if count_code != 1 or count_name != 1:
               raise SystemExit("Cannot safely update application version")
 
-          if re.search(r"(?m)^[ \t]*ndkVersion[ \t]*=", content):
-              content, ndk_count = re.subn(
-                  r'(?m)^([ \t]*ndkVersion[ \t]*=[ \t]*)"[^"]*"',
-                  lambda m: f'{m.group(1)}"30.0.16248370"',
+          ndk_pattern = r'(?m)^([ \t]*ndkVersion[ \t]*=[ \t]*)"[^"]*"'
+          if re.search(ndk_pattern, content):
+              content, count_ndk = re.subn(
+                  ndk_pattern,
+                  r'\g<1>"30.0.16248370"',
                   content,
                   count=1,
               )
           else:
-              content, ndk_count = re.subn(
+              content, count_ndk = re.subn(
                   r"(?m)^android[ \t]*\{[ \t]*$",
                   'android {\n    ndkVersion = "30.0.16248370"',
                   content,
                   count=1,
               )
 
-          if ndk_count != 1:
+          if count_ndk != 1:
               raise SystemExit("Cannot safely configure NDK version")
 
-          libbox_pattern = re.compile(r"\bio\.nekohasekai\.libbox\b")
-          references = []
+          content, removed = re.subn(
+              r'(?m)^[ \t]*implementation\(files\("libs/libbox(?:-legacy)?\.aar"\)\)[ \t]*\r?\n',
+              "",
+              content,
+          )
 
-          for source in Path("V2rayNG/app/src").rglob("*"):
+          gradle.write_text(content, encoding="utf-8")
+
+          subscription = Path(
+              "V2rayNG/app/src/main/java/com/v2ray/ang/dto/entities/SubscriptionItem.kt"
+          )
+          sub_content = subscription.read_text(encoding="utf-8")
+
+          usage_field = "var usageInfo: SubscriptionUsageInfo? = null,"
+          if usage_field not in sub_content:
+              marker = "    var requestHeaders: String? = null,"
+              if sub_content.count(marker) != 1:
+                  raise SystemExit("Cannot safely extend SubscriptionItem")
+              sub_content = sub_content.replace(
+                  marker,
+                  marker + "\n    " + usage_field,
+                  1,
+              )
+              subscription.write_text(sub_content, encoding="utf-8")
+
+          converter = Path(
+              "V2rayNG/app/src/main/java/com/v2ray/ang/core/SingBoxConfigConverter.kt"
+          )
+          if converter.exists():
+              converter_content = converter.read_text(encoding="utf-8")
+              bad = 'addProperty("tls", JsonObject().apply {'
+              good = 'add("tls", JsonObject().apply {'
+
+              if bad in converter_content:
+                  converter_content, count_tls = re.subn(
+                      re.escape(bad),
+                      good,
+                      converter_content,
+                      count=1,
+                  )
+                  if count_tls != 1:
+                      raise SystemExit("Cannot safely fix the TLS JSON object")
+                  converter.write_text(converter_content, encoding="utf-8")
+              elif good not in converter_content:
+                  raise SystemExit("Unexpected SingBoxConfigConverter TLS code")
+
+          source_root = Path("V2rayNG/app/src")
+          libbox_references = []
+
+          for source in source_root.rglob("*"):
               if source.suffix not in {".kt", ".java"}:
                   continue
 
@@ -226,32 +288,36 @@ jobs:
                   ).splitlines(),
                   1,
               ):
-                  if libbox_pattern.search(line):
-                      references.append(
+                  if "io.nekohasekai.libbox" in line:
+                      libbox_references.append(
                           f"{source}:{line_number}: {line.strip()}"
                       )
 
-          if references:
+          if libbox_references:
               raise SystemExit(
-                  "Source references sing-box libbox classes, but the "
-                  "conflicting libbox AARs are not being built. "
-                  "These references need a compatible implementation:\n"
-                  + "\n".join(references)
+                  "Direct libbox references remain, so removing the conflicting "
+                  "AAR dependencies is unsafe:\n" + "\n".join(libbox_references)
               )
 
-          content, removed = re.subn(
-              r'(?m)^[ \t]*implementation\(files\("libs/libbox(?:-legacy)?\.aar"\)\)[ \t]*\r?\n',
-              "",
-              content,
-          )
-
-          path.write_text(content, encoding="utf-8")
-
-          print(f"Upstream versionCode: {version_code}")
-          print(f"Upstream versionName: {version_name}")
+          print(f"Upstream version: {version_name} ({version_code})")
           print(f"Removed explicit libbox dependencies: {removed}")
-          print("The go.Seq import is retained for libv2ray.")
+          print("Applied the known Kotlin compatibility fixes.")
           PY
+
+          rm -f V2rayNG/app/libs/libbox.aar
+          rm -f V2rayNG/app/libs/libbox-legacy.aar
+
+          git diff --check
+          git add \
+            V2rayNG/app/build.gradle.kts \
+            V2rayNG/app/src/main/java/com/v2ray/ang/dto/entities/SubscriptionItem.kt \
+            V2rayNG/app/src/main/java/com/v2ray/ang/core/SingBoxConfigConverter.kt
+
+          if ! git diff --cached --quiet; then
+            git commit -m "Fix Kotlin and Android build compatibility"
+          fi
+
+          echo "MERGED_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Build hevtun native libraries
         shell: bash
@@ -265,6 +331,8 @@ jobs:
           set -euo pipefail
           mkdir -p V2rayNG/app/libs
           cp -r libs/. V2rayNG/app/libs/
+          rm -f V2rayNG/app/libs/libbox.aar
+          rm -f V2rayNG/app/libs/libbox-legacy.aar
 
       - name: Find AndroidLibXrayLite release tag
         shell: bash
