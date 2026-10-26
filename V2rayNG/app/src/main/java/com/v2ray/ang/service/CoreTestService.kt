@@ -10,6 +10,7 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreNativeManager
 import com.v2ray.ang.dto.RealPingEvent
+import com.v2ray.ang.dto.RealPingResult
 import com.v2ray.ang.dto.TestServiceMessage
 import com.v2ray.ang.enums.NotificationChannelType
 import com.v2ray.ang.extension.serializable
@@ -19,7 +20,7 @@ import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.helper.MessageHelper
 import com.v2ray.ang.helper.NotificationHelper
 import com.v2ray.ang.util.LogUtil
-import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 
 class CoreTestService : Service() {
 
@@ -155,15 +156,16 @@ class CoreTestService : Service() {
                 onlyIcmp = message.onlyIcmp,
                 onEvent = { event -> handleWorkerEvent(event, message) { activeWorkers.remove(worker) } }
             )
-            activeWorkers.add(worker)
+            activeWorkers[worker] = requestId
             worker.start()
         } else {
+            MessageHelper.sendMsg2UI(this, AppConfig.MSG_MEASURE_CONFIG_CANCEL, "", requestId)
             NotificationHelper.stopForeground(this)
             stopSelf(startId)
         }
     }
 
-    private fun handleWorkerEvent(event: RealPingEvent, message: TestServiceMessage, onWorkerDone: () -> Unit) {
+    private fun handleWorkerEvent(event: RealPingEvent, message: TestServiceMessage, requestId: String, onWorkerDone: () -> Unit) {
         when (event) {
             is RealPingEvent.Progress -> {
                 NotificationHelper.updateNotification(
@@ -172,12 +174,17 @@ class CoreTestService : Service() {
                     title = getString(R.string.app_name),
                     content = getString(R.string.connection_running_task_left, event.text)
                 )
-                MessageHelper.sendMsg2UI(this, AppConfig.MSG_MEASURE_CONFIG_NOTIFY, event.text)
+                MessageHelper.sendMsg2UI(this, AppConfig.MSG_MEASURE_CONFIG_NOTIFY, event.text, requestId)
             }
 
             is RealPingEvent.Result -> {
                 MmkvManager.encodeServerTestDelayMillis(event.guid, event.delayMillis)
-                MessageHelper.sendMsg2UI(this, AppConfig.MSG_MEASURE_CONFIG_SUCCESS, event.guid)
+                MessageHelper.sendMsg2UI(
+                    this,
+                    AppConfig.MSG_MEASURE_CONFIG_SUCCESS,
+                    RealPingResult(event.guid, event.delayMillis),
+                    requestId,
+                )
             }
 
             is RealPingEvent.SpeedResult -> {
@@ -196,7 +203,7 @@ class CoreTestService : Service() {
                     }
                 }
 
-                MessageHelper.sendMsg2UI(this, AppConfig.MSG_MEASURE_CONFIG_FINISH, event.status)
+                MessageHelper.sendMsg2UI(this, AppConfig.MSG_MEASURE_CONFIG_FINISH, event.status, requestId)
                 onWorkerDone()
                 if (activeWorkers.isEmpty()) {
                     NotificationHelper.stopForeground(this)
@@ -207,7 +214,6 @@ class CoreTestService : Service() {
     }
 
     private fun handleMeasureCancel() {
-        MessageHelper.sendMsg2UI(this, AppConfig.MSG_MEASURE_CONFIG_FINISH, "0")
         LogUtil.i(AppConfig.TAG, "CoreTestService received cancel message, cancelling ${activeWorkers.size} active workers")
         val snapshot = ArrayList(activeWorkers)
         snapshot.forEach { it.cancel() }
@@ -217,5 +223,15 @@ class CoreTestService : Service() {
         activeWhitelistWorkers.clear()
         NotificationHelper.stopForeground(this)
         stopSelf()
+    }
+
+    private fun cancelWorkers() {
+        // Reply for each cancelled request, never for a newer UI request that has not started here.
+        activeWorkers.entries.toList().forEach { (worker, requestId) ->
+            if (activeWorkers.remove(worker, requestId)) {
+                worker.cancel()
+                MessageHelper.sendMsg2UI(this, AppConfig.MSG_MEASURE_CONFIG_CANCEL, "", requestId)
+            }
+        }
     }
 }
