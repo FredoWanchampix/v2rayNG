@@ -50,7 +50,8 @@ jobs:
             echo "Upstream master: $UPSTREAM_SHA"
           } > merge-report.txt
 
-          CONFLICTS=""
+          printf '%s\n' "No merge conflicts detected." > merge-conflicts.txt
+
           MERGE_POLICY="normal-merge"
 
           if git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD; then
@@ -69,14 +70,13 @@ jobs:
 
               {
                 echo
-                echo "Conflicting files:"
+                echo "Files with overlapping changes:"
                 printf '%s\n' "$CONFLICTS"
                 echo
-                echo "The following integration files will be restored from the fork."
+                echo "The workflow preserves fork-side conflict hunks."
               } >> merge-report.txt
 
               git merge --abort
-
               git merge --no-ff -X ours --no-edit "$UPSTREAM_SHA"
 
               MERGE_POLICY="fork-priority-with-compatible-source-files"
@@ -112,13 +112,11 @@ jobs:
               done
 
               if ! git diff --cached --quiet; then
-                git commit -m "Restore coherent fork implementations for integration"
+                git commit -m "Restore compatible fork implementations"
               fi
 
             elif [ "$MERGE_STATUS" -eq 0 ]; then
-              git commit -m "Merge upstream 2dust/v2rayNG master"
-              printf '%s\n' "No merge conflicts." > merge-conflicts.txt
-
+              git commit --allow-empty -m "Merge upstream 2dust/v2rayNG master"
             else
               echo "::error::Merge failed."
               exit 1
@@ -156,7 +154,7 @@ jobs:
           echo "NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
 
-      - name: Configure application and fix known Kotlin errors
+      - name: Configure application and repair compatibility
         shell: bash
         run: |
           set -euo pipefail
@@ -167,24 +165,26 @@ jobs:
           import subprocess
           from pathlib import Path
 
+          def read_fork_file(path):
+              return subprocess.check_output(
+                  ["git", "show", f"{os.environ['FORK_MASTER_SHA']}:{path}"],
+                  text=True,
+              )
+
           gradle = Path("V2rayNG/app/build.gradle.kts")
           content = gradle.read_text(encoding="utf-8")
 
-          upstream = subprocess.check_output(
-              [
-                  "git",
-                  "show",
-                  f"{os.environ['UPSTREAM_SHA']}:V2rayNG/app/build.gradle.kts",
-              ],
+          upstream_gradle = subprocess.check_output(
+              ["git", "show", f"{os.environ['UPSTREAM_SHA']}:V2rayNG/app/build.gradle.kts"],
               text=True,
           )
 
           def upstream_value(name):
               pattern = (
                   rf'(?m)^[ \t]*{re.escape(name)}[ \t]*=[ \t]*'
-                  rf'(?:\"([^\"]*)\"|(\d+))[ \t]*$'
+                  rf'(?:"([^"]*)"|(\d+))[ \t]*$'
               )
-              match = re.search(pattern, upstream)
+              match = re.search(pattern, upstream_gradle)
               if not match:
                   raise SystemExit(f"Cannot read upstream {name}")
               return match.group(1) if match.group(1) is not None else match.group(2)
@@ -228,93 +228,133 @@ jobs:
           if count_ndk != 1:
               raise SystemExit("Cannot safely configure NDK version")
 
-          content, removed = re.subn(
+          content, removed_libbox = re.subn(
               r'(?m)^[ \t]*implementation\(files\("libs/libbox(?:-legacy)?\.aar"\)\)[ \t]*\r?\n',
               "",
               content,
           )
-
           gradle.write_text(content, encoding="utf-8")
 
           subscription = Path(
               "V2rayNG/app/src/main/java/com/v2ray/ang/dto/entities/SubscriptionItem.kt"
           )
-          sub_content = subscription.read_text(encoding="utf-8")
-
+          sub_text = subscription.read_text(encoding="utf-8")
           usage_field = "var usageInfo: SubscriptionUsageInfo? = null,"
-          if usage_field not in sub_content:
+
+          if usage_field not in sub_text:
               marker = "    var requestHeaders: String? = null,"
-              if sub_content.count(marker) != 1:
+              if sub_text.count(marker) != 1:
                   raise SystemExit("Cannot safely extend SubscriptionItem")
-              sub_content = sub_content.replace(
-                  marker,
-                  marker + "\n    " + usage_field,
-                  1,
+              subscription.write_text(
+                  sub_text.replace(marker, marker + "\n    " + usage_field, 1),
+                  encoding="utf-8",
               )
-              subscription.write_text(sub_content, encoding="utf-8")
 
           converter = Path(
               "V2rayNG/app/src/main/java/com/v2ray/ang/core/SingBoxConfigConverter.kt"
           )
           if converter.exists():
-              converter_content = converter.read_text(encoding="utf-8")
-              bad = 'addProperty("tls", JsonObject().apply {'
-              good = 'add("tls", JsonObject().apply {'
+              converter_text = converter.read_text(encoding="utf-8")
+              wrong = 'addProperty("tls", JsonObject().apply {'
+              correct = 'add("tls", JsonObject().apply {'
 
-              if bad in converter_content:
-                  converter_content, count_tls = re.subn(
-                      re.escape(bad),
-                      good,
-                      converter_content,
-                      count=1,
+              if wrong in converter_text:
+                  converter_text, count_tls = re.subn(
+                      re.escape(wrong), correct, converter_text, count=1
                   )
                   if count_tls != 1:
                       raise SystemExit("Cannot safely fix the TLS JSON object")
-                  converter.write_text(converter_content, encoding="utf-8")
-              elif good not in converter_content:
-                  raise SystemExit("Unexpected SingBoxConfigConverter TLS code")
+                  converter.write_text(converter_text, encoding="utf-8")
 
-          source_root = Path("V2rayNG/app/src")
+          main_view_model = Path(
+              "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt"
+          )
+          main_text = main_view_model.read_text(encoding="utf-8")
+          main_text, count_reference = re.subn(
+              r"R\.string\.title_update_config_count\b",
+              "R.string.title_update_config_count_legacy",
+              main_text,
+          )
+
+          if count_reference != 1:
+              raise SystemExit(
+                  "Expected one title_update_config_count reference in "
+                  f"MainViewModel.kt; found {count_reference}"
+              )
+
+          main_view_model.write_text(main_text, encoding="utf-8")
+
+          def original_string_value(resource_path):
+              original = read_fork_file(resource_path)
+              match = re.search(
+                  r'<string\s+name="title_update_config_count"[^>]*>(.*?)</string>',
+                  original,
+                  re.S,
+              )
+              if not match:
+                  raise SystemExit(
+                      f"Cannot recover original update-count string from {resource_path}"
+                  )
+              return match.group(1)
+
+          for resource_path in (
+              "V2rayNG/app/src/main/res/values/strings.xml",
+              "V2rayNG/app/src/main/res/values-ru/strings.xml",
+          ):
+              resource = Path(resource_path)
+              resource_text = resource.read_text(encoding="utf-8")
+
+              if 'name="title_update_config_count_legacy"' not in resource_text:
+                  value = original_string_value(resource_path)
+                  legacy = (
+                      '    <string name="title_update_config_count_legacy">'
+                      + value
+                      + '</string>\n'
+                  )
+                  if resource_text.count("</resources>") != 1:
+                      raise SystemExit(f"Cannot safely update {resource_path}")
+                  resource_text = resource_text.replace(
+                      "</resources>", legacy + "</resources>", 1
+                  )
+                  resource.write_text(resource_text, encoding="utf-8")
+
           libbox_references = []
-
-          for source in source_root.rglob("*"):
+          for source in Path("V2rayNG/app/src").rglob("*"):
               if source.suffix not in {".kt", ".java"}:
                   continue
-
-              for line_number, line in enumerate(
-                  source.read_text(
-                      encoding="utf-8",
-                      errors="replace",
-                  ).splitlines(),
+              for number, line in enumerate(
+                  source.read_text(encoding="utf-8", errors="replace").splitlines(),
                   1,
               ):
                   if "io.nekohasekai.libbox" in line:
-                      libbox_references.append(
-                          f"{source}:{line_number}: {line.strip()}"
-                      )
+                      libbox_references.append(f"{source}:{number}: {line.strip()}")
 
           if libbox_references:
               raise SystemExit(
-                  "Direct libbox references remain, so removing the conflicting "
-                  "AAR dependencies is unsafe:\n" + "\n".join(libbox_references)
+                  "Cannot remove libbox AARs while direct source references remain:\n"
+                  + "\n".join(libbox_references)
               )
 
           print(f"Upstream version: {version_name} ({version_code})")
-          print(f"Removed explicit libbox dependencies: {removed}")
-          print("Applied the known Kotlin compatibility fixes.")
+          print(f"Removed explicit libbox dependencies: {removed_libbox}")
+          print("Added fork-compatible update-count resources.")
           PY
 
           rm -f V2rayNG/app/libs/libbox.aar
           rm -f V2rayNG/app/libs/libbox-legacy.aar
 
           git diff --check
+
           git add \
             V2rayNG/app/build.gradle.kts \
             V2rayNG/app/src/main/java/com/v2ray/ang/dto/entities/SubscriptionItem.kt \
-            V2rayNG/app/src/main/java/com/v2ray/ang/core/SingBoxConfigConverter.kt
+            V2rayNG/app/src/main/java/com/v2ray/ang/core/SingBoxConfigConverter.kt \
+            V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt \
+            V2rayNG/app/src/main/res/values/strings.xml \
+            V2rayNG/app/src/main/res/values-ru/strings.xml
 
           if ! git diff --cached --quiet; then
-            git commit -m "Fix Kotlin and Android build compatibility"
+            git commit -m "Fix Kotlin resource compatibility in merged build"
           fi
 
           echo "MERGED_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
@@ -400,7 +440,6 @@ jobs:
             mapfile -t APKS < <(
               find "$APK_DIR" -maxdepth 1 -type f -name "*.apk" | sort
             )
-
             if [ "${#APKS[@]}" -gt 0 ]; then
               for APK in "${APKS[@]}"; do
                 sha256sum "$APK" >> build-report.txt
