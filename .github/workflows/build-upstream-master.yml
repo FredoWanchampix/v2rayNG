@@ -158,5 +158,3 @@ jobs:
             source/V2rayNG/app/build/outputs/apk/playstore/debug/*.apk
             build-report.txt
           if-no-files-found: error
-
-Add remote build workflow for official v2rayNG master
