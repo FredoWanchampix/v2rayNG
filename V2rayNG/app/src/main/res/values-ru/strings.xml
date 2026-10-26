@@ -595,4 +595,5 @@
     <string name="sub_link_decrypt_failed">Не удалось расшифровать ссылку</string>
     <string name="sub_link_no_url_inside">Внутри расшифрованных данных нет HTTP(S) ссылки</string>
 
+    <string name="title_update_config_count_legacy">Обновлено профилей: %d</string>
 </resources>

@@ -6,6 +6,7 @@ plugins {
 }
 
 android {
+    ndkVersion = "30.0.16248370"
     namespace = "com.v2ray.ang"
     compileSdk = 37
 
@@ -166,8 +167,6 @@ android {
 dependencies {
     // Core Libraries
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
-    implementation(files("libs/libbox.aar"))
-    implementation(files("libs/libbox-legacy.aar"))
 
     // AndroidX Core Libraries
     implementation(libs.androidx.core.ktx)
