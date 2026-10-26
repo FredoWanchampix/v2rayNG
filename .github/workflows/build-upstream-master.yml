@@ -5,6 +5,11 @@ on:
     branches:
       - ci-master-build
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional release tag"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -56,7 +61,6 @@ jobs:
 
           if git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD; then
             MERGE_POLICY="already-included"
-            echo "Upstream is already included."
           else
             set +e
             git merge --no-commit --no-ff "$UPSTREAM_SHA"
@@ -182,7 +186,7 @@ jobs:
           def upstream_value(name):
               pattern = (
                   rf'(?m)^[ \t]*{re.escape(name)}[ \t]*=[ \t]*'
-                  rf'(?:"([^"]*)"|(\d+))[ \t]*$'
+                  rf'(?:\"([^\"]*)\"|(\d+))[ \t]*$'
               )
               match = re.search(pattern, upstream_gradle)
               if not match:
@@ -200,7 +204,7 @@ jobs:
           )
 
           content, count_name = re.subn(
-              r'(?m)^([ \t]*versionName[ \t]*=[ \t]*)"[^"]*"([ \t]*)$',
+              r'(?m)^([ \t]*versionName[ \t]*=[ \t]*)\"[^\"]*\"([ \t]*)$',
               lambda m: f'{m.group(1)}"{version_name}"{m.group(2)}',
               content,
               count=1,
@@ -209,7 +213,7 @@ jobs:
           if count_code != 1 or count_name != 1:
               raise SystemExit("Cannot safely update application version")
 
-          ndk_pattern = r'(?m)^([ \t]*ndkVersion[ \t]*=[ \t]*)"[^"]*"'
+          ndk_pattern = r'(?m)^([ \t]*ndkVersion[ \t]*=[ \t]*)\"[^\"]*\"'
           if re.search(ndk_pattern, content):
               content, count_ndk = re.subn(
                   ndk_pattern,
@@ -417,56 +421,113 @@ jobs:
             --no-daemon \
             --stacktrace
 
-      - name: Verify APK and create report
-        if: always()
+      - name: Prepare APKs and release notes
+        id: release
         shell: bash
+        env:
+          REQUESTED_TAG: ${{ github.event.inputs.release_tag }}
         run: |
           set -euo pipefail
 
-          APK_DIR="V2rayNG/app/build/outputs/apk/playstore/debug"
+          VERSION_NAME="$(sed -n 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' V2rayNG/app/build.gradle.kts | head -n 1)"
 
-          {
-            echo "# v2rayNG merge build"
-            echo
-            echo "- Fork master: ${FORK_MASTER_SHA:-unknown}"
-            echo "- Official upstream: ${UPSTREAM_SHA:-unknown}"
-            echo "- Merged commit: ${MERGED_SHA:-unknown}"
-            echo "- Merge policy: ${MERGE_POLICY:-unknown}"
-            echo
-            echo "## APK files"
-          } > build-report.txt
-
-          if [ -d "$APK_DIR" ]; then
-            mapfile -t APKS < <(
-              find "$APK_DIR" -maxdepth 1 -type f -name "*.apk" | sort
-            )
-            if [ "${#APKS[@]}" -gt 0 ]; then
-              for APK in "${APKS[@]}"; do
-                sha256sum "$APK" >> build-report.txt
-              done
-            else
-              echo "No APK was produced." >> build-report.txt
-            fi
-          else
-            echo "APK directory does not exist." >> build-report.txt
+          if [ -z "$VERSION_NAME" ]; then
+            echo "::error::Cannot determine application version."
+            exit 1
           fi
 
-          cat build-report.txt >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${REQUESTED_TAG:-}" ]; then
+            RELEASE_TAG="$REQUESTED_TAG"
+          else
+            RELEASE_TAG="v${VERSION_NAME}-fork-$(date -u +'%Y%m%d-%H%M%S')"
+          fi
 
-      - name: Upload APK and reports
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: v2rayNG-merged-build
-          path: |
-            V2rayNG/app/build/outputs/apk/playstore/debug/*.apk
-            build-report.txt
-            merge-report.txt
-            merge-conflicts.txt
-          if-no-files-found: warn
+          APK_DIR="V2rayNG/app/build/outputs/apk/playstore/debug"
+          mkdir -p release-assets
+
+          mapfile -t APKS < <(find "$APK_DIR" -maxdepth 1 -type f -name '*.apk' | sort)
+
+          if [ "${#APKS[@]}" -eq 0 ]; then
+            echo "::error::No APK files were produced."
+            exit 1
+          fi
+
+          for APK in "${APKS[@]}"; do
+            cp "$APK" release-assets/
+          done
+
+          (
+            cd release-assets
+            sha256sum ./*.apk > SHA256SUMS.txt
+          )
+
+          UPSTREAM_BODY=""
+          RELEASE_JSON="$(mktemp)"
+
+          if curl -fsSL --retry 3 --retry-delay 1 \
+            "https://api.github.com/repos/2dust/v2rayNG/releases/tags/${VERSION_NAME}" \
+            -o "$RELEASE_JSON"; then
+            UPSTREAM_BODY="$(jq -r '.body // empty' "$RELEASE_JSON")"
+          fi
+
+          {
+            echo "# v2rayNG ${VERSION_NAME} — сборка форка"
+            echo
+            echo "- Версия приложения: ${VERSION_NAME}"
+            echo "- Официальный проект: https://github.com/2dust/v2rayNG"
+            echo "- Репозиторий форка: https://github.com/FredoWanchampix/v2rayNG"
+            echo "- Тип сборки: Play Store Debug APK"
+            echo
+            echo "## Возможности форка"
+            echo
+            echo "- Дополнительные возможности работы в сетях с ограничениями."
+            echo "- Преобразование подписок."
+            echo "- Диагностика соединения: ICMP ping, TCP ping и real ping."
+            echo
+            echo "## Изменения официальной версии ${VERSION_NAME}"
+            echo
+          } > release-notes.md
+
+          if [ -n "$UPSTREAM_BODY" ]; then
+            printf '%s\n' "$UPSTREAM_BODY" >> release-notes.md
+          else
+            {
+              echo "Официальные примечания версии не удалось получить."
+              echo
+              echo "### Последние изменения upstream"
+              echo
+              git log -n 30 --pretty=format:'- %s (%h)' "$UPSTREAM_SHA"
+              echo
+            } >> release-notes.md
+          fi
+
+          {
+            echo
+            echo "## Какой APK скачать"
+            echo
+            echo "- \`universal.apk\` — универсальный вариант, если архитектура неизвестна."
+            echo "- \`arm64-v8a.apk\` — ARM64."
+            echo "- \`armeabi-v7a.apk\` — 32-битный ARM."
+            echo "- \`x86_64.apk\` — x86_64."
+            echo "- \`x86.apk\` — x86."
+            echo
+            echo "Фактические имена файлов указаны во вложениях релиза."
+            echo
+            echo "## Контрольные суммы"
+            echo
+            echo "SHA-256 каждого APK находится в файле \`SHA256SUMS.txt\`."
+            echo
+            echo "## Подпись"
+            echo
+            echo "APK собраны вариантом Debug и подписаны Android debug-ключом."
+          } >> release-notes.md
+
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+
+          cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish merged source to fork master
-        if: success()
         shell: bash
         env:
           REPO_WRITE_TOKEN: ${{ secrets.REPO_WRITE_TOKEN }}
@@ -481,9 +542,23 @@ jobs:
           git diff --check
           git push origin HEAD:refs/heads/master
 
-          {
-            echo
-            echo "## Publication"
-            echo
-            echo "Published commit: $(git rev-parse HEAD)"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Published merged source: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          VERSION_NAME: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          gh release create \
+            "$RELEASE_TAG" \
+            release-assets/* \
+            --title "v2rayNG ${VERSION_NAME} — fork build" \
+            --notes-file release-notes.md \
+            --target "$MERGED_SHA" \
+            --latest
+
+          echo "Published release: $RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
