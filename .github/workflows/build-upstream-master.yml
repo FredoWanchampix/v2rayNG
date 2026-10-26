@@ -54,7 +54,6 @@ jobs:
           printf '%s\n' "No merge conflicts detected." > merge-conflicts.txt
 
           if git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD; then
-            echo "Upstream changes are already included."
             echo "MERGE_POLICY=already-included" >> "$GITHUB_ENV"
             echo "Merge status: upstream already included" >> merge-report.txt
           else
@@ -73,7 +72,7 @@ jobs:
                 echo "Files with overlapping changes:"
                 printf '%s\n' "$CONFLICTS"
                 echo
-                echo "Conflict policy: preserve fork-side hunks."
+                echo "Conflicting hunks use fork-side priority."
               } >> merge-report.txt
 
               git merge --abort
@@ -101,7 +100,7 @@ jobs:
               echo "Merge status: clean merge" >> merge-report.txt
 
             else
-              echo "::error::Merge failed without a resolvable conflict list."
+              echo "::error::Merge failed."
               exit 1
             fi
           fi
@@ -116,8 +115,8 @@ jobs:
 
           MERGED_SHA="$(git rev-parse HEAD)"
           echo "MERGED_SHA=$MERGED_SHA" >> "$GITHUB_ENV"
-
           echo "Merged commit: $MERGED_SHA" >> merge-report.txt
+
           cat merge-report.txt >> "$GITHUB_STEP_SUMMARY"
 
       - name: Setup Android SDK
@@ -145,6 +144,7 @@ jobs:
           set -euo pipefail
 
           python3 - <<'PY'
+          import os
           import re
           import subprocess
           from pathlib import Path
@@ -152,11 +152,12 @@ jobs:
           path = Path("V2rayNG/app/build.gradle.kts")
           content = path.read_text(encoding="utf-8")
 
+          upstream_sha = os.environ["UPSTREAM_SHA"]
           upstream = subprocess.check_output(
               [
                   "git",
                   "show",
-                  f"{__import__('os').environ['UPSTREAM_SHA']}:V2rayNG/app/build.gradle.kts",
+                  f"{upstream_sha}:V2rayNG/app/build.gradle.kts",
               ],
               text=True,
           )
@@ -211,29 +212,31 @@ jobs:
           if ndk_count != 1:
               raise SystemExit("Cannot safely configure NDK version")
 
-          class_pattern = re.compile(
-              r"\bio\.nekohasekai\.libbox\b|\bgo\.[A-Z]"
-          )
+          libbox_pattern = re.compile(r"\bio\.nekohasekai\.libbox\b")
           references = []
 
           for source in Path("V2rayNG/app/src").rglob("*"):
               if source.suffix not in {".kt", ".java"}:
                   continue
 
-              source_text = source.read_text(
-                  encoding="utf-8",
-                  errors="replace",
-              )
-
-              for line_number, line in enumerate(source_text.splitlines(), 1):
-                  if class_pattern.search(line):
-                      references.append(f"{source}:{line_number}: {line.strip()}")
+              for line_number, line in enumerate(
+                  source.read_text(
+                      encoding="utf-8",
+                      errors="replace",
+                  ).splitlines(),
+                  1,
+              ):
+                  if libbox_pattern.search(line):
+                      references.append(
+                          f"{source}:{line_number}: {line.strip()}"
+                      )
 
           if references:
               raise SystemExit(
-                  "The source contains libbox/Go class references. "
-                  "Do not remove their AAR dependencies without resolving "
-                  "the dependency conflict first:\n" + "\n".join(references)
+                  "Source references sing-box libbox classes, but the "
+                  "conflicting libbox AARs are not being built. "
+                  "These references need a compatible implementation:\n"
+                  + "\n".join(references)
               )
 
           content, removed = re.subn(
@@ -244,9 +247,10 @@ jobs:
 
           path.write_text(content, encoding="utf-8")
 
-          print(f"Version code: {version_code}")
-          print(f"Version name: {version_name}")
-          print(f"Removed explicit conflicting libbox dependencies: {removed}")
+          print(f"Upstream versionCode: {version_code}")
+          print(f"Upstream versionName: {version_name}")
+          print(f"Removed explicit libbox dependencies: {removed}")
+          print("The go.Seq import is retained for libv2ray.")
           PY
 
       - name: Build hevtun native libraries
