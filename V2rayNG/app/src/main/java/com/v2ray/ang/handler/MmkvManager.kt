@@ -12,6 +12,7 @@ import com.tencent.mmkv.MMKV
 import com.tencent.mmkv.MMKVHandler
 import com.tencent.mmkv.MMKVLogLevel
 import com.tencent.mmkv.MMKVRecoverStrategic
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.AppConfig.DEFAULT_SUBSCRIPTION_ID
 import com.v2ray.ang.AppConfig.PREF_IS_BOOTED
 import com.v2ray.ang.AppConfig.PREF_ROUTING_RULESET
@@ -966,9 +967,9 @@ object MmkvManager {
     }
 
     /**
-     * Encodes the settings.
+     * Encodes the setting.
      *
-     * @param key The setting key.
+     * @param key The setting value.
      * @param value The setting value.
      * @return Whether the setting was written successfully.
      */
@@ -977,9 +978,9 @@ object MmkvManager {
     }
 
     /**
-     * Encodes the settings.
+     * Encodes the setting.
      *
-     * @param key The setting key.
+     * @param key The setting value.
      * @param value The setting value.
      * @return Whether the setting was written successfully.
      */
@@ -990,7 +991,7 @@ object MmkvManager {
     /**
      * Encodes the setting.
      *
-     * @param key The setting key.
+     * @param key The setting value.
      * @param value The setting value.
      * @return Whether the setting was written successfully.
      */
@@ -1001,7 +1002,7 @@ object MmkvManager {
     /**
      * Encodes the setting.
      *
-     * @param key The setting key.
+     * @param key The setting value.
      * @param value The setting value.
      * @return Whether the setting was written successfully.
      */
@@ -1012,7 +1013,7 @@ object MmkvManager {
     /**
      * Encodes the setting.
      *
-     * @param key The setting key.
+     * @param key The setting value.
      * @param value The setting value.
      * @return Whether the setting was written successfully.
      */
@@ -1034,7 +1035,7 @@ object MmkvManager {
      * Decodes the setting string.
      *
      * @param key The setting key.
-     * @param defaultValue The default value.
+     * @param defaultValue The setting value.
      * @return The setting value.
      */
     fun decodeSettingsString(key: String, defaultValue: String?): String? {
@@ -1045,7 +1046,7 @@ object MmkvManager {
      * Decodes the setting integer.
      *
      * @param key The setting key.
-     * @param defaultValue The default value.
+     * @param defaultValue The setting value.
      * @return The setting value.
      */
     fun decodeSettingsInt(key: String, defaultValue: Int): Int {
