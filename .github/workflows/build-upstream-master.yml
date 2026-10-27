@@ -554,7 +554,7 @@ jobs:
       - name: Publish GitHub Release
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.REPO_WRITE_TOKEN }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           VERSION_NAME: ${{ steps.release.outputs.version }}
         run: |
@@ -563,6 +563,7 @@ jobs:
           gh release create \
             "$RELEASE_TAG" \
             release-assets/* \
+            --repo FredoWanchampix/v2rayNG \
             --title "v2rayNG ${VERSION_NAME} — fork build" \
             --notes-file release-notes.md \
             --target "$MERGED_SHA" \
