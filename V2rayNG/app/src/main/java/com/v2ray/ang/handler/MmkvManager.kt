@@ -242,6 +242,106 @@ object MmkvManager {
         return allServers
     }
 
+    private fun parseStoredConfigType(value: com.google.gson.JsonElement?): EConfigType? {
+        if (value == null || value.isJsonNull || !value.isJsonPrimitive) return null
+        val primitive = value.asJsonPrimitive
+        if (primitive.isNumber) {
+            return runCatching { EConfigType.fromInt(primitive.asInt) }.getOrNull()
+        }
+        if (!primitive.isString) return null
+        val text = primitive.asString.trim()
+        if (text.isEmpty()) return null
+        return EConfigType.entries.firstOrNull {
+            it.name.equals(text, ignoreCase = true) ||
+                it.protocolScheme.equals(text, ignoreCase = true)
+        } ?: text.toIntOrNull()?.let(EConfigType::fromInt) ?: when (text.lowercase()) {
+            "ss" -> EConfigType.SHADOWSOCKS
+            "socks4", "socks5" -> EConfigType.SOCKS
+            "hy2", "hysteria2" -> EConfigType.HYSTERIA2
+            else -> null
+        }
+    }
+
+    private fun recoverStoredConfigType(
+        profileJson: com.google.gson.JsonObject,
+        guid: String,
+    ): EConfigType? {
+        parseStoredConfigType(profileJson.get("configType"))?.let { return it }
+        parseStoredConfigType(profileJson.get("config_type"))?.let { return it }
+
+        val rawConfig = serverRawStorage.decodeString(guid)?.trim().orEmpty()
+        if (rawConfig.isNotEmpty()) {
+            if (rawConfig.startsWith("{") && JsonUtil.parseString(rawConfig) != null) {
+                return EConfigType.CUSTOM
+            }
+            val rawScheme = rawConfig.substringBefore("://").substringBefore(":").trim()
+            parseStoredConfigType(com.google.gson.JsonPrimitive(rawScheme))?.let { return it }
+        }
+
+        fun value(name: String): String? {
+            val element = profileJson.get(name) ?: return null
+            if (element.isJsonNull || !element.isJsonPrimitive) return null
+            return element.asString.trim().takeIf { it.isNotEmpty() }
+        }
+
+        fun present(name: String): Boolean = value(name) != null
+
+        if (present("policyGroupType") ||
+            present("policyGroupSubscriptionId") ||
+            present("policyGroupFilter") ||
+            present("policyGroupFallbackTag") ||
+            present("policyGroupTestOutbounds")
+        ) {
+            return EConfigType.POLICYGROUP
+        }
+        if (present("proxyChainProfiles")) return EConfigType.PROXYCHAIN
+        if (present("secretKey") || present("localAddress") || present("reserved")) {
+            return EConfigType.WIREGUARD
+        }
+        if (present("obfsPassword") ||
+            present("portHopping") ||
+            present("portHoppingInterval") ||
+            present("bandwidthDown") ||
+            present("bandwidthUp") ||
+            value("network")?.lowercase() in setOf("hysteria", "hysteria2", "hy2")
+        ) {
+            return EConfigType.HYSTERIA2
+        }
+        if (present("flow") ||
+            present("mldsa65Verify") ||
+            present("shortId") ||
+            present("spiderX") ||
+            present("publicKey")
+        ) {
+            return EConfigType.VLESS
+        }
+
+        val method = value("method")
+        val password = value("password")
+        val username = value("username")
+        val network = value("network")
+        val security = value("security")
+        val headerType = value("headerType")
+
+        if (method.equals("none", ignoreCase = true)) return EConfigType.VLESS
+        if (method != null && (
+                method.equals(AppConfig.DEFAULT_SECURITY, ignoreCase = true) ||
+                    network != null ||
+                    headerType != null
+            )
+        ) {
+            return EConfigType.VMESS
+        }
+        if (username != null) return EConfigType.SOCKS
+        if (method != null && password != null && network == null && security == null) {
+            return EConfigType.SHADOWSOCKS
+        }
+        if (security != null || network != null) return EConfigType.TROJAN
+        if (value("server") != null && value("serverPort") != null) {
+            return if (password != null) EConfigType.TROJAN else EConfigType.SOCKS
+        }
+        return null
+    }
 
     /**
      * Decodes the server configuration.
@@ -257,15 +357,14 @@ object MmkvManager {
         if (json.isNullOrBlank()) {
             return null
         }
-        val configTypeName = JsonUtil.parseString(json)
-            ?.get("configType")
-            ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }
-            ?.asString
-        if (configTypeName == null || EConfigType.entries.none { it.name == configTypeName }) {
-            Log.e(TAG, "Skipping invalid server profile with missing or invalid configType, guid=$guid")
+        val profileJson = JsonUtil.parseString(json) ?: return null
+        val configType = recoverStoredConfigType(profileJson, guid)
+        if (configType == null) {
+            Log.e(TAG, "Cannot recover configType for server profile, guid=$guid")
             return null
         }
-        return JsonUtil.fromJsonSafe(json, ProfileItem::class.java)
+        profileJson.addProperty("configType", configType.name)
+        return JsonUtil.fromJsonSafe(profileJson.toString(), ProfileItem::class.java)
     }
 
 
@@ -396,23 +495,19 @@ object MmkvManager {
     /**
      * Removes the server configuration.
      *
-     * @param guid The server GUID.
+     * @param guid The GUID of the configuration.
      */
     fun removeServer(guid: String) {
         if (guid.isBlank()) {
             return
         }
 
-        // Get config to determine which subscription to update
         val config = decodeServerConfig(guid)
         val subId = getSubscriptionId(config?.subscriptionId)
-
-        // Remove from appropriate server list
         val serverList = decodeServerList(subId)
         serverList.remove(guid)
         encodeServerList(serverList, subId)
 
-        // Clean up storage
         if (getSelectServer() == guid) {
             mainStorage.remove(KEY_SELECTED_SERVER)
         }
@@ -429,7 +524,6 @@ object MmkvManager {
         val subId = getSubscriptionId(subscriptionId)
         val serverList = decodeServerList(subId)
 
-        // Remove all servers in the list
         serverList.forEach { guid ->
             if (getSelectServer() == guid) {
                 mainStorage.remove(KEY_SELECTED_SERVER)
@@ -470,7 +564,7 @@ object MmkvManager {
     /**
      * Decodes the server affiliation information.
      *
-     * @param guid The server GUID.
+     * @param guid The GUID of the configuration.
      * @return The server affiliation information.
      */
     fun decodeServerAffiliationInfo(guid: String): ServerAffiliationInfo? {
@@ -487,8 +581,8 @@ object MmkvManager {
     /**
      * Encodes the server test delay in milliseconds.
      *
-     * @param guid The server GUID.
-     * @param testResult The test delay in milliseconds.
+     * @param guid The GUID of the configuration.
+     * @param testResult The delay result in milliseconds.
      */
     fun encodeServerTestDelayMillis(guid: String, testResult: Long) {
         if (guid.isBlank()) {
@@ -502,7 +596,7 @@ object MmkvManager {
     /**
      * Encodes the server download speed test result.
      *
-     * @param guid The server GUID.
+     * @param guid The GUID of the configuration.
      * @param speedBytesPerSec Average download speed in bytes per second, 0 when untested, -1 when probe failed.
      * @param stable Whether the profile sustained the full download.
      */
@@ -520,7 +614,7 @@ object MmkvManager {
     /**
      * Clears all test delay results.
      *
-     * @param keys The list of server GUIDs.
+     * @param keys The GUIDs of the configurations.
      */
     fun clearAllTestDelayResults(keys: List<String>?) {
         keys?.forEach { key ->
@@ -537,7 +631,7 @@ object MmkvManager {
     /**
      * Removes all server configurations.
      *
-     * @return The number of server configurations removed.
+     * @return The number of configurations removed.
      */
     fun removeAllServer(): Int {
         val count = profileFullStorage.allKeys()?.count() ?: 0
@@ -554,8 +648,8 @@ object MmkvManager {
     /**
      * Removes invalid server configurations.
      *
-     * @param guid The server GUID.
-     * @return The number of server configurations removed.
+     * @param guid The GUID of the configuration.
+     * @return The number of configurations removed.
      */
     fun removeZeroSpeedServer(guid: String): Int {
         var count = 0
@@ -604,7 +698,7 @@ object MmkvManager {
     /**
      * Encodes the raw server configuration.
      *
-     * @param guid The server GUID.
+     * @param guid The GUID of the configuration.
      * @param config The raw configuration.
      */
     fun encodeServerRaw(guid: String, config: String) {
@@ -614,7 +708,7 @@ object MmkvManager {
     /**
      * Decodes the raw server configuration.
      *
-     * @param guid The server GUID.
+     * @param guid The GUID of the configuration.
      * @return The raw server configuration.
      */
     fun decodeServerRaw(guid: String): String? {
@@ -729,7 +823,7 @@ object MmkvManager {
     /**
      * Encodes the subscription.
      *
-     * @param guid The subscription GUID.
+     * @param guid The GUID of the subscription.
      * @param subItem The subscription item.
      */
     fun encodeSubscription(guid: String, subItem: SubscriptionItem) {
@@ -746,7 +840,7 @@ object MmkvManager {
     /**
      * Decodes the subscription.
      *
-     * @param subscriptionId The subscription ID.
+     * @param subscriptionId The ID of the subscription.
      * @return The subscription item.
      */
     fun decodeSubscription(subscriptionId: String): SubscriptionItem? {
@@ -802,7 +896,7 @@ object MmkvManager {
     /**
      * Removes the asset URL.
      *
-     * @param assetid The asset ID.
+     * @param assetid The ID of the asset.
      */
     fun removeAssetUrl(assetid: String) {
         assetStorage.remove(assetid)
@@ -811,7 +905,7 @@ object MmkvManager {
     /**
      * Encodes the asset.
      *
-     * @param assetid The asset ID.
+     * @param assetid The ID of the asset.
      * @param assetItem The asset item.
      */
     fun encodeAsset(assetid: String, assetItem: AssetUrlItem) {
@@ -822,8 +916,8 @@ object MmkvManager {
     /**
      * Decodes the asset.
      *
-     * @param assetid The asset ID.
-     * @return The asset item.
+     * @param assetid The ID of the asset.
+     * @return The asset URL.
      */
     fun decodeAsset(assetid: String): AssetUrlItem? {
         val json = assetStorage.decodeString(assetid) ?: return null
@@ -865,7 +959,7 @@ object MmkvManager {
      *
      * @param key The setting key.
      * @param value The setting value.
-     * @return Whether the encoding was successful.
+     * @return Whether the setting was written successfully.
      */
     fun encodeSettings(key: String, value: String?): Boolean {
         return settingsStorage.encode(key, value)
@@ -876,7 +970,7 @@ object MmkvManager {
      *
      * @param key The setting key.
      * @param value The setting value.
-     * @return Whether the encoding was successful.
+     * @return Whether the setting was written successfully.
      */
     fun encodeSettings(key: String, value: Int): Boolean {
         return settingsStorage.encode(key, value)
@@ -887,18 +981,18 @@ object MmkvManager {
      *
      * @param key The setting key.
      * @param value The setting value.
-     * @return Whether the encoding was successful.
+     * @return Whether the setting was written successfully.
      */
     fun encodeSettings(key: String, value: Long): Boolean {
         return settingsStorage.encode(key, value)
     }
 
     /**
-     * Encodes the settings.
+     * Encodes the setting.
      *
      * @param key The setting key.
      * @param value The setting value.
-     * @return Whether the encoding was successful.
+     * @return Whether the setting was written successfully.
      */
     fun encodeSettings(key: String, value: Float): Boolean {
         return settingsStorage.encode(key, value)
@@ -909,7 +1003,7 @@ object MmkvManager {
      *
      * @param key The setting key.
      * @param value The setting value.
-     * @return Whether the encoding was successful.
+     * @return Whether the setting was written successfully.
      */
     fun encodeSettings(key: String, value: Boolean): Boolean {
         return settingsStorage.encode(key, value)
@@ -920,7 +1014,7 @@ object MmkvManager {
      *
      * @param key The setting key.
      * @param value The setting value.
-     * @return Whether the encoding was successful.
+     * @return Whether the setting was written successfully.
      */
     fun encodeSettings(key: String, value: MutableSet<String>): Boolean {
         return settingsStorage.encode(key, value)
@@ -962,7 +1056,7 @@ object MmkvManager {
      * Decodes the setting long.
      *
      * @param key The setting key.
-     * @param defaultValue The default value.
+     * @param defaultValue The setting value.
      * @return The setting value.
      */
     fun decodeSettingsLong(key: String, defaultValue: Long): Long {
