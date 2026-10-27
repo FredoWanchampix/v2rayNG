@@ -214,6 +214,7 @@ jobs:
               raise SystemExit("Cannot safely update application version")
 
           ndk_pattern = r'(?m)^([ \t]*ndkVersion[ \t]*=[ \t]*)\"[^\"]*\"'
+
           if re.search(ndk_pattern, content):
               content, count_ndk = re.subn(
                   ndk_pattern,
@@ -274,16 +275,22 @@ jobs:
               "V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt"
           )
           main_text = main_view_model.read_text(encoding="utf-8")
+
+          legacy_reference = "R.string.title_update_config_count_legacy"
+          existing_legacy_references = main_text.count(legacy_reference)
+
           main_text, count_reference = re.subn(
-              r"R\.string\.title_update_config_count\b",
-              "R.string.title_update_config_count_legacy",
+              r"R\.string\.title_update_config_count(?!_legacy)\b",
+              legacy_reference,
               main_text,
           )
 
-          if count_reference != 1:
+          total_references = existing_legacy_references + count_reference
+
+          if total_references != 1:
               raise SystemExit(
-                  "Expected one title_update_config_count reference in "
-                  f"MainViewModel.kt; found {count_reference}"
+                  "Expected exactly one update-count resource reference in "
+                  f"MainViewModel.kt; found {total_references}"
               )
 
           main_view_model.write_text(main_text, encoding="utf-8")
