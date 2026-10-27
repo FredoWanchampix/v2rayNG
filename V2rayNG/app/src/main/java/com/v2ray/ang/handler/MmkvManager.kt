@@ -26,6 +26,7 @@ import com.v2ray.ang.dto.entities.ServerAffiliationInfo
 import com.v2ray.ang.dto.entities.SubscriptionCache
 import com.v2ray.ang.dto.entities.SubscriptionItem
 import com.v2ray.ang.dto.entities.WebDavConfig
+import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.flow.collectLatest
@@ -254,6 +255,14 @@ object MmkvManager {
         }
         val json = profileFullStorage.decodeString(guid)
         if (json.isNullOrBlank()) {
+            return null
+        }
+        val configTypeName = JsonUtil.parseString(json)
+            ?.get("configType")
+            ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }
+            ?.asString
+        if (configTypeName == null || EConfigType.entries.none { it.name == configTypeName }) {
+            Log.e(TAG, "Skipping invalid server profile with missing or invalid configType, guid=$guid")
             return null
         }
         return JsonUtil.fromJsonSafe(json, ProfileItem::class.java)
@@ -596,7 +605,7 @@ object MmkvManager {
      * Encodes the raw server configuration.
      *
      * @param guid The server GUID.
-     * @param config The raw server configuration.
+     * @param config The raw configuration.
      */
     fun encodeServerRaw(guid: String, config: String) {
         serverRawStorage.encode(guid, config)
@@ -854,8 +863,8 @@ object MmkvManager {
     /**
      * Encodes the settings.
      *
-     * @param key The settings key.
-     * @param value The settings value.
+     * @param key The setting key.
+     * @param value The setting value.
      * @return Whether the encoding was successful.
      */
     fun encodeSettings(key: String, value: String?): Boolean {
@@ -865,8 +874,8 @@ object MmkvManager {
     /**
      * Encodes the settings.
      *
-     * @param key The settings key.
-     * @param value The settings value.
+     * @param key The setting key.
+     * @param value The setting value.
      * @return Whether the encoding was successful.
      */
     fun encodeSettings(key: String, value: Int): Boolean {
@@ -876,8 +885,8 @@ object MmkvManager {
     /**
      * Encodes the settings.
      *
-     * @param key The settings key.
-     * @param value The settings value.
+     * @param key The setting key.
+     * @param value The setting value.
      * @return Whether the encoding was successful.
      */
     fun encodeSettings(key: String, value: Long): Boolean {
@@ -887,8 +896,8 @@ object MmkvManager {
     /**
      * Encodes the settings.
      *
-     * @param key The settings key.
-     * @param value The settings value.
+     * @param key The setting key.
+     * @param value The setting value.
      * @return Whether the encoding was successful.
      */
     fun encodeSettings(key: String, value: Float): Boolean {
@@ -896,10 +905,10 @@ object MmkvManager {
     }
 
     /**
-     * Encodes the settings.
+     * Encodes the setting.
      *
-     * @param key The settings key.
-     * @param value The settings value.
+     * @param key The setting key.
+     * @param value The setting value.
      * @return Whether the encoding was successful.
      */
     fun encodeSettings(key: String, value: Boolean): Boolean {
@@ -907,10 +916,10 @@ object MmkvManager {
     }
 
     /**
-     * Encodes the settings.
+     * Encodes the setting.
      *
-     * @param key The settings key.
-     * @param value The settings value.
+     * @param key The setting key.
+     * @param value The setting value.
      * @return Whether the encoding was successful.
      */
     fun encodeSettings(key: String, value: MutableSet<String>): Boolean {
@@ -918,85 +927,85 @@ object MmkvManager {
     }
 
     /**
-     * Decodes the settings string.
+     * Decodes the setting string.
      *
-     * @param key The settings key.
-     * @return The settings value.
+     * @param key The setting key.
+     * @return The setting value.
      */
     fun decodeSettingsString(key: String): String? {
         return settingsStorage.decodeString(key)
     }
 
     /**
-     * Decodes the settings string.
+     * Decodes the setting string.
      *
-     * @param key The settings key.
+     * @param key The setting key.
      * @param defaultValue The default value.
-     * @return The settings value.
+     * @return The setting value.
      */
     fun decodeSettingsString(key: String, defaultValue: String?): String? {
         return settingsStorage.decodeString(key, defaultValue)
     }
 
     /**
-     * Decodes the settings integer.
+     * Decodes the setting integer.
      *
-     * @param key The settings key.
+     * @param key The setting key.
      * @param defaultValue The default value.
-     * @return The settings value.
+     * @return The setting value.
      */
     fun decodeSettingsInt(key: String, defaultValue: Int): Int {
         return settingsStorage.decodeInt(key, defaultValue)
     }
 
     /**
-     * Decodes the settings long.
+     * Decodes the setting long.
      *
-     * @param key The settings key.
+     * @param key The setting key.
      * @param defaultValue The default value.
-     * @return The settings value.
+     * @return The setting value.
      */
     fun decodeSettingsLong(key: String, defaultValue: Long): Long {
         return settingsStorage.decodeLong(key, defaultValue)
     }
 
     /**
-     * Decodes the settings float.
+     * Decodes the setting float.
      *
-     * @param key The settings key.
-     * @param defaultValue The default value.
-     * @return The settings value.
+     * @param key The setting key.
+     * @param defaultValue The setting value.
+     * @return The setting value.
      */
     fun decodeSettingsFloat(key: String, defaultValue: Float): Float {
         return settingsStorage.decodeFloat(key, defaultValue)
     }
 
     /**
-     * Decodes the settings boolean.
+     * Decodes the setting boolean.
      *
-     * @param key The settings key.
-     * @return The settings value.
+     * @param key The setting key.
+     * @return The setting value.
      */
     fun decodeSettingsBool(key: String): Boolean {
         return settingsStorage.decodeBool(key, false)
     }
 
     /**
-     * Decodes the settings boolean.
+     * Decodes the setting boolean.
      *
-     * @param key The settings key.
-     * @param defaultValue The default value.
-     * @return The settings value.
+     * @param key The setting key.
+     * @param defaultValue The setting value.
+     * @return The setting value.
      */
     fun decodeSettingsBool(key: String, defaultValue: Boolean): Boolean {
         return settingsStorage.decodeBool(key, defaultValue)
     }
 
     /**
-     * Decodes the settings string set.
+     * Decodes the setting string set.
      *
-     * @param key The settings key.
-     * @return The settings value.
+     * @param key The setting key.
+     * @return The setting value.
      */
     fun decodeSettingsStringSet(key: String): MutableSet<String>? {
         return settingsStorage.decodeStringSet(key)
@@ -1015,7 +1024,7 @@ object MmkvManager {
     /**
      * Decodes the start on boot setting.
      *
-     * @return Whether to start on boot.
+     * @return Whether the application should start on boot.
      */
     fun decodeStartOnBoot(): Boolean {
         return decodeSettingsBool(PREF_IS_BOOTED, false)
