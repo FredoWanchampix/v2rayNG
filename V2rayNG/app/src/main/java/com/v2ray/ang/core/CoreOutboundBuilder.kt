@@ -252,18 +252,21 @@ object CoreOutboundBuilder {
             ipv4Addresses.ifEmpty { listOf(AppConfig.WIREGUARD_LOCAL_ADDRESS_V4) }
         }
 
+        val defaultDns = AppConfig.WIREGUARD_LOCAL_REMOTE_DNS.split(",").map { it.trim() }
+
         val rawDNS = profileItem.remoteDNS
             ?.split(",")
             ?.map { it.trim() }
             ?.filter { it.isNotEmpty() }
             ?.ifEmpty { null }
-            ?: listOf(AppConfig.WIREGUARD_LOCAL_REMOTE_DNS)
+            ?: defaultDns
 
         val remotes = if (MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED) == true) {
             rawDNS
         } else {
-            val ipv4Dns = rawDNS.filter { !it.contains(":") }
-            ipv4Dns.ifEmpty { listOf(AppConfig.WIREGUARD_LOCAL_REMOTE_DNS) }
+            rawDNS.filter { !it.contains(":") }
+                // falling back to the IPv4 entries of the default list
+                .ifEmpty { defaultDns.filter { !it.contains(":")} }
         }
 
         outboundBean?.settings?.let { wireguard ->
@@ -376,6 +379,22 @@ object CoreOutboundBuilder {
                 streamSettings.kcpSettings = kcpSetting
                 val udpMaskList =
                     mutableListOf<OutboundBean.StreamSettingsBean.FinalMaskBean.MaskBean>()
+                if (seed.isNullOrEmpty()) {
+                    udpMaskList.add(
+                        OutboundBean.StreamSettingsBean.FinalMaskBean.MaskBean(
+                            type = "mkcp-legacy"
+                        )
+                    )
+                } else {
+                    udpMaskList.add(
+                        OutboundBean.StreamSettingsBean.FinalMaskBean.MaskBean(
+                            type = "mkcp-legacy",
+                            settings = OutboundBean.StreamSettingsBean.FinalMaskBean.MaskBean.MaskSettingsBean(
+                                value = seed
+                            )
+                        )
+                    )
+                }
                 if (!headerType.isNullOrEmpty() && headerType != "none") {
                     val kcpHeaderType = when {
                         headerType == "wechat-video" -> "wechat"
@@ -396,23 +415,6 @@ object CoreOutboundBuilder {
                         )
                     )
                 }
-                if (seed.isNullOrEmpty()) {
-                    udpMaskList.add(
-                        OutboundBean.StreamSettingsBean.FinalMaskBean.MaskBean(
-                            type = "mkcp-legacy"
-                        )
-                    )
-                } else {
-                    udpMaskList.add(
-                        OutboundBean.StreamSettingsBean.FinalMaskBean.MaskBean(
-                            type = "mkcp-legacy",
-                            settings = OutboundBean.StreamSettingsBean.FinalMaskBean.MaskBean.MaskSettingsBean(
-                                value = seed
-                            )
-                        )
-                    )
-                }
-                udpMaskList.reverse()
                 streamSettings.finalmask = OutboundBean.StreamSettingsBean.FinalMaskBean(
                     udp = udpMaskList.toList()
                 )
@@ -482,6 +484,17 @@ object CoreOutboundBuilder {
                     brutalDown = profileItem.bandwidthDown?.nullIfBlank(),
                 )
                 quicParams.congestion = if (quicParams.brutalUp != null || quicParams.brutalDown != null) "brutal" else null
+                val hyUdpFinalmasks = mutableListOf<OutboundBean.StreamSettingsBean.FinalMaskBean.MaskBean>()
+                if (profileItem.obfsPassword.isNotNullEmpty()) {
+                    hyUdpFinalmasks.add(
+                        OutboundBean.StreamSettingsBean.FinalMaskBean.MaskBean(
+                            type = "salamander",
+                            settings = OutboundBean.StreamSettingsBean.FinalMaskBean.MaskBean.MaskSettingsBean(
+                                password = profileItem.obfsPassword
+                            )
+                        )
+                    )
+                }
                 if (profileItem.portHopping.isNotNullEmpty()) {
                     val rawInterval = profileItem.portHoppingInterval?.trim().nullIfBlank()
                     val interval = if (rawInterval == null) {
@@ -511,24 +524,21 @@ object CoreOutboundBuilder {
                             }
                         }
                     }
-                    quicParams.udpHop = OutboundBean.StreamSettingsBean.FinalMaskBean.QuicParamsBean.UdpHopBean(
-                        ports = profileItem.portHopping,
-                        interval = interval
-                    )
-                }
-                val finalmask = OutboundBean.StreamSettingsBean.FinalMaskBean(
-                    quicParams = quicParams
-                )
-                if (profileItem.obfsPassword.isNotNullEmpty()) {
-                    finalmask.udp = listOf(
+                    hyUdpFinalmasks.add(
                         OutboundBean.StreamSettingsBean.FinalMaskBean.MaskBean(
-                            type = "salamander",
+                            type = "udphop",
                             settings = OutboundBean.StreamSettingsBean.FinalMaskBean.MaskBean.MaskSettingsBean(
-                                password = profileItem.obfsPassword.orEmpty()
+                                mode = "intervallocal,intervalremote",
+                                interval = interval,
+                                remotePorts = profileItem.portHopping,
                             )
                         )
                     )
                 }
+                val finalmask = OutboundBean.StreamSettingsBean.FinalMaskBean(
+                    udp = hyUdpFinalmasks.toList(),
+                    quicParams = quicParams,
+                )
                 streamSettings.hysteriaSettings = hysteriaSetting
                 streamSettings.finalmask = finalmask
             }
