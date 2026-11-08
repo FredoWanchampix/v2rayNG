@@ -92,7 +92,9 @@ jobs:
           if [ "$UPSTREAM_SHA" = "$MERGE_BASE" ]; then
             echo "policy=already-up-to-date" >> "$GITHUB_OUTPUT"
             echo "MERGE_POLICY=already-up-to-date" >> "$GITHUB_ENV"
+            echo "MERGED_SHA=$FORK_SHA" >> "$GITHUB_ENV"
             echo "- Result: already up to date, nothing to merge." >> merge-report.md
+            echo "- Application version: **$(sed -n 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' V2rayNG/app/build.gradle.kts | head -n1)**" >> merge-report.md
             cat merge-report.md >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -388,7 +390,7 @@ jobs:
         run: |
           set -uo pipefail
           : > /tmp/err.txt
-          for f in /tmp/build.log /tmp/tests.log; do
+          for f in /tmp/build.log /tmp/tests.log /tmp/release.log; do
             [ -f "$f" ] || continue
             {
               echo "=== $f ==="
@@ -499,7 +501,10 @@ jobs:
           set -euo pipefail
           gh release create "$RELEASE_TAG" \
             release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
             --title "v2rayNG ${{ steps.release.outputs.version }} - fork build" \
             --notes-file release-notes.md \
             --target "$(git rev-parse HEAD)" \
-            --latest
+            --latest 2>&1 | tee /tmp/release.log
+          rc=${PIPESTATUS[0]}
+          [ "$rc" -eq 0 ] || exit "$rc"
