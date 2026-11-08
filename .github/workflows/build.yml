@@ -1,15 +1,229 @@
-name: Legacy APK build (manual only)
+name: Build APK
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional release tag (publishes a GitHub Release)"
+        required: false
+        type: string
+  push:
+    branches:
+      - master
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  notice:
+  build:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+
     steps:
-      - name: Explain current release pipeline
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: "14742923"
+          packages: "platforms;android-37.0 build-tools;37.0.0 platform-tools"
+
+      - name: Install Android NDK
+        shell: bash
         run: |
-          echo "::notice::Automatic builds and GitHub Releases are handled by the Merge upstream and build v2rayNG workflow on branch ci-master-build."
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            --channel=0 \
+            --install "ndk;30.0.16248370"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+
+      - name: Restore cached libhevtun
+        id: cache-libhevtun-restore
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}/libs
+          key: libhevtun-${{ runner.os }}-${{ env.NDK_HOME }}-${{ hashFiles('.git/modules/hev-socks5-tunnel/HEAD') }}-${{ hashFiles('compile-hevtun.sh') }}
+
+      - name: Build libhevtun
+        if: steps.cache-libhevtun-restore.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash compile-hevtun.sh
+
+      - name: Save libhevtun
+        if: steps.cache-libhevtun-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}/libs
+          key: libhevtun-${{ runner.os }}-${{ env.NDK_HOME }}-${{ hashFiles('.git/modules/hev-socks5-tunnel/HEAD') }}-${{ hashFiles('compile-hevtun.sh') }}
+
+      - name: Copy libhevtun
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -r "${{ github.workspace }}/libs" "${{ github.workspace }}/V2rayNG/app"
+
+      - name: Fetch AndroidLibXrayLite tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          CURRENT_TAG="$(git -C AndroidLibXrayLite describe --tags --abbrev=0 || true)"
+          if [ -z "$CURRENT_TAG" ]; then
+            echo "::warning::No tag in the pinned submodule; falling back to the latest upstream release."
+            CURRENT_TAG="$(curl -fsSL --retry 3 \
+              https://api.github.com/repos/2dust/AndroidLibXrayLite/releases/latest \
+              | jq -r '.tag_name')"
+          fi
+          if [ -z "$CURRENT_TAG" ] || [ "$CURRENT_TAG" = "null" ]; then
+            echo "::error::Cannot determine AndroidLibXrayLite release tag."
+            exit 1
+          fi
+          echo "CURRENT_TAG=$CURRENT_TAG" >> "$GITHUB_ENV"
+          echo "Using AndroidLibXrayLite tag: $CURRENT_TAG"
+
+      - name: Download libv2ray
+        uses: robinraju/release-downloader@v1.13
+        with:
+          repository: 2dust/AndroidLibXrayLite
+          tag: ${{ env.CURRENT_TAG }}
+          fileName: libv2ray.aar
+          out-file-path: V2rayNG/app/libs/
+
+      - name: Verify native libraries are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for f in V2rayNG/app/libs/libv2ray.aar; do
+            if [ ! -f "$f" ]; then echo "::error::missing $f"; missing=1; fi
+          done
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            for lib in libhev-socks5-tunnel.so libhevsockstun.so; do
+              if [ ! -f "V2rayNG/app/libs/$abi/$lib" ]; then
+                echo "::error::missing V2rayNG/app/libs/$abi/$lib"; missing=1
+              fi
+            done
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          echo "All required native libraries are staged."
+
+      - name: Setup Java
+        uses: actions/setup-java@v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Detect signing material
+        id: signing
+        env:
+          APP_KEYSTORE_BASE64: ${{ secrets.APP_KEYSTORE_BASE64 }}
+          APP_KEYSTORE_PASSWORD: ${{ secrets.APP_KEYSTORE_PASSWORD }}
+          APP_KEYSTORE_ALIAS: ${{ secrets.APP_KEYSTORE_ALIAS }}
+          APP_KEY_PASSWORD: ${{ secrets.APP_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${APP_KEYSTORE_BASE64:-}" ] && [ -n "${APP_KEYSTORE_PASSWORD:-}" ] \
+             && [ -n "${APP_KEYSTORE_ALIAS:-}" ] && [ -n "${APP_KEY_PASSWORD:-}" ]; then
+            printf '%s' "$APP_KEYSTORE_BASE64" | base64 -d > android_keystore.jks
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "keystore=$PWD/android_keystore.jks" >> "$GITHUB_OUTPUT"
+            echo "Signing: release build with the repository keystore."
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::APP_KEYSTORE_* secrets are not set - building a debug-signed APK. Add them to get a release build."
+          fi
+
+      - name: Build APK
+        working-directory: V2rayNG
+        shell: bash
+        env:
+          IS_RELEASE: ${{ steps.signing.outputs.release }}
+          KEYSTORE_FILE: ${{ steps.signing.outputs.keystore }}
+          APP_KEYSTORE_PASSWORD: ${{ secrets.APP_KEYSTORE_PASSWORD }}
+          APP_KEYSTORE_ALIAS: ${{ secrets.APP_KEYSTORE_ALIAS }}
+          APP_KEY_PASSWORD: ${{ secrets.APP_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          chmod +x gradlew
+
+          ./gradlew :app:testPlaystoreDebugUnitTest --no-daemon --stacktrace
+
+          if [ "$IS_RELEASE" = "true" ]; then
+            ./gradlew :app:assemblePlaystoreRelease --no-daemon --stacktrace \
+              "-Pandroid.injected.signing.store.file=$KEYSTORE_FILE" \
+              "-Pandroid.injected.signing.store.password=$APP_KEYSTORE_PASSWORD" \
+              "-Pandroid.injected.signing.key.alias=$APP_KEYSTORE_ALIAS" \
+              "-Pandroid.injected.signing.key.password=$APP_KEY_PASSWORD"
+          else
+            ./gradlew :app:assemblePlaystoreDebug --no-daemon --stacktrace
+          fi
+
+      - name: Collect APKs
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.signing.outputs.release }}" = "true" ]; then
+            APK_DIR="V2rayNG/app/build/outputs/apk/playstore/release"
+          else
+            APK_DIR="V2rayNG/app/build/outputs/apk/playstore/debug"
+          fi
+          mkdir -p release-assets
+          mapfile -t APKS < <(find "$APK_DIR" -maxdepth 1 -type f -name '*.apk' | sort)
+          if [ "${#APKS[@]}" -eq 0 ]; then
+            echo "::error::No APK files were produced."
+            exit 1
+          fi
+          cp "${APKS[@]}" release-assets/
+          ( cd release-assets && sha256sum ./*.apk > SHA256SUMS.txt )
+          VERSION_NAME="$(sed -n 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+            V2rayNG/app/build.gradle.kts | head -n 1)"
+          echo "version=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          ls -la release-assets
+          cat release-assets/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: v2rayNG-${{ steps.collect.outputs.version }}
+          path: release-assets/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "# v2rayNG ${{ steps.collect.outputs.version }} - fork build"
+            echo
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Build type: $([ "${{ steps.signing.outputs.release }}" = "true" ] && echo "release (signed)" || echo "debug (debug-signed)")"
+            echo
+            echo "## Checksums"
+            echo '```'
+            cat release-assets/SHA256SUMS.txt
+            echo '```'
+          } > release-notes.md
+
+          gh release create "${{ inputs.release_tag }}" \
+            release-assets/* \
+            --title "v2rayNG ${{ steps.collect.outputs.version }} - fork build" \
+            --notes-file release-notes.md \
+            --target "$GITHUB_SHA" \
+            --latest
