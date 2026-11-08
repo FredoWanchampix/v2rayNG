@@ -22,6 +22,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # The sync workflow already builds and publishes after merging upstream,
+    # so skip the duplicate build for its bot commits.
+    if: github.actor != 'github-actions[bot]'
 
     steps:
       - name: Checkout code
@@ -269,7 +272,10 @@ jobs:
 
           gh release create "${{ inputs.release_tag }}" \
             release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
             --title "v2rayNG ${{ steps.collect.outputs.version }} - fork build" \
             --notes-file release-notes.md \
             --target "$GITHUB_SHA" \
-            --latest
+            --latest 2>&1 | tee /tmp/release.log
+          rc=${PIPESTATUS[0]}
+          [ "$rc" -eq 0 ] || exit "$rc"
