@@ -21,8 +21,9 @@ object UpdateCheckerManager {
             AppConfig.APP_API_URL.concatUrl("latest")
         }
 
-        val proxyUsername = SettingsManager.getSocksUsername()
-        val proxyPassword = SettingsManager.getSocksPassword()
+        val liveCreds = SettingsManager.readLocalProxyCredentials()
+        val proxyUsername = liveCreds?.first ?: SettingsManager.getSocksUsername()
+        val proxyPassword = liveCreds?.second ?: SettingsManager.getSocksPassword()
         val httpPort = SettingsManager.getHttpPort()
 
         var response = ""
