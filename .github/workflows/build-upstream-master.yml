@@ -343,8 +343,9 @@ jobs:
           # mihomo: official prebuilt android-arm64 binary (AmneziaWG 3.x/1.x).
           curl -fsSL --retry 4 -o /tmp/mihomo.gz \
             "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_TAG}/mihomo-android-arm64-v8-${MIHOMO_TAG}.gz"
-          echo "${MIHOMO_SHA256}  /tmp/mihomo.gz" | sha256sum -c -
           gunzip -f /tmp/mihomo.gz
+          # The pin covers the unpacked binary: gz wrappers differ per upload.
+          echo "${MIHOMO_SHA256}  /tmp/mihomo" | sha256sum -c -
           install -m 0755 /tmp/mihomo V2rayNG/app/src/main/assets/engines/mihomo
 
           # sing-box: official releases ship no naive outbound, so build from
