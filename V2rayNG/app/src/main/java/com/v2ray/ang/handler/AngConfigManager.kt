@@ -32,9 +32,14 @@ import com.v2ray.ang.util.QRCodeDecoder
 import com.v2ray.ang.util.SubscriptionContentConverter
 import com.v2ray.ang.util.Utils
 import okhttp3.Headers
+import java.io.IOException
 import java.net.URI
+import javax.net.ssl.SSLException
 
 object AngConfigManager {
+
+    /** How many times a subscription body is fetched before giving up. */
+    private const val SUBSCRIPTION_FETCH_ATTEMPTS = 3
 
     private data class ParsedProfile(
         val profile: ProfileItem,
@@ -491,6 +496,47 @@ object AngConfigManager {
     }
 
     /**
+     * Fetches subscription content, retrying transient network failures.
+     *
+     * Restrictive networks and middleboxes intermittently reset the TLS
+     * handshake to subscription endpoints (observed in the field as
+     * SSLHandshakeException / EOFException / ConnectException on an otherwise
+     * healthy profile). Without retries a single dropped handshake fails the
+     * whole subscription update, which users experience as "the update works
+     * only sometimes".
+     *
+     * @param attempts total number of tries, including the first one.
+     * @param fetch one network attempt returning the body or throwing.
+     * @return the fetched body, or an empty string when every attempt failed.
+     */
+    private fun fetchWithRetry(
+        attempts: Int,
+        fetch: (Int) -> String
+    ): String {
+        var lastError: Exception? = null
+        for (attempt in 1..attempts) {
+            try {
+                return fetch(attempt)
+            } catch (e: Exception) {
+                lastError = e
+                val transient = e is IOException || e is SSLException
+                LogUtil.w(
+                    AppConfig.TAG,
+                    "Subscription fetch attempt $attempt/$attempts failed: ${e.message}"
+                )
+                if (!transient || attempt == attempts) break
+                try {
+                    Thread.sleep(1500L * attempt)
+                } catch (_: InterruptedException) {
+                    break
+                }
+            }
+        }
+        lastError?.let { throw it }
+        return ""
+    }
+
+    /**
      * Updates the configuration via a subscription.
      *
      * @param it The subscription item.
@@ -551,18 +597,20 @@ object AngConfigManager {
             }
 
             var configText = try {
-                HttpUtil.getUrlContentWithUserAgent(
-                    UrlContentRequest(
-                        url = url,
-                        userAgent = userAgent,
-                        requestHeaders = requestHeaders,
-                        timeout = 15000,
-                        httpPort = httpPort,
-                        proxyUsername = proxyUsername,
-                        proxyPassword = proxyPassword
-                    ),
-                    captureUsageInfo
-                )
+                fetchWithRetry(SUBSCRIPTION_FETCH_ATTEMPTS) { _ ->
+                    HttpUtil.getUrlContentWithUserAgent(
+                        UrlContentRequest(
+                            url = url,
+                            userAgent = userAgent,
+                            requestHeaders = requestHeaders,
+                            timeout = 15000,
+                            httpPort = httpPort,
+                            proxyUsername = proxyUsername,
+                            proxyPassword = proxyPassword
+                        ),
+                        captureUsageInfo
+                    )
+                }
             } catch (e: Exception) {
                 LogUtil.e(AppConfig.ANG_PACKAGE, "Update subscription: proxy not ready or other error", e)
                 if (it.subscription.updateViaActiveProxy) {
@@ -572,14 +620,16 @@ object AngConfigManager {
             }
             if (configText.isEmpty() && !it.subscription.updateViaActiveProxy) {
                 configText = try {
-                    HttpUtil.getUrlContentWithUserAgent(
-                        UrlContentRequest(
-                            url = url,
-                            userAgent = userAgent,
-                            requestHeaders = requestHeaders
-                        ),
-                        captureUsageInfo
-                    )
+                    fetchWithRetry(SUBSCRIPTION_FETCH_ATTEMPTS) { _ ->
+                        HttpUtil.getUrlContentWithUserAgent(
+                            UrlContentRequest(
+                                url = url,
+                                userAgent = userAgent,
+                                requestHeaders = requestHeaders
+                            ),
+                            captureUsageInfo
+                        )
+                    }
                 } catch (e: Exception) {
                     LogUtil.e(AppConfig.TAG, "Update subscription: Failed to get URL content with user agent", e)
                     ""
