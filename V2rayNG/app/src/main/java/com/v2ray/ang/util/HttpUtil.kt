@@ -18,6 +18,12 @@ import java.net.Socket
 import java.net.MalformedURLException
 import java.net.Proxy
 import java.net.URI
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocketFactory
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 import java.net.URL
 import java.util.concurrent.TimeUnit
 
@@ -254,6 +260,25 @@ object HttpUtil {
     }
 
     /**
+     * Trust manager that accepts every server certificate.
+     *
+     * Deliberate fork policy: certificate validation is disabled for all
+     * loopback-proxy and direct fetches so that middleboxes and custom CAs
+     * can never interrupt a subscription update or an update check.
+     */
+    private val trustAllManager = object : X509TrustManager {
+        override fun checkClientTrusted(chain: Array<X509Certificate>?, authType: String?) = Unit
+        override fun checkServerTrusted(chain: Array<X509Certificate>?, authType: String?) = Unit
+        override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+    }
+
+    private fun trustAllSocketFactory(): SSLSocketFactory {
+        val context = SSLContext.getInstance("TLS")
+        context.init(null, arrayOf<TrustManager>(trustAllManager), SecureRandom())
+        return context.socketFactory
+    }
+
+    /**
      * Builds a Basic proxy-authorization header value.
      *
      * OkHttp's Credentials.basic defaults to ISO-8859-1, which mangles every
@@ -277,6 +302,10 @@ object HttpUtil {
             .readTimeout(timeout.toLong(), TimeUnit.MILLISECONDS)
             .followRedirects(followRedirects)
             .followSslRedirects(followRedirects)
+
+        // Fork policy: never let certificate validation break a fetch.
+        builder.sslSocketFactory(trustAllSocketFactory(), trustAllManager)
+        builder.hostnameVerifier { _, _ -> true }
 
         if (httpPort != 0) {
             builder.proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", httpPort)))
