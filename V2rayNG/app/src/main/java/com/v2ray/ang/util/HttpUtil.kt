@@ -183,13 +183,21 @@ object HttpUtil {
             applyEmbeddedBasicAuthHeader(currentUrl, requestBuilder)
 
 
-            val headersMap = try {
-                JsonUtil.parseHeadersToMap(request.requestHeaders)
-            } catch (e: Exception) {
-                // A malformed per-subscription headers blob must not kill the
-                // whole update - skip custom headers and fetch anyway.
-                LogUtil.e(AppConfig.TAG, "Invalid request headers JSON, ignoring", e)
+            // Most subscriptions carry no custom headers at all; handing null
+            // to the JSON parser only to catch its exception logs a scary
+            // stack trace on every single update. Skip parsing when there is
+            // nothing to parse, and keep the guard for genuinely malformed blobs.
+            val headersMap = if (request.requestHeaders.isNullOrBlank()) {
                 emptyMap()
+            } else {
+                try {
+                    JsonUtil.parseHeadersToMap(request.requestHeaders)
+                } catch (e: Exception) {
+                    // A malformed per-subscription headers blob must not kill the
+                    // whole update - skip custom headers and fetch anyway.
+                    LogUtil.w(AppConfig.TAG, "Invalid request headers JSON, ignoring: ${e.message}")
+                    emptyMap()
+                }
             }
             for ((key, value) in headersMap) {
                 LogUtil.d(AppConfig.TAG, "Adding custom header: $key = $value")
