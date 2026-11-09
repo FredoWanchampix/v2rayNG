@@ -55,6 +55,7 @@ jobs:
         with:
           ref: master
           fetch-depth: 0
+          fetch-tags: true
           submodules: recursive
           token: ${{ secrets.REPO_WRITE_TOKEN || secrets.GITHUB_TOKEN }}
           persist-credentials: true
@@ -415,6 +416,8 @@ jobs:
         id: release
         env:
           REQUESTED_TAG: ${{ github.event.inputs.release_tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_WRITE_TOKEN: ${{ secrets.REPO_WRITE_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -446,11 +449,59 @@ jobs:
             echo
             echo "## Which APK"
             echo
-            echo "- \`universal\` - any device"
-            echo "- \`arm64-v8a\` - modern ARM (Xiaomi 24031PN0DC uses this)"
+            echo "- \`universal\` - works on any architecture"
+            echo "- \`arm64-v8a\` - 64-bit ARM (most phones since 2017)"
             echo "- \`armeabi-v7a\` - 32-bit ARM"
             echo "- \`x86_64\` / \`x86\` - emulators"
           } > release-notes.md
+          # ---- Changelog for THIS release only ----
+          # A token is required to list releases; REPO_WRITE_TOKEN has wider scope.
+          export GH_TOKEN="${REPO_WRITE_TOKEN:-${GITHUB_TOKEN:-}}"
+          git fetch --tags --force origin >/dev/null 2>&1 || true
+
+          # Most recent published release other than the one being created now.
+          # Tag names sort correctly as text: v<version>-fork-<YYYYMMDD-HHMMSS>.
+          PREV_TAG="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 50 \
+            --json tagName --jq '.[].tagName' 2>/dev/null \
+            | grep -v -x -F "$RELEASE_TAG" | sort -r | head -1 || true)"
+          if [ -n "$PREV_TAG" ] && ! git rev-parse -q --verify \
+              "refs/tags/${PREV_TAG}^{commit}" >/dev/null 2>&1; then
+            PREV_TAG=""
+          fi
+          echo "Previous release tag: ${PREV_TAG:-<none>}"
+
+          # Keep upstream commits out of the fork list; they get their own
+          # section below, otherwise every merged commit would appear twice.
+          NOT_ARGS=()
+          if [ -n "${UPSTREAM_SHA:-}" ]; then NOT_ARGS=(--not "$UPSTREAM_SHA"); fi
+
+          {
+            echo
+            echo "## What changed in this release"
+            echo
+            echo "### Fork commits"
+            echo
+            if [ -n "$PREV_TAG" ]; then
+              RANGE_LOG="$(git log --no-merges --date=short \
+                --pretty=format:'- %s (%h, %ad)' "${PREV_TAG}..HEAD" "${NOT_ARGS[@]}" 2>/dev/null || true)"
+            else
+              RANGE_LOG="$(git log --no-merges -n 20 --date=short \
+                --pretty=format:'- %s (%h, %ad)' HEAD "${NOT_ARGS[@]}" 2>/dev/null || true)"
+            fi
+            if [ -n "$RANGE_LOG" ]; then printf '%s\n' "$RANGE_LOG"; else echo "- No new fork commits."; fi
+            echo
+            echo "### Upstream commits integrated"
+            echo
+            if [ "${MERGE_POLICY:-}" = "already-up-to-date" ]; then
+              echo "- Already up to date with \`${UPSTREAM_REPO}\`; nothing new."
+            elif [ -n "${MERGE_BASE:-}" ] && [ -n "${UPSTREAM_SHA:-}" ]; then
+              UP_LOG="$(git log --no-merges --date=short \
+                --pretty=format:'- %s (%h, %ad)' "${MERGE_BASE}..${UPSTREAM_SHA}" 2>/dev/null || true)"
+              if [ -n "$UP_LOG" ]; then printf '%s\n' "$UP_LOG"; else echo "- None."; fi
+            else
+              echo "- Not a merge run."
+            fi
+          } >> release-notes.md
 
           echo "tag=$RELEASE_TAG"     >> "$GITHUB_OUTPUT"
           echo "version=$VERSION_NAME" >> "$GITHUB_OUTPUT"
