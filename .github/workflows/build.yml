@@ -32,6 +32,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
@@ -255,6 +256,8 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_WRITE_TOKEN: ${{ secrets.REPO_WRITE_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         shell: bash
         run: |
           set -euo pipefail
@@ -269,6 +272,39 @@ jobs:
             cat release-assets/SHA256SUMS.txt
             echo '```'
           } > release-notes.md
+          # ---- Changelog for THIS release only ----
+          # A token is required to list releases; REPO_WRITE_TOKEN has wider scope.
+          export GH_TOKEN="${REPO_WRITE_TOKEN:-${GITHUB_TOKEN:-}}"
+          git fetch --tags --force origin >/dev/null 2>&1 || true
+
+          # Most recent published release other than the one being created now.
+          # Tag names sort correctly as text: v<version>-fork-<YYYYMMDD-HHMMSS>.
+          PREV_TAG="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 50 \
+            --json tagName --jq '.[].tagName' 2>/dev/null \
+            | grep -v -x -F "$RELEASE_TAG" | sort -r | head -1 || true)"
+          if [ -n "$PREV_TAG" ] && ! git rev-parse -q --verify \
+              "refs/tags/${PREV_TAG}^{commit}" >/dev/null 2>&1; then
+            PREV_TAG=""
+          fi
+          echo "Previous release tag: ${PREV_TAG:-<none>}"
+
+          {
+            echo
+            echo "## What changed in this release"
+            echo
+            if [ -n "$PREV_TAG" ]; then
+              echo "Commits since \`${PREV_TAG}\`:"
+              echo
+              RANGE_LOG="$(git log --no-merges --date=short \
+                --pretty=format:'- %s (%h, %ad)' "${PREV_TAG}..HEAD" 2>/dev/null || true)"
+            else
+              echo "No previous release found. Last 20 commits:"
+              echo
+              RANGE_LOG="$(git log --no-merges -n 20 --date=short \
+                --pretty=format:'- %s (%h, %ad)' HEAD 2>/dev/null || true)"
+            fi
+            if [ -n "$RANGE_LOG" ]; then printf '%s\n' "$RANGE_LOG"; else echo "- No new commits."; fi
+          } >> release-notes.md
 
           gh release create "${{ inputs.release_tag }}" \
             release-assets/* \
