@@ -39,7 +39,7 @@ import javax.net.ssl.SSLException
 object AngConfigManager {
 
     /** How many times a subscription body is fetched before giving up. */
-    private const val SUBSCRIPTION_FETCH_ATTEMPTS = 3
+    private const val SUBSCRIPTION_FETCH_ATTEMPTS = 6
 
     private data class ParsedProfile(
         val profile: ProfileItem,
@@ -526,7 +526,7 @@ object AngConfigManager {
                 )
                 if (!transient || attempt == attempts) break
                 try {
-                    Thread.sleep(1500L * attempt)
+                    Thread.sleep(minOf(1500L * attempt, 6000L))
                 } catch (_: InterruptedException) {
                     break
                 }
