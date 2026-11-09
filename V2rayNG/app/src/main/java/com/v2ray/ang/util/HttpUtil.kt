@@ -119,7 +119,7 @@ object HttpUtil {
             .get()
             .header("Connection", "close")
         if (request.httpPort != 0 && !request.proxyUsername.isNullOrBlank() && !request.proxyPassword.isNullOrBlank()) {
-            requestBuilder.header("Proxy-Authorization", Credentials.basic(request.proxyUsername, request.proxyPassword))
+            requestBuilder.header("Proxy-Authorization", basicProxyCredentials(request.proxyUsername, request.proxyPassword))
         }
         try {
             client.newCall(requestBuilder.build()).execute().use { response ->
@@ -200,7 +200,7 @@ object HttpUtil {
             }
 
             if (request.httpPort != 0 && !request.proxyUsername.isNullOrBlank() && !request.proxyPassword.isNullOrBlank()) {
-                requestBuilder.header("Proxy-Authorization", Credentials.basic(request.proxyUsername, request.proxyPassword))
+                requestBuilder.header("Proxy-Authorization", basicProxyCredentials(request.proxyUsername, request.proxyPassword))
             }
 
             client.newCall(requestBuilder.build()).execute().use { response ->
@@ -245,6 +245,18 @@ object HttpUtil {
         }
     }
 
+    /**
+     * Builds a Basic proxy-authorization header value.
+     *
+     * OkHttp's Credentials.basic defaults to ISO-8859-1, which mangles every
+     * password containing characters outside Latin-1 (for example "₽"): the
+     * local proxy then rejects all requests with HTTP 407 and the user sees
+     * "Failed to authenticate with proxy". The loopback proxy compares UTF-8,
+     * so encode UTF-8 explicitly.
+     */
+    private fun basicProxyCredentials(username: String?, password: String?): String =
+        Credentials.basic(username.orEmpty(), password.orEmpty(), Charsets.UTF_8)
+
     private fun buildOkHttpClient(
         timeout: Int,
         httpPort: Int,
@@ -266,7 +278,7 @@ object HttpUtil {
                         null
                     } else {
                         response.request.newBuilder()
-                            .header("Proxy-Authorization", Credentials.basic(proxyUsername, proxyPassword))
+                            .header("Proxy-Authorization", basicProxyCredentials(proxyUsername, proxyPassword))
                             .build()
                     }
                 }
@@ -306,7 +318,7 @@ object HttpUtil {
             .get()
             .header("Connection", "close")
         if (request.httpPort != 0 && !request.proxyUsername.isNullOrBlank() && !request.proxyPassword.isNullOrBlank()) {
-            requestBuilder.header("Proxy-Authorization", Credentials.basic(request.proxyUsername, request.proxyPassword))
+            requestBuilder.header("Proxy-Authorization", basicProxyCredentials(request.proxyUsername, request.proxyPassword))
         }
 
         return try {
