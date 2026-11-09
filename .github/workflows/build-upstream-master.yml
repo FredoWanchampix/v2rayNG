@@ -352,8 +352,15 @@ jobs:
           # source with the documented tag; openconnect endpoint is in core.
           git clone --depth 1 --branch "${SINGBOX_TAG}" https://github.com/SagerNet/sing-box /tmp/sing-box
           cd /tmp/sing-box
-          GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
-            go build -trimpath -tags with_naive_outbound,with_gvisor \
+          # The naive outbound imports cronet-go, whose android_arm64 package is
+          # cgo-only: CGO_ENABLED=0 excludes all of its files. Cross-compile with
+          # the NDK clang instead. gvisor is not needed (the sidecar runs without
+          # a tun inbound), so keep the tag set minimal.
+          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          GOOS=android GOARCH=arm64 CGO_ENABLED=1 \
+            CC="$NDK_BIN/aarch64-linux-android24-clang" \
+            CXX="$NDK_BIN/aarch64-linux-android24-clang++" \
+            go build -trimpath -buildvcs=false -tags with_naive_outbound \
             -ldflags="-s -w -X github.com/sagernet/sing-box/constant.Version=${SINGBOX_TAG}" \
             -o sing-box ./cmd/sing-box
           cd -
