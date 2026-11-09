@@ -165,7 +165,7 @@ object CoreServiceManager {
         // Bring up the sidecar engine (if this profile needs one) before the
         // Xray core reads SidecarEngineManager.currentPort while building its
         // socks upstream.
-        SidecarEngineManager.syncForProfile(service, config)
+        SidecarEngineManager.syncForProfile(service, config, guid)
 
         NotificationManager.showNotification(currentConfig)
         if (dialerAddr.isNotNullEmpty()) {

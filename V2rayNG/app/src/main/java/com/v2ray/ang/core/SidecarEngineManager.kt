@@ -54,13 +54,13 @@ object SidecarEngineManager {
      * sidecar that belongs to a different profile. No-op for Xray-native types.
      */
     @Synchronized
-    fun syncForProfile(context: Context, profile: ProfileItem?) {
+    fun syncForProfile(context: Context, profile: ProfileItem?, guid: String?) {
         val engine = profile?.let { engineFor(it.configType) }
         if (engine == null) {
             stopAll()
             return
         }
-        if (currentGuid == profile.guid && isAlive() && isPortOpen(currentPort)) return
+        if (guid != null && currentGuid == guid && isAlive() && isPortOpen(currentPort)) return
         stopAll()
         ensureRunning(context, profile, engine)
     }
@@ -105,7 +105,7 @@ object SidecarEngineManager {
         }
         process = started
         currentPort = port
-        currentGuid = profile.guid
+        currentGuid = guid
         LogUtil.i(AppConfig.TAG, "SidecarEngineManager: $engine up on 127.0.0.1:$port for ${profile.remarks}")
     }
 
