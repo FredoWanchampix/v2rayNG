@@ -523,12 +523,13 @@ object AngConfigManager {
             LogUtil.i(AppConfig.TAG, url)
             val userAgent = it.subscription.userAgent
             val requestHeaders = it.subscription.requestHeaders
-            val proxyUsername = SettingsManager.getSocksUsername()
-            val proxyPassword = SettingsManager.getSocksPassword()
+            // Prefer the credentials the loopback proxy is actually running
+            // with; the persisted settings may lag behind a config change.
+            val liveCreds = SettingsManager.readLocalProxyCredentials()
+            val proxyUsername = liveCreds?.first ?: SettingsManager.getSocksUsername()
+            val proxyPassword = liveCreds?.second ?: SettingsManager.getSocksPassword()
             val httpPort = SettingsManager.getHttpPort()
-            val proxyAvailable = HttpUtil.isLocalProxyAvailable(
-                SettingsManager.getSocksPort()
-            )
+            val proxyAvailable = HttpUtil.isLocalProxyAvailable(httpPort)
 
             if (it.subscription.updateViaActiveProxy) {
                 if (!proxyAvailable || httpPort <= 0) {
