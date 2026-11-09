@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.res.AssetManager
 import android.os.Build
 import android.text.TextUtils
+import com.v2ray.ang.AngApplication
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.AppConfig.ANG_PACKAGE
 import com.v2ray.ang.AppConfig.DEFAULT_SUBSCRIPTION_ID
@@ -294,8 +295,59 @@ object SettingsManager {
      * @return The HTTP port.
      */
     fun getHttpPort(): Int {
-        return getSocksPort() + if (Utils.isXray()) 0 else 1
+        // The loopback HTTP inbound must never share a port with the SOCKS
+        // inbound: two listeners on one port collide, the HTTP listener dies,
+        // and HTTP CONNECT requests (subscription updates, update checks)
+        // reach the SOCKS listener, which answers with a bogus HTTP 407.
+        return getSocksPort() + 1
     }
+
+    /**
+     * Reads the credentials the loopback proxy is currently running with.
+     *
+     * The VPN tunnel (hev-socks5-tunnel.yaml) and the root tunnel
+     * (sys_cache/tun2socks.yml) write the effective SOCKS username and
+     * password into their runtime config when the core starts. Those values
+     * are exactly what the local proxy enforces, so they take precedence
+     * over the persisted settings, which may lag behind a change made while
+     * the core is already running - or be absent altogether.
+     *
+     * @return username/password pair, or null when no runtime config carries one.
+     */
+    fun readLocalProxyCredentials(): Pair<String, String>? {
+        val files = listOf(
+            File(AngApplication.application.filesDir, "hev-socks5-tunnel.yaml"),
+            File(AngApplication.application.filesDir, "${AppConfig.ROOT_RUNTIME_DIR}/tun2socks.yml"),
+        )
+        for (file in files) {
+            val text = try {
+                if (!file.isFile) continue else file.readText()
+            } catch (e: Exception) {
+                LogUtil.w(AppConfig.TAG, "Cannot read proxy runtime config: ${e.message}")
+                continue
+            }
+            var user: String? = null
+            var pass: String? = null
+            for (line in text.lineSequence()) {
+                val entry = line.trim()
+                when {
+                    entry.startsWith("username:") ->
+                        user = unquoteYamlScalar(entry.removePrefix("username:").trim())
+                    entry.startsWith("password:") ->
+                        pass = unquoteYamlScalar(entry.removePrefix("password:").trim())
+                }
+            }
+            if (!user.isNullOrEmpty() && !pass.isNullOrEmpty()) return user to pass
+        }
+        return null
+    }
+
+    private fun unquoteYamlScalar(value: String): String =
+        if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+            value.substring(1, value.length - 1).replace("''", "'")
+        } else {
+            value
+        }
 
     private fun IsDynamicSocksPort(): Boolean {
         return MmkvManager.decodeSettingsBool(AppConfig.PREF_DYNAMIC_SOCKS_PORT, false)
