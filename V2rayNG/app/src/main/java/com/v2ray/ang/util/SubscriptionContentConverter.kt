@@ -343,6 +343,9 @@ object SubscriptionContentConverter {
         return emptyList()
     }
 
+    /** Accepted spellings of the certificate pin inside a custom JSON profile. */
+    private val PIN_SHA256_KEYS = arrayOf("pinnedPeerCertSha256", "pinSHA256")
+
     private val PROXY_PROTOCOLS = setOf(
         "vless", "vmess", "shadowsocks", "trojan",
         "hysteria", "hysteria2", "tuic", "socks", "http"
@@ -356,6 +359,28 @@ object SubscriptionContentConverter {
             if (s.has("address") && s.has("port") && s.has("password") && s.has("method")) return true
         }
         return false
+    }
+
+    /**
+     * Extracts the pinned peer certificate SHA-256 from a TLS settings block.
+     *
+     * Custom (JSON) profiles carry the pin under Xray's `pinnedPeerCertSha256`
+     * key, while Hysteria-family configs and v2rayN share links use `pinSHA256`.
+     * Both spellings are accepted so the pin survives conversion into a share
+     * link; losing it silently disables certificate pinning and leaves the
+     * `autoSetInsecureWhenSha256Present` subscription switch with nothing to
+     * detect.
+     *
+     * @param sources TLS-like JSON blocks to inspect, first match wins.
+     * @return the pin, or null when none of the sources provides one.
+     */
+    private fun pinSha256(vararg sources: JSONObject?): String? {
+        for (source in sources) {
+            for (key in PIN_SHA256_KEYS) {
+                source?.optString(key)?.takeIf { it.isNotEmpty() }?.let { return it }
+            }
+        }
+        return null
     }
 
     private fun buildVless(ob: JSONObject, rem: String): String? = try {
@@ -379,7 +404,12 @@ object SubscriptionContentConverter {
             ?: tlsFp.takeIf { it.isNotEmpty() } ?: "chrome"
         val pbk = rs?.optString("publicKey", "") ?: ""
         val sid = rs?.optString("shortId", "") ?: ""
-        val sni = rs?.optString("serverName", "") ?: ""
+        // REALITY carries its own serverName; for plain TLS it lives in
+        // tlsSettings. Reading only realitySettings dropped the SNI of every
+        // non-REALITY profile, making the core fall back to the bare server
+        // address as the TLS server_name.
+        val sni = rs?.optString("serverName", "")?.takeIf { it.isNotEmpty() }
+            ?: tlsSettings?.optString("serverName", "").orEmpty()
         val security = ss?.optString("security", "none") ?: "none"
         val type = ss?.optString("network", "tcp") ?: "tcp"
         val params = linkedMapOf(
@@ -394,6 +424,9 @@ object SubscriptionContentConverter {
         )
         if (tlsAlpn.isNotEmpty()) params["alpn"] = tlsAlpn
         if (tlsInsecure) params["allowInsecure"] = "1"
+        pinSha256(tlsSettings)?.let { params["pcs"] = it }
+        tlsSettings?.optString("verifyPeerCertByName")?.takeIf { it.isNotEmpty() }
+            ?.let { params["vcn"] = it }
         // Transports are unusable without their parameters
         val wsSettings = ss?.optJSONObject("wsSettings")
         val httpSettings = ss?.optJSONObject("httpSettings")
@@ -513,6 +546,9 @@ object SubscriptionContentConverter {
         }
         xTls?.optString("fingerprint")?.takeIf { it.isNotEmpty() }?.let { linkJson.put("fp", it) }
         if (xTls?.optBoolean("allowInsecure", false) == true) linkJson.put("allowInsecure", 1)
+        pinSha256(xTls)?.let { linkJson.put("pcs", it) }
+        xTls?.optString("verifyPeerCertByName")?.takeIf { it.isNotEmpty() }
+            ?.let { linkJson.put("vcn", it) }
 
         if (net == "ws") {
             val ws = transport ?: stream?.optJSONObject("wsSettings")
@@ -585,6 +621,9 @@ object SubscriptionContentConverter {
         }
         tTls?.optString("fingerprint")?.takeIf { it.isNotEmpty() }?.let { query["fp"] = it }
         if (tTls?.optBoolean("allowInsecure", false) == true) query["allowInsecure"] = "1"
+        pinSha256(tTls)?.let { query["pcs"] = it }
+        tTls?.optString("verifyPeerCertByName")?.takeIf { it.isNotEmpty() }
+            ?.let { query["vcn"] = it }
 
         if (network == "ws") {
             val ws = ss?.optJSONObject("wsSettings")
@@ -615,12 +654,16 @@ object SubscriptionContentConverter {
         val obfs = hy2?.optJSONObject("obfs")
         val obfsType = obfs?.optString("type")
         val obfsPassword = obfs?.optString("password")
-        val sni = ss?.optJSONObject("tlsSettings")?.optString("serverName")
+        val hy2Tls = ss?.optJSONObject("tlsSettings")
+        val sni = hy2Tls?.optString("serverName")
 
         val query = StringBuilder()
         if (!obfsType.isNullOrEmpty()) query.append("&obfs=").append(URLEncoder.encode(obfsType, "UTF-8"))
         if (!obfsPassword.isNullOrEmpty()) query.append("&obfs-password=").append(URLEncoder.encode(obfsPassword, "UTF-8"))
         if (!sni.isNullOrEmpty()) query.append("&sni=").append(URLEncoder.encode(sni, "UTF-8"))
+        pinSha256(hy2Tls, hy2)?.let {
+            query.append("&pinSHA256=").append(URLEncoder.encode(it, "UTF-8"))
+        }
 
         val queryString = if (query.isNotEmpty()) "?" + query.substring(1) else ""
         val encRem = URLEncoder.encode(rem, "UTF-8").replace("+", "%20")
