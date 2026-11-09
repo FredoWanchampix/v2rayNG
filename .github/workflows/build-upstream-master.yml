@@ -324,6 +324,80 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Setup Go for sidecar engines
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+          cache: false
+
+      - name: Fetch and build sidecar engine binaries
+        shell: bash
+        env:
+          MIHOMO_TAG: v1.19.33
+          MIHOMO_SHA256: cfa0be78846bfef7272fe5a73089f8cf0e1f15a6ffb601f5cc809f457f712f67
+          SINGBOX_TAG: v1.14.4
+        run: |
+          set -euo pipefail
+          mkdir -p V2rayNG/app/src/main/assets/engines
+
+          # mihomo: official prebuilt android-arm64 binary (AmneziaWG 3.x/1.x).
+          curl -fsSL --retry 4 -o /tmp/mihomo.gz \
+            "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_TAG}/mihomo-android-arm64-v8-${MIHOMO_TAG}.gz"
+          echo "${MIHOMO_SHA256}  /tmp/mihomo.gz" | sha256sum -c -
+          gunzip -f /tmp/mihomo.gz
+          install -m 0755 /tmp/mihomo V2rayNG/app/src/main/assets/engines/mihomo
+
+          # sing-box: official releases ship no naive outbound, so build from
+          # source with the documented tag; openconnect endpoint is in core.
+          git clone --depth 1 --branch "${SINGBOX_TAG}" https://github.com/SagerNet/sing-box /tmp/sing-box
+          cd /tmp/sing-box
+          GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
+            go build -trimpath -tags with_naive_outbound,with_gvisor \
+            -ldflags="-s -w -X github.com/sagernet/sing-box/constant.Version=${SINGBOX_TAG}" \
+            -o sing-box ./cmd/sing-box
+          cd -
+          install -m 0755 /tmp/sing-box/sing-box V2rayNG/app/src/main/assets/engines/sing-box
+
+          # Mimic: Hysteria2-family transport (MTP + TLS mimicry) Go client,
+          # cross-compiled here, never on the phone.
+          git clone --depth 1 https://github.com/Locon213/Mimic-Protocol /tmp/mimic
+          cd /tmp/mimic
+          GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
+            go build -trimpath -ldflags="-s -w" -o mimic-client ./cmd/client
+          cd -
+          install -m 0755 /tmp/mimic/mimic-client V2rayNG/app/src/main/assets/engines/mimic-client
+
+          ls -la V2rayNG/app/src/main/assets/engines/
+          echo "## Sidecar engines" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          sha256sum V2rayNG/app/src/main/assets/engines/* >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build FPTN client (best effort)
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          # FPTN has no Android artifact upstream: the C++ client is cross
+          # compiled here with the NDK. If any dependency proves unstable the
+          # step is allowed to fail: the app then reports the engine as not
+          # bundled instead of breaking the whole release.
+          git clone --depth 1 https://github.com/fptn-project/fptn /tmp/fptn
+          cd /tmp/fptn
+          cmake -S . -B build \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 \
+            -DCMAKE_BUILD_TYPE=Release -DFPTN_BUILD_CLIENT=ON -DFPTN_BUILD_SERVER=OFF
+          cmake --build build -j"$(nproc)"
+          BIN="$(find build -type f -perm -u+x \( -name 'fptn-client*' -o -name 'fptn_client*' \) | head -1)"
+          if [ -z "$BIN" ]; then
+            echo "::warning::fptn-client binary not found after build; skipping engine"
+            exit 0
+          fi
+          install -m 0755 "$BIN" V2rayNG/app/src/main/assets/engines/fptn-client
+          cd -
+          echo "FPTN client bundled from $BIN"
+
       - name: Detect signing material
         id: signing
         env:

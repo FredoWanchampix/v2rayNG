@@ -17,6 +17,7 @@ import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.dto.ConnectionTestResult
 import com.v2ray.ang.dto.OutboundTrafficStat
 import com.v2ray.ang.dto.entities.ProfileItem
+import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.enums.BrowserDialerMode
 import com.v2ray.ang.extension.delay
 import com.v2ray.ang.extension.isNotNullEmpty
@@ -75,7 +76,7 @@ object CoreServiceManager {
      * Checks if the V2Ray service is running.
      * @return True if the service is running, false otherwise.
      */
-    fun isRunning() = coreController.isRunning
+    fun isRunning() = coreController.isRunning || FptnRootRunner.active
 
     /**
      * Gets the name of the currently running server.
@@ -149,6 +150,23 @@ object CoreServiceManager {
             tunFd = 0
         }
 
+        // FPTN owns its own TUN and replaces the whole Xray + hev stack.
+        if (config.configType == EConfigType.FPTN) {
+            if (!SettingsManager.isRootMode()) {
+                error("FPTN profiles require root mode: Android grants a single VPN slot")
+            }
+            if (!FptnRootRunner.start(service, config)) {
+                error("fptn-client failed to start; see engines/fptn-client.log")
+            }
+            NotificationManager.showNotification(currentConfig)
+            return
+        }
+
+        // Bring up the sidecar engine (if this profile needs one) before the
+        // Xray core reads SidecarEngineManager.currentPort while building its
+        // socks upstream.
+        SidecarEngineManager.syncForProfile(service, config)
+
         NotificationManager.showNotification(currentConfig)
         if (dialerAddr.isNotNullEmpty()) {
             CoreNativeManager.reconcileBrowserDialer(dialerAddr)
@@ -190,6 +208,8 @@ object CoreServiceManager {
      * @return True if the core was stopped successfully, false otherwise.
      */
     fun stopCoreLoop(): Boolean {
+        SidecarEngineManager.stopAll()
+        getService()?.let { FptnRootRunner.stop(it) }
         connectionTestScope.coroutineContext.cancelChildren()
         val service = getService() ?: return false
 

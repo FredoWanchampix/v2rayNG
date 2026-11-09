@@ -224,6 +224,12 @@ object AppConfig {
     const val TUIC = "tuic://"
     const val HYSTERIA = "hysteria://"
     const val HYSTERIA2 = "hysteria2://"
+    const val AMNEZIAWG = "awg://"
+    const val NAIVE = "naive://"
+    const val OPENCONNECT = "openconnect://"
+    const val ANYCONNECT = "anyconnect://"
+    const val FPTN = "fptn://"
+    const val MIMIC = "mimic://"
     const val HY2 = "hy2://"
     const val V2RAYNFMTS = "v2rayn://"
 

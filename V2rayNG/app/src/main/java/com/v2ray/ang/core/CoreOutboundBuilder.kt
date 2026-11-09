@@ -32,6 +32,11 @@ object CoreOutboundBuilder {
             EConfigType.WIREGUARD -> toOutboundWireguard(profileItem)
             EConfigType.HYSTERIA2 -> toOutboundHysteria2(profileItem)
             EConfigType.HTTP -> toOutboundHttp(profileItem)
+            EConfigType.AMNEZIAWG,
+            EConfigType.NAIVE,
+            EConfigType.OPENCONNECT,
+            EConfigType.FPTN,
+            EConfigType.MIMIC -> toOutboundSidecar(profileItem)
             else -> null
         }
 
@@ -200,6 +205,25 @@ object CoreOutboundBuilder {
             populateTlsSettings(it, profileItem, sni)
         }
 
+        return outboundBean
+    }
+
+    /**
+     * Sidecar-served profiles (AmneziaWG, Naive, OpenConnect, FPTN, Mimic) are
+     * handed to the Xray core as a loopback SOCKS upstream: the sidecar engine
+     * process owns the real protocol, Xray only forwards into it.
+     */
+    private fun toOutboundSidecar(profileItem: ProfileItem): OutboundBean? {
+        val port = SidecarEngineManager.currentPort
+        if (port <= 0) {
+            error("Sidecar engine is not running for ${profileItem.configType}")
+        }
+        val outboundBean = createInitOutbound(EConfigType.SOCKS)
+        outboundBean?.settings?.let { settings ->
+            settings.address = AppConfig.LOOPBACK
+            settings.port = port
+            settings.level = AppConfig.DEFAULT_LEVEL
+        }
         return outboundBean
     }
 

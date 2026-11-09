@@ -66,6 +66,17 @@ data class ProfileItem(
     var bandwidthDown: String? = null,
     var bandwidthUp: String? = null,
 
+    /** AmneziaWG obfuscation parameters as a JSON blob (jc/jmin/jmax/s1..s4, v3 keys). */
+    var amneziaOptions: String? = null,
+    /** OpenConnect flavor: anyconnect, gp, fortinet, ... */
+    var ocservFlavor: String? = null,
+    /** OpenConnect auth group. */
+    var ocservAuthGroup: String? = null,
+    /** Mimic mimicry domains as a JSON array. */
+    var mimicDomains: String? = null,
+    /** FPTN access token. */
+    var fptnToken: String? = null,
+
     var policyGroupType: String? = null,
     var policyGroupSubscriptionId: String? = null,
     var policyGroupFilter: String? = null,

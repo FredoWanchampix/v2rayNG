@@ -597,4 +597,11 @@
     <string name="sub_link_no_url_inside">Внутри расшифрованных данных нет HTTP(S) ссылки</string>
 
     <string name="title_update_config_count_legacy">Обновлено профилей: %d</string>
+    <string name="title_add_amneziawg">Добавить сервер AmneziaWG</string>
+    <string name="title_add_naive">Добавить сервер NaiveProxy</string>
+    <string name="title_add_openconnect">Добавить сервер OpenConnect</string>
+    <string name="title_add_fptn">Добавить сервер FPTN</string>
+    <string name="title_add_mimic">Добавить сервер Mimic (транспорт Hysteria2)</string>
+    <string name="engine_sidecar_missing">Движок sidecar для %1$s не входит в эту сборку</string>
+    <string name="engine_sidecar_failed">Движок sidecar не запустился: %1$s</string>
 </resources>
