@@ -63,7 +63,42 @@ class ServerUiState(
     echConfigList: String = "",
     verifyPeerCertByName: String = "",
     pinnedCA256: String = "",
-    isFetchingCert: Boolean = false
+    isFetchingCert: Boolean = false,
+    hy2Transport: String = "",
+    mimicDomains: String = "",
+    ocFlavor: String = "anyconnect",
+    ocAuthGroup: String = "",
+    fptnToken: String = "",
+    awgVersion: String = "3",
+    awgJc: String = "",
+    awgJmin: String = "",
+    awgJmax: String = "",
+    awgS1: String = "",
+    awgS2: String = "",
+    awgS3: String = "",
+    awgS4: String = "",
+    awgH1: String = "",
+    awgH2: String = "",
+    awgH3: String = "",
+    awgH4: String = "",
+    awgI1: String = "",
+    awgI2: String = "",
+    awgI3: String = "",
+    awgI4: String = "",
+    awgI5: String = "",
+    awgJ1: String = "",
+    awgJ2: String = "",
+    awgJ3: String = "",
+    awgItime: String = "",
+    awgHeaderProtectionKey: String = "",
+    awgContentPaddingAddition: String = "",
+    awgRekeyAfterTime: String = "",
+    awgRekeyTimeout: String = "",
+    awgRejectAfterTime: String = "",
+    awgKeepaliveTimeout: String = "",
+    awgMaxHandshakeAttempts: String = "",
+    awgRandomTrailers: Boolean = false,
+    awgDisableCookies: Boolean = false
 ) {
     var configType by mutableStateOf(configType)
     var remarks by mutableStateOf(remarks)
@@ -113,6 +148,41 @@ class ServerUiState(
     var verifyPeerCertByName by mutableStateOf(verifyPeerCertByName)
     var pinnedCA256 by mutableStateOf(pinnedCA256)
     var isFetchingCert by mutableStateOf(isFetchingCert)
+    var hy2Transport by mutableStateOf(hy2Transport)
+    var mimicDomains by mutableStateOf(mimicDomains)
+    var ocFlavor by mutableStateOf(ocFlavor)
+    var ocAuthGroup by mutableStateOf(ocAuthGroup)
+    var fptnToken by mutableStateOf(fptnToken)
+    var awgVersion by mutableStateOf(awgVersion)
+    var awgJc by mutableStateOf(awgJc)
+    var awgJmin by mutableStateOf(awgJmin)
+    var awgJmax by mutableStateOf(awgJmax)
+    var awgS1 by mutableStateOf(awgS1)
+    var awgS2 by mutableStateOf(awgS2)
+    var awgS3 by mutableStateOf(awgS3)
+    var awgS4 by mutableStateOf(awgS4)
+    var awgH1 by mutableStateOf(awgH1)
+    var awgH2 by mutableStateOf(awgH2)
+    var awgH3 by mutableStateOf(awgH3)
+    var awgH4 by mutableStateOf(awgH4)
+    var awgI1 by mutableStateOf(awgI1)
+    var awgI2 by mutableStateOf(awgI2)
+    var awgI3 by mutableStateOf(awgI3)
+    var awgI4 by mutableStateOf(awgI4)
+    var awgI5 by mutableStateOf(awgI5)
+    var awgJ1 by mutableStateOf(awgJ1)
+    var awgJ2 by mutableStateOf(awgJ2)
+    var awgJ3 by mutableStateOf(awgJ3)
+    var awgItime by mutableStateOf(awgItime)
+    var awgHeaderProtectionKey by mutableStateOf(awgHeaderProtectionKey)
+    var awgContentPaddingAddition by mutableStateOf(awgContentPaddingAddition)
+    var awgRekeyAfterTime by mutableStateOf(awgRekeyAfterTime)
+    var awgRekeyTimeout by mutableStateOf(awgRekeyTimeout)
+    var awgRejectAfterTime by mutableStateOf(awgRejectAfterTime)
+    var awgKeepaliveTimeout by mutableStateOf(awgKeepaliveTimeout)
+    var awgMaxHandshakeAttempts by mutableStateOf(awgMaxHandshakeAttempts)
+    var awgRandomTrailers by mutableStateOf(awgRandomTrailers)
+    var awgDisableCookies by mutableStateOf(awgDisableCookies)
 
     var isRemarksError by mutableStateOf(false)
     var isAddressError by mutableStateOf(false)
@@ -184,8 +254,49 @@ class ServerUiState(
             mldsa65Verify = mldsa65Verify,
             echConfigList = echConfigList,
             verifyPeerCertByName = verifyPeerCertByName,
-            pinnedCA256 = pinnedCA256
-        )
+            pinnedCA256 = pinnedCA256,
+            mimicDomains = mimicDomains.nullIfBlank(),
+            ocservFlavor = ocFlavor.nullIfBlank(),
+            ocservAuthGroup = ocAuthGroup.nullIfBlank(),
+            fptnToken = fptnToken.nullIfBlank(),
+            amneziaOptions = buildAmneziaOptions().nullIfBlank()
+        ).let { profile ->
+            // Mimic is a Hysteria2 transport: the editor keeps one form, the
+            // stored type follows the chosen transport.
+            if (profile.configType == EConfigType.HYSTERIA2 && hy2Transport == "mimic") {
+                profile.copy(configType = EConfigType.MIMIC)
+            } else if (profile.configType == EConfigType.MIMIC && hy2Transport != "mimic") {
+                profile.copy(configType = EConfigType.HYSTERIA2)
+            } else {
+                profile
+            }
+        }
+    }
+
+    /** Packs every non-blank AmneziaWG field into the JSON blob the mihomo sidecar consumes. */
+    private fun buildAmneziaOptions(): String {
+        val opts = org.json.JSONObject()
+        awgVersion.toIntOrNull()?.let { opts.put("version", it) }
+        mapOf(
+            "jc" to awgJc, "jmin" to awgJmin, "jmax" to awgJmax,
+            "s1" to awgS1, "s2" to awgS2, "s3" to awgS3, "s4" to awgS4,
+            "itime" to awgItime
+        ).forEach { (k, v) -> v.toIntOrNull()?.let { opts.put(k, it) } }
+        mapOf(
+            "h1" to awgH1, "h2" to awgH2, "h3" to awgH3, "h4" to awgH4,
+            "i1" to awgI1, "i2" to awgI2, "i3" to awgI3, "i4" to awgI4, "i5" to awgI5,
+            "j1" to awgJ1, "j2" to awgJ2, "j3" to awgJ3,
+            "header-protection-key" to awgHeaderProtectionKey,
+            "content-padding-addition" to awgContentPaddingAddition,
+            "rekey-after-time" to awgRekeyAfterTime,
+            "rekey-timeout" to awgRekeyTimeout,
+            "reject-after-time" to awgRejectAfterTime,
+            "keepalive-timeout" to awgKeepaliveTimeout,
+            "max-handshake-attempts" to awgMaxHandshakeAttempts
+        ).forEach { (k, v) -> v.takeIf { it.isNotBlank() }?.let { opts.put(k, it) } }
+        if (awgRandomTrailers) opts.put("randomTrailers", true)
+        if (awgDisableCookies) opts.put("disableCookies", true)
+        return if (opts.length() == 0) "" else opts.toString()
     }
 
     companion object {
@@ -239,8 +350,53 @@ class ServerUiState(
                 mldsa65Verify = initialConfig.mldsa65Verify ?: "",
                 echConfigList = initialConfig.echConfigList ?: "",
                 verifyPeerCertByName = initialConfig.verifyPeerCertByName ?: "",
-                pinnedCA256 = initialConfig.pinnedCA256 ?: ""
-            )
+                pinnedCA256 = initialConfig.pinnedCA256 ?: "",
+                hy2Transport = if (initialConfig.configType == EConfigType.MIMIC) "mimic" else "",
+                mimicDomains = initialConfig.mimicDomains ?: "",
+                ocFlavor = initialConfig.ocservFlavor ?: "anyconnect",
+                ocAuthGroup = initialConfig.ocservAuthGroup ?: "",
+                fptnToken = initialConfig.fptnToken ?: ""
+            ).apply {
+                val opts = runCatching {
+                    org.json.JSONObject(initialConfig.amneziaOptions.orEmpty())
+                }.getOrNull()
+                opts?.let { o ->
+                    awgVersion = o.optInt("version", 3).toString()
+                    listOf("jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "itime").forEach { k ->
+                        if (o.has(k)) {
+                            val v = o.opt(k)?.toString().orEmpty()
+                            when (k) {
+                                "jc" -> awgJc = v; "jmin" -> awgJmin = v; "jmax" -> awgJmax = v
+                                "s1" -> awgS1 = v; "s2" -> awgS2 = v; "s3" -> awgS3 = v
+                                "s4" -> awgS4 = v; "itime" -> awgItime = v
+                            }
+                        }
+                    }
+                    listOf("h1","h2","h3","h4","i1","i2","i3","i4","i5","j1","j2","j3",
+                        "header-protection-key","content-padding-addition","rekey-after-time",
+                        "rekey-timeout","reject-after-time","keepalive-timeout","max-handshake-attempts"
+                    ).forEach { k ->
+                        if (o.has(k)) {
+                            val v = o.optString(k)
+                            when (k) {
+                                "h1" -> awgH1 = v; "h2" -> awgH2 = v; "h3" -> awgH3 = v; "h4" -> awgH4 = v
+                                "i1" -> awgI1 = v; "i2" -> awgI2 = v; "i3" -> awgI3 = v
+                                "i4" -> awgI4 = v; "i5" -> awgI5 = v
+                                "j1" -> awgJ1 = v; "j2" -> awgJ2 = v; "j3" -> awgJ3 = v
+                                "header-protection-key" -> awgHeaderProtectionKey = v
+                                "content-padding-addition" -> awgContentPaddingAddition = v
+                                "rekey-after-time" -> awgRekeyAfterTime = v
+                                "rekey-timeout" -> awgRekeyTimeout = v
+                                "reject-after-time" -> awgRejectAfterTime = v
+                                "keepalive-timeout" -> awgKeepaliveTimeout = v
+                                "max-handshake-attempts" -> awgMaxHandshakeAttempts = v
+                            }
+                        }
+                    }
+                    awgRandomTrailers = o.optBoolean("randomTrailers", false)
+                    awgDisableCookies = o.optBoolean("disableCookies", false)
+                }
+            }
 
         fun from(
             initialConfig: ProfileItem

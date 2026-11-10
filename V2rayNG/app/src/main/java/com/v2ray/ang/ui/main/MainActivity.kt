@@ -42,6 +42,10 @@ import com.v2ray.ang.ui.server.ServerSocksActivity
 import com.v2ray.ang.ui.server.ServerTrojanActivity
 import com.v2ray.ang.ui.server.ServerVlessActivity
 import com.v2ray.ang.ui.server.ServerVmessActivity
+import com.v2ray.ang.ui.server.ServerAmneziaActivity
+import com.v2ray.ang.ui.server.ServerFptnActivity
+import com.v2ray.ang.ui.server.ServerNaiveActivity
+import com.v2ray.ang.ui.server.ServerOpenconnectActivity
 import com.v2ray.ang.ui.server.ServerWireguardActivity
 import com.v2ray.ang.ui.settings.SettingsActivity
 import com.v2ray.ang.ui.subscription.SubSettingActivity
@@ -206,6 +210,10 @@ class MainActivity : HelperBaseComponentActivity() {
             EConfigType.TROJAN.value -> Intent(this, ServerTrojanActivity::class.java)
             EConfigType.WIREGUARD.value -> Intent(this, ServerWireguardActivity::class.java)
             EConfigType.HYSTERIA2.value -> Intent(this, ServerHysteria2Activity::class.java)
+            EConfigType.AMNEZIAWG.value -> Intent(this, ServerAmneziaActivity::class.java)
+            EConfigType.NAIVE.value -> Intent(this, ServerNaiveActivity::class.java)
+            EConfigType.OPENCONNECT.value -> Intent(this, ServerOpenconnectActivity::class.java)
+            EConfigType.FPTN.value -> Intent(this, ServerFptnActivity::class.java)
             else -> Intent(this, ServerHttpActivity::class.java).apply {
                 putExtra("createConfigType", createConfigType)
             }
@@ -258,6 +266,10 @@ class MainActivity : HelperBaseComponentActivity() {
             EConfigType.TROJAN -> ServerTrojanActivity::class.java
             EConfigType.WIREGUARD -> ServerWireguardActivity::class.java
             EConfigType.HYSTERIA2 -> ServerHysteria2Activity::class.java
+            EConfigType.AMNEZIAWG -> ServerAmneziaActivity::class.java
+            EConfigType.NAIVE -> ServerNaiveActivity::class.java
+            EConfigType.OPENCONNECT -> ServerOpenconnectActivity::class.java
+            EConfigType.FPTN -> ServerFptnActivity::class.java
             else -> ServerHttpActivity::class.java
         }
         val intent = Intent(this, activityClass).apply {

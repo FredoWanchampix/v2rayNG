@@ -7,6 +7,7 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.EConfigType
+import com.v2ray.ang.ui.compose.FormDropdownField
 import com.v2ray.ang.ui.compose.FormTextField
 import com.v2ray.ang.ui.compose.SettingsSwitchItem
 
@@ -29,6 +30,24 @@ class ServerHysteria2Activity : BaseServerActivity() {
             onSaveClick = { saveServer(uiState) }
         ) {
             CommonBasicFields(uiState)
+            FormDropdownField(
+                label = stringResource(R.string.server_lab_hy2_transport),
+                value = if (uiState.hy2Transport == "mimic") {
+                    stringResource(R.string.server_hy2_transport_mimic)
+                } else {
+                    stringResource(R.string.server_hy2_transport_default)
+                },
+                options = listOf(
+                    stringResource(R.string.server_hy2_transport_default),
+                    stringResource(R.string.server_hy2_transport_mimic)
+                ),
+                onValueChange = { picked ->
+                    uiState.hy2Transport = if (picked == stringResource(R.string.server_hy2_transport_mimic)) "mimic" else ""
+                }
+            )
+            if (uiState.hy2Transport == "mimic") {
+                MimicTransportFields(uiState)
+            }
             Hysteria2ProtocolFields(uiState)
 
         }
@@ -42,6 +61,16 @@ class ServerHysteria2Activity : BaseServerActivity() {
             config.security = AppConfig.TLS
         }
         return true
+    }
+
+    @Composable
+    private fun MimicTransportFields(state: ServerUiState) {
+        FormTextField(
+            label = stringResource(R.string.server_lab_mimic_domains),
+            value = state.mimicDomains,
+            onValueChange = { state.mimicDomains = it },
+            supportingText = stringResource(R.string.server_lab_mimic_domains_hint)
+        )
     }
 
     @Composable

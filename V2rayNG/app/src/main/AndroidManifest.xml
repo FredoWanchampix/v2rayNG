@@ -108,6 +108,30 @@
             android:exported="false"
             android:windowSoftInputMode="stateUnchanged|adjustResize" />
         <activity
+            android:name=".ui.server.ServerAmneziaActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:label="@string/title_add_amneziawg"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.server.ServerNaiveActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:label="@string/title_add_naive"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.server.ServerOpenconnectActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:label="@string/title_add_openconnect"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.server.ServerFptnActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:label="@string/title_add_fptn"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
             android:name=".ui.server.ServerHysteria2Activity"
             android:exported="false"
             android:windowSoftInputMode="stateUnchanged|adjustResize" />
