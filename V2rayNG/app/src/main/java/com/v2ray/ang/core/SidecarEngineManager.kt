@@ -63,6 +63,7 @@ object SidecarEngineManager {
         if (guid != null && currentGuid == guid && isAlive() && isPortOpen(currentPort)) return
         stopAll()
         ensureRunning(context, profile, engine)
+        currentGuid = guid
     }
 
     @Synchronized
@@ -105,7 +106,6 @@ object SidecarEngineManager {
         }
         process = started
         currentPort = port
-        currentGuid = guid
         LogUtil.i(AppConfig.TAG, "SidecarEngineManager: $engine up on 127.0.0.1:$port for ${profile.remarks}")
     }
 
