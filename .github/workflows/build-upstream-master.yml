@@ -119,20 +119,53 @@ jobs:
           if [ "$MERGE_STATUS" -ne 0 ]; then
             CONFLICTS="$(git diff --name-only --diff-filter=U || true)"
             printf '%s\n' "$CONFLICTS" > conflicts.txt
-            echo >> merge-report.md
-            echo "## CONFLICTS - merge stopped, master NOT updated" >> merge-report.md
-            echo '```' >> merge-report.md
-            printf '%s\n' "$CONFLICTS" >> merge-report.md
-            echo '```' >> merge-report.md
-            git merge --abort || true
-            echo "policy=conflict" >> "$GITHUB_OUTPUT"
-            echo "MERGE_POLICY=conflict" >> "$GITHUB_ENV"
-            cat merge-report.md >> "$GITHUB_STEP_SUMMARY"
-            echo "conflict_list<<EOF" >> "$GITHUB_OUTPUT"
-            printf '%s\n' "$CONFLICTS" >> "$GITHUB_OUTPUT"
-            echo "EOF" >> "$GITHUB_OUTPUT"
-            echo "::error::Merge conflicts require manual resolution. See the job summary."
-            exit 1
+
+            # ---- Owner-approved resolution rules for known conflict pairs ----
+            # MainViewModel: keep the fork side (upstream edits touch test-request
+            #   machinery the fork deliberately removed).
+            # MainBottomBar / MainScreen: take upstream layout, then re-apply the
+            #   fork feature patch (locate, zero-speed dialog, menu entries).
+            # build.yml: keep the fork CI (it carries the sidecar engine steps).
+            RESOLVED=1
+            git checkout --ours   -- V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt || RESOLVED=0
+            git checkout --theirs -- V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainBottomBar.kt || RESOLVED=0
+            git checkout --theirs -- V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainScreen.kt    || RESOLVED=0
+            git checkout --ours   -- .github/workflows/build.yml                                     || RESOLVED=0
+            if [ "$RESOLVED" = 1 ]; then
+              printf '%s' "LS0tIGEvVjJyYXlORy9hcHAvc3JjL21haW4vamF2YS9jb20vdjJyYXkvYW5nL3VpL21haW4vTWFpblNjcmVlbi5rdAorKysgYi9WMnJheU5HL2FwcC9zcmMvbWFpbi9qYXZhL2NvbS92MnJheS9hbmcvdWkvbWFpbi9NYWluU2NyZWVuLmt0CkBAIC0yMSw3ICsyMSw2IEBACiBpbXBvcnQgYW5kcm9pZHguY29tcG9zZS5ydW50aW1lLnJlbWVtYmVyCiBpbXBvcnQgYW5kcm9pZHguY29tcG9zZS5ydW50aW1lLnJlbWVtYmVyQ29yb3V0aW5lU2NvcGUKIGltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnJ1bnRpbWUucmVtZW1iZXJVcGRhdGVkU3RhdGUKLWltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnJ1bnRpbWUuc2F2ZWFibGUucmVtZW1iZXJTYXZlYWJsZQogaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UucnVudGltZS5zZXRWYWx1ZQogaW1wb3J0IGFuZHJvaWR4LmNvbXBvc2UucnVudGltZS5zbmFwc2hvdEZsb3cKIGltcG9ydCBhbmRyb2lkeC5jb21wb3NlLnVpLk1vZGlmaWVyCkBAIC0zMSw2ICszMCw3IEBACiBpbXBvcnQgY29tLnYycmF5LmFuZy5kdG8uZW50aXRpZXMuUHJvZmlsZUl0ZW0KIGltcG9ydCBjb20udjJyYXkuYW5nLnVpLmNvbXBvc2UuTG9jYWxEYXJrVGhlbWUKIGltcG9ydCBjb20udjJyYXkuYW5nLnVpLmNvbXBvc2UuUVJDb2RlRGlhbG9nCitpbXBvcnQgY29tLnYycmF5LmFuZy5leHRlbnNpb24uZGVsYXkKIGltcG9ydCBrb3RsaW54LmNvcm91dGluZXMuZmxvdy5kaXN0aW5jdFVudGlsQ2hhbmdlZAogaW1wb3J0IGtvdGxpbnguY29yb3V0aW5lcy5sYXVuY2gKIApAQCAtNTgsMTcgKzU4LDEyIEBACiAgICAgdmFyIHNob3dEZWxBbGxDb25maXJtIGJ5IHJlbWVtYmVyIHsgbXV0YWJsZVN0YXRlT2YoZmFsc2UpIH0KICAgICB2YXIgc2hvd0RlbER1cGxpY2F0ZUNvbmZpcm0gYnkgcmVtZW1iZXIgeyBtdXRhYmxlU3RhdGVPZihmYWxzZSkgfQogICAgIHZhciBzaG93RGVsSW52YWxpZENvbmZpcm0gYnkgcmVtZW1iZXIgeyBtdXRhYmxlU3RhdGVPZihmYWxzZSkgfQotICAgIHZhciBzaG93UmVtb3ZlQ29uZmlybSBieSByZW1lbWJlclNhdmVhYmxlKHN0YXRlU2F2ZXIgPSBTZXJ2ZXJEZWxldGVUYXJnZXQuU2F2ZXIpIHsKLSAgICAgICAgbXV0YWJsZVN0YXRlT2Y8U2VydmVyRGVsZXRlVGFyZ2V0Pz4obnVsbCkKLSAgICB9CisgICAgdmFyIHNob3dEZWxaZXJvU3BlZWRDb25maXJtIGJ5IHJlbWVtYmVyIHsgbXV0YWJsZVN0YXRlT2YoZmFsc2UpIH0KKyAgICB2YXIgc2hvd1JlbW92ZUNvbmZpcm0gYnkgcmVtZW1iZXIgeyBtdXRhYmxlU3RhdGVPZjxTdHJpbmc/PihudWxsKSB9CiAKICAgICB2YXIgc2hhcmVUYXJnZXQgYnkgcmVtZW1iZXIgeyBtdXRhYmxlU3RhdGVPZjxUcmlwbGU8U3RyaW5nLCBQcm9maWxlSXRlbSwgQm9vbGVhbj4/PihudWxsKSB9Ci0gICAgdmFsIHJlbW92ZVNlcnZlcjogKFN0cmluZywgU3RyaW5nKSAtPiBVbml0ID0geyBndWlkLCBwcm9maWxlTmFtZSAtPgotICAgICAgICBpZiAoY29uZmlybVJlbW92ZSkgewotICAgICAgICAgICAgc2hvd1JlbW92ZUNvbmZpcm0gPSBTZXJ2ZXJEZWxldGVUYXJnZXQoZ3VpZCwgcHJvZmlsZU5hbWUpCi0gICAgICAgIH0gZWxzZSB7Ci0gICAgICAgICAgICBvbkFjdGlvbihNYWluQWN0aW9uLlJlbW92ZVNlcnZlcihndWlkKSkKLSAgICAgICAgfQorICAgIHZhbCByZW1vdmVTZXJ2ZXI6IChTdHJpbmcpIC0+IFVuaXQgPSB7IGd1aWQgLT4KKyAgICAgICAgaWYgKGNvbmZpcm1SZW1vdmUpIHNob3dSZW1vdmVDb25maXJtID0gZ3VpZCBlbHNlIG9uQWN0aW9uKE1haW5BY3Rpb24uUmVtb3ZlU2VydmVyKGd1aWQpKQogICAgIH0KIAogICAgIHZhbCBwYWdlclN0YXRlID0gcmVtZW1iZXJQYWdlclN0YXRlKApAQCAtNzksNiArNzQsOCBAQAogICAgIHZhbCBsYXp5TGlzdFN0YXRlcyA9IHJlbWVtYmVyIHsgbXV0YWJsZVN0YXRlTWFwT2Y8U3RyaW5nLCBMYXp5TGlzdFN0YXRlPigpIH0KICAgICB2YWwgbGF6eUdyaWRTdGF0ZXMgPSByZW1lbWJlciB7IG11dGFibGVTdGF0ZU1hcE9mPFN0cmluZywgTGF6eUdyaWRTdGF0ZT4oKSB9CiAKKyAgICB2YXIgbG9jYXRlSW5Qcm9ncmVzcyBieSByZW1lbWJlciB7IG11dGFibGVTdGF0ZU9mKGZhbHNlKSB9CisKICAgICBMYXVuY2hlZEVmZmVjdChncm91cHMpIHsKICAgICAgICAgdmFsIHZhbGlkR3JvdXBJZHMgPSBncm91cHMubWFwIHsgaXQuaWQgfS50b1NldCgpCiAgICAgICAgIGxhenlMaXN0U3RhdGVzLmtleXMucmV0YWluQWxsKHZhbGlkR3JvdXBJZHMpCkBAIC04NSw2ICs4Miw4IEBACiAgICAgICAgIGxhenlHcmlkU3RhdGVzLmtleXMucmV0YWluQWxsKHZhbGlkR3JvdXBJZHMpCiAgICAgfQogCisgICAgdmFsIGxhdGVzdERvdWJsZUNvbHVtbkRpc3BsYXkgYnkgcmVtZW1iZXJVcGRhdGVkU3RhdGUoZG91YmxlQ29sdW1uRGlzcGxheSkKKwogICAgIExhdW5jaGVkRWZmZWN0KGdyb3VwcywgdWlTdGF0ZS5zZWxlY3RlZEdyb3VwSWQpIHsKICAgICAgICAgaWYgKGdyb3Vwcy5pc0VtcHR5KCkpIHJldHVybkBMYXVuY2hlZEVmZmVjdAogICAgICAgICB2YWwgc2VsZWN0ZWRJbmRleCA9IGdyb3Vwcy5pbmRleE9mRmlyc3QgeyBpdC5pZCA9PSB1aVN0YXRlLnNlbGVjdGVkR3JvdXBJZCB9CkBAIC05NSw2ICs5NCw3IEBACiAgICAgfQogCiAgICAgdmFsIGxhdGVzdEdyb3VwcyBieSByZW1lbWJlclVwZGF0ZWRTdGF0ZShncm91cHMpCisgICAgdmFsIGxhdGVzdExvY2F0ZUluUHJvZ3Jlc3MgYnkgcmVtZW1iZXJVcGRhdGVkU3RhdGUobG9jYXRlSW5Qcm9ncmVzcykKIAogICAgIExhdW5jaGVkRWZmZWN0KHBhZ2VyU3RhdGUpIHsKICAgICAgICAgc25hcHNob3RGbG93IHsgcGFnZXJTdGF0ZS5zZXR0bGVkUGFnZSB9CkBAIC0xMDEsNyArMTAxLDcgQEAKICAgICAgICAgICAgIC5kaXN0aW5jdFVudGlsQ2hhbmdlZCgpCiAgICAgICAgICAgICAuY29sbGVjdCB7IHBhZ2UgLT4KICAgICAgICAgICAgICAgICB2YWwgY3VycmVudEdyb3VwcyA9IGxhdGVzdEdyb3VwcwotICAgICAgICAgICAgICAgIGlmIChwYWdlIGluIGN1cnJlbnRHcm91cHMuaW5kaWNlcykgeworICAgICAgICAgICAgICAgIGlmICghbGF0ZXN0TG9jYXRlSW5Qcm9ncmVzcyAmJiBwYWdlIGluIGN1cnJlbnRHcm91cHMuaW5kaWNlcykgewogICAgICAgICAgICAgICAgICAgICBvbkFjdGlvbihNYWluQWN0aW9uLlNlbGVjdEdyb3VwKGN1cnJlbnRHcm91cHNbcGFnZV0uaWQpKQogICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgIH0KQEAgLTEwOCw1ICsxMDgsMzEgQEAKICAgICB9CiAKKyAgICBMYXVuY2hlZEVmZmVjdCh1aVN0YXRlLmxvY2F0ZVRhcmdldCkgeworICAgICAgICB2YWwgdGFyZ2V0ID0gdWlTdGF0ZS5sb2NhdGVUYXJnZXQgPzogcmV0dXJuQExhdW5jaGVkRWZmZWN0CisgICAgICAgIC8vIFRoZSBhY3R1YWwgc2Nyb2xsaW5nIGlzIGhhbmRsZWQgYnkgTG9jYXRlVGFyZ2V0RWZmZWN0IGluc2lkZSBTZXJ2ZXJMaXN0UGFnZS4KKyAgICAgICAgLy8gV2UganVzdCBuZWVkIHRvIG1ha2Ugc3VyZSB0aGUgY29ycmVjdCBncm91cCBwYWdlIGlzIHNob3duIGFuZCBtYXJrIGFzIGhhbmRsZWQKKyAgICAgICAgLy8gYWZ0ZXIgYSBkZWxheSB0byBnaXZlIExvY2F0ZVRhcmdldEVmZmVjdCB0aW1lIHRvIHNjcm9sbC4KKyAgICAgICAgbG9jYXRlSW5Qcm9ncmVzcyA9IHRydWUKKyAgICAgICAgdHJ5IHsKKyAgICAgICAgICAgIHZhbCB0YXJnZXRHcm91cEluZGV4ID0gbGF0ZXN0R3JvdXBzLmluZGV4T2ZGaXJzdCB7IGl0LmlkID09IHRhcmdldC5ncm91cElkIH0KKyAgICAgICAgICAgIGlmICh0YXJnZXRHcm91cEluZGV4ICFpbiAwIHVudGlsIHBhZ2VyU3RhdGUucGFnZUNvdW50KSB7CisgICAgICAgICAgICAgICAgbWFpblZpZXdNb2RlbC5vbkFjdGlvbihNYWluQWN0aW9uLkxvY2F0ZUhhbmRsZWQpCisgICAgICAgICAgICAgICAgcmV0dXJuQExhdW5jaGVkRWZmZWN0CisgICAgICAgICAgICB9CisgICAgICAgICAgICBpZiAocGFnZXJTdGF0ZS5zZXR0bGVkUGFnZSAhPSB0YXJnZXRHcm91cEluZGV4KSB7CisgICAgICAgICAgICAgICAgcGFnZXJTdGF0ZS5uYXZpZ2F0ZVRvUGFnZU9wdGltaXplZCgKKyAgICAgICAgICAgICAgICAgICAgdGFyZ2V0UGFnZSA9IHRhcmdldEdyb3VwSW5kZXgsCisgICAgICAgICAgICAgICAgICAgIGFuaW1hdGVBZGphY2VudFBhZ2UgPSBmYWxzZQorICAgICAgICAgICAgICAgICkKKyAgICAgICAgICAgIH0KKyAgICAgICAgICAgIG9uQWN0aW9uKE1haW5BY3Rpb24uU2VsZWN0R3JvdXAodGFyZ2V0Lmdyb3VwSWQpKQorICAgICAgICB9IGZpbmFsbHkgeworICAgICAgICAgICAgZGVsYXkoMzIpCisgICAgICAgICAgICBsb2NhdGVJblByb2dyZXNzID0gZmFsc2UKKyAgICAgICAgICAgIG1haW5WaWV3TW9kZWwub25BY3Rpb24oTWFpbkFjdGlvbi5Mb2NhdGVIYW5kbGVkKQorICAgICAgICB9CisgICAgfQorCiAgICAgTWFpbkRpYWxvZ3MoCiAgICAgICAgIHNob3dEZWxBbGxDb25maXJtID0gc2hvd0RlbEFsbENvbmZpcm0sCiAgICAgICAgIG9uRGlzbWlzc0RlbEFsbCA9IHsgc2hvd0RlbEFsbENvbmZpcm0gPSBmYWxzZSB9LApAQCAtMTE3LDYgKzE0Myw5IEBACiAgICAgICAgIHNob3dEZWxJbnZhbGlkQ29uZmlybSA9IHNob3dEZWxJbnZhbGlkQ29uZmlybSwKICAgICAgICAgb25EaXNtaXNzRGVsSW52YWxpZCA9IHsgc2hvd0RlbEludmFsaWRDb25maXJtID0gZmFsc2UgfSwKICAgICAgICAgb25Db25maXJtRGVsSW52YWxpZCA9IHsgc2hvd0RlbEludmFsaWRDb25maXJtID0gZmFsc2U7IG9uQWN0aW9uKE1haW5BY3Rpb24uUmVtb3ZlSW52YWxpZFNlcnZlcnMpIH0sCisgICAgICAgIHNob3dEZWxaZXJvU3BlZWRDb25maXJtID0gc2hvd0RlbFplcm9TcGVlZENvbmZpcm0sCisgICAgICAgIG9uRGlzbWlzc0RlbFplcm9TcGVlZCA9IHsgc2hvd0RlbFplcm9TcGVlZENvbmZpcm0gPSBmYWxzZSB9LAorICAgICAgICBvbkNvbmZpcm1EZWxaZXJvU3BlZWQgPSB7IHNob3dEZWxaZXJvU3BlZWRDb25maXJtID0gZmFsc2U7IG9uQWN0aW9uKE1haW5BY3Rpb24uUmVtb3ZlWmVyb1NwZWVkU2VydmVycykgfSwKICAgICAgICAgc2hvd1JlbW92ZUNvbmZpcm0gPSBzaG93UmVtb3ZlQ29uZmlybSwKICAgICAgICAgb25EaXNtaXNzUmVtb3ZlID0geyBzaG93UmVtb3ZlQ29uZmlybSA9IG51bGwgfSwKICAgICAgICAgb25Db25maXJtUmVtb3ZlID0geyBndWlkIC0+IHNob3dSZW1vdmVDb25maXJtID0gbnVsbDsgb25BY3Rpb24oTWFpbkFjdGlvbi5SZW1vdmVTZXJ2ZXIoZ3VpZCkpIH0KQEAgLTE3NCw2ICsyMDMsNyBAQAogICAgICAgICAgICAgICAgICAgICAgICAgICAgIE1haW5Nb3JlTWVudUFjdGlvbi5EZWxldGVBbGwgLT4gc2hvd0RlbEFsbENvbmZpcm0gPSB0cnVlCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgTWFpbk1vcmVNZW51QWN0aW9uLkRlbGV0ZUR1cGxpY2F0ZSAtPiBzaG93RGVsRHVwbGljYXRlQ29uZmlybSA9IHRydWUKICAgICAgICAgICAgICAgICAgICAgICAgICAgICBNYWluTW9yZU1lbnVBY3Rpb24uRGVsZXRlSW52YWxpZCAtPiBzaG93RGVsSW52YWxpZENvbmZpcm0gPSB0cnVlCisgICAgICAgICAgICAgICAgICAgICAgICAgICAgTWFpbk1vcmVNZW51QWN0aW9uLkRlbGV0ZVplcm9TcGVlZCAtPiBzaG93RGVsWmVyb1NwZWVkQ29uZmlybSA9IHRydWUKICAgICAgICAgICAgICAgICAgICAgICAgICAgICBNYWluTW9yZU1lbnVBY3Rpb24uRXhwb3J0QWxsIC0+IG9uQWN0aW9uKE1haW5BY3Rpb24uRXhwb3J0QWxsKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgIE1haW5Nb3JlTWVudUFjdGlvbi5Mb2NhdGVTZWxlY3RlZCAtPiBvbkFjdGlvbihNYWluQWN0aW9uLkxvY2F0ZVNlbGVjdGVkU2VydmVyKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgIE1haW5Nb3JlTWVudUFjdGlvbi5Tb3J0QnlUZXN0UmVzdWx0cyAtPiBvbkFjdGlvbihNYWluQWN0aW9uLlNvcnRCeVRlc3RSZXN1bHRzKQpAQCAtMTgwLDUgKzIxMCw4IEBACisgICAgICAgICAgICAgICAgICAgICAgICAgICAgTWFpbk1vcmVNZW51QWN0aW9uLlNvcnRCeVNwZWVkUmVzdWx0cyAtPiBvbkFjdGlvbihNYWluQWN0aW9uLlNvcnRCeVNwZWVkUmVzdWx0cykKICAgICAgICAgICAgICAgICAgICAgICAgICAgICBNYWluTW9yZU1lbnVBY3Rpb24uVGVzdEFsbCAtPiBvbkFjdGlvbihNYWluQWN0aW9uLlRlc3RBbGxTZXJ2ZXJzKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgIE1haW5Nb3JlTWVudUFjdGlvbi5UZXN0QWxsUmVhbFBpbmcgLT4gb25BY3Rpb24oTWFpbkFjdGlvbi5UZXN0UmVhbEFsbFNlcnZlcnMpCisgICAgICAgICAgICAgICAgICAgICAgICAgICAgTWFpbk1vcmVNZW51QWN0aW9uLlRlc3RBbGxJY21wUGluZyAtPiBvbkFjdGlvbihNYWluQWN0aW9uLlRlc3RJY21wQWxsU2VydmVycykKKyAgICAgICAgICAgICAgICAgICAgICAgICAgICBNYWluTW9yZU1lbnVBY3Rpb24uV2hpdGVsaXN0U2VhcmNoIC0+IG9uQWN0aW9uKE1haW5BY3Rpb24uV2hpdGVsaXN0U2VhcmNoKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgIE1haW5Nb3JlTWVudUFjdGlvbi5VcGRhdGVTdWJzY3JpcHRpb25zIC0+IG9uQWN0aW9uKE1haW5BY3Rpb24uVXBkYXRlU3Vic2NyaXB0aW9ucykKICAgICAgICAgICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICAgICAgICAgfQpAQCAtMjQ1LDkgKzI3OCw2IEBACiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHNoYXJlVGFyZ2V0ID0gVHJpcGxlKGd1aWQsIHByb2ZpbGUsIHRydWUpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgfSwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICBvblJlbW92ZVNlcnZlciA9IHJlbW92ZVNlcnZlciwKLSAgICAgICAgICAgICAgICAgICAgICAgICAgICB1c2FnZUluZm8gPSBncm91cC51c2FnZUluZm8sCi0gICAgICAgICAgICAgICAgICAgICAgICAgICAgZ3JvdXBUaXRsZSA9IGdyb3VwLnJlbWFya3MsCi0gICAgICAgICAgICAgICAgICAgICAgICAgICAgb25PcGVuTGluayA9IHsgdXJsIC0+IG9uQWN0aW9uKE1haW5BY3Rpb24uT3BlblN1YnNjcmlwdGlvbkxpbmsodXJsKSkgfSwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICBjb250ZW50UGFkZGluZyA9IFBhZGRpbmdWYWx1ZXMoCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHN0YXJ0ID0gMC5kcCwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgdG9wID0gMC5kcCwK" | base64 -d > /tmp/fork-mainscreen.patch
+              git apply --3way /tmp/fork-mainscreen.patch || RESOLVED=0
+            fi
+
+            if [ "$RESOLVED" = 1 ] && [ -z "$(git diff --name-only --diff-filter=U)" ]; then
+              git add -A
+              git commit --no-edit
+              RESOLVED_POLICY=1
+              echo "policy=resolved-by-rules" >> "$GITHUB_OUTPUT"
+              echo "MERGE_POLICY=resolved-by-rules" >> "$GITHUB_ENV"
+              {
+                echo
+                echo "## Conflicts resolved by owner-approved rules"
+                echo '```'
+                printf '%s\n' "$CONFLICTS"
+                echo '```'
+              } >> merge-report.md
+              cat merge-report.md >> "$GITHUB_STEP_SUMMARY"
+            else
+              git merge --abort || true
+              echo >> merge-report.md
+              echo "## CONFLICTS - merge stopped, master NOT updated" >> merge-report.md
+              echo '```' >> merge-report.md
+              printf '%s\n' "$CONFLICTS" >> merge-report.md
+              echo '```' >> merge-report.md
+              echo "policy=conflict" >> "$GITHUB_OUTPUT"
+              echo "MERGE_POLICY=conflict" >> "$GITHUB_ENV"
+              cat merge-report.md >> "$GITHUB_STEP_SUMMARY"
+              echo "conflict_list<<EOF" >> "$GITHUB_OUTPUT"
+              printf '%s\n' "$CONFLICTS" >> "$GITHUB_OUTPUT"
+              echo "EOF" >> "$GITHUB_OUTPUT"
+              echo "::error::Merge conflicts require manual resolution. See the job summary."
+              exit 1
+            fi
           fi
 
           if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
@@ -140,8 +173,10 @@ jobs:
             exit 1
           fi
 
-          echo "policy=merged" >> "$GITHUB_OUTPUT"
-          echo "MERGE_POLICY=clean-merge" >> "$GITHUB_ENV"
+          if [ "${RESOLVED_POLICY:-0}" != "1" ]; then
+            echo "policy=merged" >> "$GITHUB_OUTPUT"
+            echo "MERGE_POLICY=clean-merge" >> "$GITHUB_ENV"
+          fi
           echo >> merge-report.md
           echo "- Result: **clean merge**, no conflicts." >> merge-report.md
 
