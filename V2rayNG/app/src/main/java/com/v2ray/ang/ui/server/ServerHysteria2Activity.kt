@@ -30,19 +30,14 @@ class ServerHysteria2Activity : BaseServerActivity() {
             onSaveClick = { saveServer(uiState) }
         ) {
             CommonBasicFields(uiState)
+            val transportDefault = stringResource(R.string.server_hy2_transport_default)
+            val transportMimic = stringResource(R.string.server_hy2_transport_mimic)
             FormDropdownField(
                 label = stringResource(R.string.server_lab_hy2_transport),
-                value = if (uiState.hy2Transport == "mimic") {
-                    stringResource(R.string.server_hy2_transport_mimic)
-                } else {
-                    stringResource(R.string.server_hy2_transport_default)
-                },
-                options = listOf(
-                    stringResource(R.string.server_hy2_transport_default),
-                    stringResource(R.string.server_hy2_transport_mimic)
-                ),
+                value = if (uiState.hy2Transport == "mimic") transportMimic else transportDefault,
+                options = listOf(transportDefault, transportMimic),
                 onValueChange = { picked ->
-                    uiState.hy2Transport = if (picked == stringResource(R.string.server_hy2_transport_mimic)) "mimic" else ""
+                    uiState.hy2Transport = if (picked == transportMimic) "mimic" else ""
                 }
             )
             if (uiState.hy2Transport == "mimic") {

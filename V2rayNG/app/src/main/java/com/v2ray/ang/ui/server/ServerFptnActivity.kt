@@ -37,8 +37,8 @@ class ServerFptnActivity : BaseServerActivity() {
 
     @Composable
     private fun FptnFields(s: ServerUiState) {
-        FormTextField(stringResource(R.string.server_lab_username), s.username, { s.username = it })
-        FormTextField(stringResource(R.string.server_lab_password), s.password, { s.password = it })
+        FormTextField(stringResource(R.string.server_lab_security4), s.username, { s.username = it })
+        FormTextField(stringResource(R.string.server_lab_id4), s.password, { s.password = it })
         FormTextField(
             label = stringResource(R.string.fptn_lab_token),
             value = s.fptnToken,

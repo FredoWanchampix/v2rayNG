@@ -9,6 +9,7 @@ import com.v2ray.ang.R
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.ui.compose.FormTextField
+import kotlinx.coroutines.CoroutineScope
 import com.v2ray.ang.ui.compose.SettingsSwitchItem
 
 /**
@@ -31,7 +32,7 @@ class ServerNaiveActivity : BaseServerActivity() {
             onSaveClick = { saveServer(uiState) }
         ) {
             CommonBasicFields(uiState)
-            NaiveFields(uiState)
+            NaiveFields(uiState, options, scope)
         }
     }
 
@@ -39,9 +40,9 @@ class ServerNaiveActivity : BaseServerActivity() {
         !config.username.isNullOrBlank() && !config.password.isNullOrBlank()
 
     @Composable
-    private fun NaiveFields(s: ServerUiState) {
-        FormTextField(stringResource(R.string.server_lab_username), s.username, { s.username = it })
-        FormTextField(stringResource(R.string.server_lab_password), s.password, { s.password = it })
+    private fun NaiveFields(s: ServerUiState, options: FieldOptions, scope: CoroutineScope) {
+        FormTextField(stringResource(R.string.server_lab_security4), s.username, { s.username = it })
+        FormTextField(stringResource(R.string.server_lab_id4), s.password, { s.password = it })
         CommonStreamSecurityFields(
             state = s,
             options = options,
