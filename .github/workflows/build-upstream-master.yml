@@ -134,7 +134,24 @@ jobs:
             fi
             # build.yml is not in the overlay: keep the fork CI (sidecar engines).
             git checkout --ours -- .github/workflows/build.yml 2>/dev/null || true
-            git add -A
+
+            # Stage everything EXCEPT submodule paths. A blanket `git add -A`
+            # during a conflicted merge re-stages each submodule at the commit
+            # currently checked out in the working tree (still the pre-merge one),
+            # which silently reverts an upstream submodule bump - that dropped the
+            # AndroidLibXrayLite pointer and the equivalence check caught it. The
+            # index already holds the correct auto-merged submodule pointer, so we
+            # must leave those paths untouched.
+            EXCL=()
+            while read -r sp; do
+              [ -n "$sp" ] && EXCL+=(":(exclude)$sp")
+            done < <(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null | awk '{print $2}')
+            if [ "${#EXCL[@]}" -gt 0 ]; then
+              echo "Submodule paths excluded from staging: ${EXCL[*]}"
+              git add -A -- . "${EXCL[@]}"
+            else
+              git add -A
+            fi
 
             RESOLVED=1
             if [ -n "$(git diff --name-only --diff-filter=U || true)" ]; then RESOLVED=0; fi
