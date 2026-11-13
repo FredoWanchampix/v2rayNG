@@ -172,7 +172,21 @@ jobs:
           # from Boost::boost, which is already linked - so drop the reference.
           grep -rl 'Boost::process' src CMakeLists.txt 2>/dev/null \
             | xargs -r sed -i -E '/^[[:space:]]*Boost::process[[:space:]]*$/d' || true
+          # FPTN turns clang-tidy into a build gate: it auto-detects the
+          # clang-tidy binary and .clang-tidy sets `WarningsAsErrors: "*"`, so any
+          # lint finding aborts compilation. With the NDK clang the build reached
+          # 91% and died on
+          #   fptn-client-cli.cpp:41:5: error: an exception may be thrown in
+          #   function 'main' [bugprone-exception-escape,-warnings-as-errors]
+          # Linting is the upstream CI's concern, not ours: we only need the
+          # binary, so disable the tidy hook (passing -DCMAKE_CXX_CLANG_TIDY= is
+          # not enough, the CMakeLists does a plain set() that shadows it).
+          sed -i -E 's|^if \(CLANG_TIDY_EXE\)|if (FALSE)  # clang-tidy disabled for the Android cross build|' CMakeLists.txt
+          # Belt and braces: neutralise WarningsAsErrors in the tidy config too.
+          sed -i -E 's|^WarningsAsErrors:.*|WarningsAsErrors: ""|' .clang-tidy 2>/dev/null || true
           echo "----- patches applied -----"
+          echo "clang-tidy hook (expect 'if (FALSE)'):"
+          grep -nE "^if \(CLANG_TIDY_EXE\)|^if \(FALSE\)" CMakeLists.txt
           echo "Boost::process references left (expect none):"
           grep -rn 'Boost::process' src CMakeLists.txt 2>/dev/null || echo "  none"
           grep -nE "prometheus-cpp|add_subdirectory\((src/fptn-|tests)|enable_testing|install\(TARGETS|CMAKE_COMPILE_WARNING_AS_ERROR|-Werror" CMakeLists.txt conanfile.py | head -30
