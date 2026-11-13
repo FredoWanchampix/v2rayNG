@@ -170,14 +170,6 @@ jobs:
           # the NDK clang patch level differs from the desktop one.
           sed -i 's|^set(CMAKE_COMPILE_WARNING_AS_ERROR ON).*|set(CMAKE_COMPILE_WARNING_AS_ERROR OFF)|' CMakeLists.txt
           sed -i 's|add_compile_options(-Wall -Werror -pedantic)|add_compile_options(-Wall -pedantic)|' CMakeLists.txt
-          # Boost 1.90 ships boost.process as header-only, so Conan does not
-          # export a `Boost::process` target (the log declares filesystem/random/
-          # locale but not process), and the client's target_link_libraries fails
-          # with "Target fptn-client-cli links to Boost::process but the target
-          # was not found". process needs no library to link - the headers come
-          # from Boost::boost, which is already linked - so drop the reference.
-          grep -rl 'Boost::process' src CMakeLists.txt 2>/dev/null \
-            | xargs -r sed -i -E '/^[[:space:]]*Boost::process[[:space:]]*$/d' || true
           # FPTN turns clang-tidy into a build gate: it auto-detects the
           # clang-tidy binary and .clang-tidy sets `WarningsAsErrors: "*"`, so any
           # lint finding aborts compilation. With the NDK clang the build reached
@@ -227,6 +219,61 @@ jobs:
         with:
           path: ~/.conan2/p
           key: fptn-conan-ndk${{ env.NDK_VERSION }}-${{ github.event.inputs.fptn_tag || '0.4.6' }}-armv8-v3
+
+      - name: "DIAG inspect Boost.Process in the Conan cache"
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "===== any prebuilt libboost_process ====="
+          find ~/.conan2 -name 'libboost_process*' 2>/dev/null | head
+          echo "===== boost libs actually built ====="
+          find ~/.conan2 -name 'libboost_*.a' 2>/dev/null | sed 's#.*/##' | sort -u | head -40
+          echo "===== boost.process sources in cache ====="
+          find ~/.conan2 -path '*libs/process/src*' -name '*.cpp' 2>/dev/null | head -40
+          echo "===== boost.process v2 include dir ====="
+          find ~/.conan2 -type d -path '*include/boost/process/v2' 2>/dev/null | head
+
+      - name: Resolve Boost.Process for Android
+        shell: bash
+        working-directory: /tmp/fptn
+        run: |
+          set -uo pipefail
+          # Boost.Process v2 (Boost 1.90) is NOT header-only: the error categories
+          # and shell handling live in libs/process/src/{error,shell,pid,...}.cpp
+          # and are compiled into libboost_process.a. FPTN's conanfile does build
+          # it ("boost/*:without_process": False), but Conan's CMakeDeps generator
+          # declares no `Boost::process` imported target, so CMake stops with
+          #   Target "fptn-client-cli" links to: Boost::process
+          #   but the target was not found.
+          # The earlier attempt simply deleted that line, which moved the failure
+          # to the linker:
+          #   ld.lld: error: undefined symbol:
+          #     boost::process::v2::error::get_utf8_category()
+          #     boost::process::v2::error::get_exit_code_category()
+          #     boost::process::v2::get_shell_category()
+          # Correct fix: keep linking the library, but by its real path.
+          BP_LIB="$(find "$HOME/.conan2" -name 'libboost_process*.a' 2>/dev/null | head -1 || true)"
+          echo "Boost.Process archive: ${BP_LIB:-<none>}"
+          if [ -n "$BP_LIB" ]; then
+            find src -name CMakeLists.txt -print0 2>/dev/null \
+              | xargs -0 -r sed -i -E "s|^([[:space:]]*)Boost::process([[:space:]]*)$|\1\"${BP_LIB}\"\2|"
+            echo "Boost::process replaced with the archive path."
+          else
+            # No prebuilt archive. Print enough of the cache to decide the next
+            # step without another blind iteration: where the boost sources live
+            # and whether libs/process/src is still there to compile from.
+            echo "::error::libboost_process.a not found in the Conan cache"
+            echo "----- boost package folders -----"
+            find "$HOME/.conan2" -maxdepth 5 -type d -name 'boost*' 2>/dev/null | head -20
+            echo "----- all boost archives present -----"
+            find "$HOME/.conan2" -name 'libboost_*.a' 2>/dev/null | sed 's#.*/##' | sort -u
+            echo "----- boost.process sources still in the cache? -----"
+            find "$HOME/.conan2" -path '*libs/process/src*' -name '*.cpp' 2>/dev/null | head -30
+            exit 1
+          fi
+          echo "----- client link line after the patch -----"
+          sed -n '/^target_link_libraries(/,/^ *"${BROTLI_COMMON_LIB}")/p' src/fptn-client/CMakeLists.txt
 
       - name: "Configure (pass 1: fetch third-party sources)"
         shell: bash

@@ -8,11 +8,25 @@ import com.v2ray.ang.util.Utils
 import java.net.URI
 
 /**
- * Parses FPTN access links: fptn://user:pass@host:port?token=...#remark
+ * Parses FPTN access links: fptn://user:pass@host:port?token=...&sni=...#remark
+ *
  * The access token travels in the `token` query parameter, matching the
- * fptn-client CLI flags (access token is the primary credential).
+ * fptn-client CLI flag (the JWT in `--access-token` is the primary credential and
+ * already carries the server list, so the host/port part of the link is only a
+ * display hint).
+ *
+ * `sni` is carried through as well: the editor exposes it and FptnRootRunner
+ * passes it to the client as `--sni` for TLS obfuscation, so a link that sets it
+ * must not lose it on import. The same key is written back on export.
+ *
+ * Query keys are matched case-insensitively (`token`/`Token`, `sni`/`SNI`) for
+ * the same reason as in [AmneziaFmt]: panels capitalise parameter names and a
+ * case-sensitive lookup silently drops them.
  */
 object FptnFmt : FmtBase() {
+
+    private fun Map<String, String>.ci(key: String): String? =
+        this[key] ?: entries.firstOrNull { it.key.equals(key, ignoreCase = true) }?.value
 
     fun parse(str: String): ProfileItem? {
         val config = ProfileItem.create(EConfigType.FPTN)
@@ -33,15 +47,21 @@ object FptnFmt : FmtBase() {
         }
         if (uri.rawQuery.isNullOrEmpty()) return config
         val query = getQueryParam(uri)
-        config.fptnToken = query["token"] ?: query["access_token"]
+        config.fptnToken = query.ci("token") ?: query.ci("access_token")
+        config.sni = query.ci("sni")?.takeIf { it.isNotBlank() }
         return config
     }
 
     fun toUri(config: ProfileItem): String {
         val userInfo = Utils.encodeURIComponent(config.username.orEmpty()) + ":" +
                 Utils.encodeURIComponent(config.password.orEmpty())
-        val token = config.fptnToken?.takeIf { it.isNotBlank() }
-            ?.let { "?token=${Utils.encodeURIComponent(it)}" } ?: ""
-        return "${AppConfig.FPTN}$userInfo@${config.server}:${config.serverPort}$token#${Utils.encodeURIComponent(config.remarks)}"
+        val params = buildList {
+            config.fptnToken?.takeIf { it.isNotBlank() }
+                ?.let { add("token=${Utils.encodeURIComponent(it)}") }
+            config.sni?.takeIf { it.isNotBlank() }
+                ?.let { add("sni=${Utils.encodeURIComponent(it)}") }
+        }
+        val query = if (params.isEmpty()) "" else "?" + params.joinToString("&")
+        return "${AppConfig.FPTN}$userInfo@${config.server}:${config.serverPort}$query#${Utils.encodeURIComponent(config.remarks)}"
     }
 }

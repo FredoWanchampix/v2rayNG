@@ -35,8 +35,18 @@ object OpenconnectFmt : FmtBase() {
         }
         if (uri.rawQuery.isNullOrEmpty()) return config
         val query = getQueryParam(uri)
-        config.ocservAuthGroup = query["group"] ?: query["authgroup"]
-        config.ocservFlavor = query["flavor"] ?: "anyconnect"
+        // Case-insensitive lookup: server panels capitalise query keys, and a
+        // case-sensitive map access silently dropped group/flavor from imported
+        // links (falling back to anyconnect with no auth group).
+        fun q(vararg keys: String): String? {
+            for (k in keys) {
+                val hit = query[k] ?: query.entries.firstOrNull { it.key.equals(k, ignoreCase = true) }?.value
+                if (!hit.isNullOrBlank()) return hit
+            }
+            return null
+        }
+        config.ocservAuthGroup = q("group", "authgroup", "auth_group", "auth-group")
+        config.ocservFlavor = q("flavor", "flavour") ?: "anyconnect"
         return config
     }
 
