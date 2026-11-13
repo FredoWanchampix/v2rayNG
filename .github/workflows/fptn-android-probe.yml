@@ -51,7 +51,12 @@ concurrency:
 
 env:
   NDK_VERSION: "30.0.16248370"
-  API_LEVEL: "24"
+  # 28, not the app's minSdk 24: boost.asio (boost/asio/detail/memory.hpp) calls
+  # std::aligned_alloc, which the NDK only declares for API >= 28
+  # (__INTRODUCED_IN(28)), and boost 1.90's cobalt/asio TU fail to compile below
+  # that. FPTN already requires root mode, so requiring Android 9+ for this one
+  # engine is an acceptable trade; the app reports it when the engine is absent.
+  API_LEVEL: "28"
 
 jobs:
   build-fptn-android:
@@ -156,12 +161,18 @@ jobs:
         run: |
           set -euo pipefail
           export FPTN_VERSION="${FPTN_VERSION}"
+          # boost.cobalt is new in Boost 1.86+ and FPTN does not use it, yet its
+          # translation units fail on Android: boost/asio/detail/memory.hpp calls
+          # std::aligned_alloc, which libc++ only declares for NDK API >= 28.
+          # Dropping the library removes those TUs entirely and shortens the
+          # build; the API level below is raised as a second line of defence.
           conan install . \
             --output-folder=build-android \
             --profile:host=android --profile:build=default \
             -s build_type=Release \
             -o with_gui_client=False \
             -o build_only_fptn_lib=False \
+            -o 'boost/*:without_cobalt=True' \
             --build=missing \
             -c tools.build:jobs="$(nproc)" 2>&1 | tail -80
 
