@@ -176,7 +176,61 @@ jobs:
             --build=missing \
             -c tools.build:jobs="$(nproc)" 2>&1 | tail -80
 
-      - name: Configure
+      - name: Configure (pass 1: fetch third-party sources)
+        shell: bash
+        working-directory: /tmp/fptn/build-android
+        run: |
+          set -uo pipefail
+          export FPTN_VERSION="${FPTN_VERSION}"
+          # This pass is expected to fail: FPTN pulls libtuntap through
+          # FetchContent and libtuntap does not know Android, so it dies with
+          # "Your operating system is not supported yet". Its purpose is to
+          # download _deps/* so the next step can patch them.
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFPTN_VERSION="${FPTN_VERSION}" \
+            -DFPTN_BUILD_WITH_GUI_CLIENT=OFF \
+            -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF \
+            -DBUILD_TESTING=OFF || echo "expected failure in pass 1"
+          [ -d _deps/libtuntap-src ] || {
+            echo "::error::libtuntap sources were not fetched"; exit 1; }
+
+      - name: Patch libtuntap for Android
+        shell: bash
+        working-directory: /tmp/fptn/build-android
+        run: |
+          set -euo pipefail
+          LT=_deps/libtuntap-src
+          [ -d "$LT" ] || { echo "::error::libtuntap sources missing"; exit 1; }
+          # libtuntap does `set(${CMAKE_SYSTEM_NAME} True)` and then picks its
+          # platform sources with if(Linux)/elseif(OpenBSD)/... On Android
+          # CMAKE_SYSTEM_NAME is "Android", nothing matches and it dies with
+          # "Your operating system is not supported yet". Android is Linux for
+          # everything libtuntap needs (/dev/net/tun + TUNSETIFF), so tell it so.
+          #
+          # Its CMakeLists has `include(CMakeLists.txt.local OPTIONAL)` right
+          # before that line, which is the intended hook for exactly this - so
+          # the upstream file is left untouched.
+          printf '%s\n' \
+            '# Injected by the v2rayNG fork Android build.' \
+            '# libtuntap has no Android branch; Android is Linux for TUN purposes.' \
+            'set(Linux True)' \
+            'add_definitions(-DLinux)' \
+            > "$LT/CMakeLists.txt.local"
+          echo "----- CMakeLists.txt.local -----"
+          cat "$LT/CMakeLists.txt.local"
+          # The Unix branch adds the host /usr/include and /usr/local/include to
+          # the include path. In a cross build those are glibc headers that would
+          # shadow the NDK sysroot, and the target is PUBLIC so they leak into
+          # every FPTN translation unit. Drop those two lines.
+          sed -i -e '\#^[[:space:]]*/usr/include/[[:space:]]*$#d' \
+                 -e '\#^[[:space:]]*/usr/local/include/[[:space:]]*$#d' \
+            "$LT/CMakeLists.txt"
+          echo "----- host include dirs removed? (expect no output) -----"
+          grep -n "/usr/include\|/usr/local/include" "$LT/CMakeLists.txt" || echo "none left"
+
+      - name: Configure (pass 2)
         shell: bash
         working-directory: /tmp/fptn/build-android
         run: |
@@ -187,7 +241,9 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DFPTN_VERSION="${FPTN_VERSION}" \
             -DFPTN_BUILD_WITH_GUI_CLIENT=OFF \
-            -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF
+            -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF \
+            -DBUILD_TESTING=OFF \
+            -DFETCHCONTENT_FULLY_DISCONNECTED=ON
           # Third-party sources fetched during configure are not ours: relax
           # their -Werror so a clang patch-level difference cannot fail us.
           find _deps -maxdepth 3 -name CMakeLists.txt -print0 2>/dev/null \
