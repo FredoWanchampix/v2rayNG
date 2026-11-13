@@ -1,0 +1,239 @@
+name: FPTN Android build probe
+
+# Standalone probe that cross-compiles the real FPTN CLI client for Android
+# arm64. Kept separate from the release build so toolchain problems can be
+# iterated on in minutes instead of burning a full APK build each time.
+#
+# Why Conan (and not a bare NDK cmake invocation):
+#   The previous attempt `cmake -DCMAKE_TOOLCHAIN_FILE=android.toolchain.cmake
+#   -DFPTN_BUILD_CLIENT=ON` failed at configure time with
+#   "Could NOT find GTest (missing: GTEST_LIBRARY ...)" raised from
+#   build/_deps/camouflagetls-src/tests/CMakeLists.txt. FPTN has no such CMake
+#   options at all (the real ones are FPTN_BUILD_ONLY_FPTN_LIB,
+#   FPTN_BUILD_WITH_GUI_CLIENT, FPTN_OPENWRT, FPTN_WITH_MIMALLOC, FPTN_VERSION)
+#   and none of its dependencies (OpenSSL/BoringSSL, Boost, protobuf, re2,
+#   brotli, libidn2, cpp-httplib, abseil, YaFF, spdlog, fmt, argparse,
+#   nlohmann_json, gtest) are available to a plain toolchain file.
+#   FPTN's own conanfile.py declares that whole graph, including
+#   `test_requires("gtest/...")` and a local BoringSSL recipe, so Conan is the
+#   only mechanism that resolves it for Android - the same one the official
+#   FptnClient-Android project uses.
+#
+# Deviations from the upstream desktop recipe, all deliberate:
+#   1. libcxx=c++_static so the binary does not need libc++_shared.so at
+#      runtime: it is shipped in assets/ and executed directly, there is no
+#      APK lib path for the dynamic loader to find.
+#   2. src/fptn-server and src/fptn-passwd are not configured, and the
+#      prometheus-cpp requirement they alone need is dropped from the recipe.
+#      Only fptn-client-cli is shipped; this saves a large part of the build.
+#   3. -Werror / CMAKE_COMPILE_WARNING_AS_ERROR are relaxed in fetched
+#      third-party sources: they are not our code and a different clang patch
+#      level must not fail the Android build.
+
+on:
+  workflow_dispatch:
+    inputs:
+      fptn_tag:
+        description: "FPTN git tag to build"
+        required: false
+        default: "0.4.6"
+        type: string
+  push:
+    branches:
+      - ci-master-build
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fptn-probe
+  cancel-in-progress: true
+
+env:
+  NDK_VERSION: "30.0.16248370"
+  API_LEVEL: "24"
+
+jobs:
+  build-fptn-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Setup Android SDK cmdline-tools
+        uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: "14742923"
+          packages: "platform-tools"
+
+      - name: Install Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            --channel=0 --install "ndk;${NDK_VERSION}"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Conan
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install --quiet "conan>=2.9,<3"
+          conan --version
+          conan profile detect --force
+
+      - name: Restore Conan package cache
+        id: cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.conan2/p
+          key: fptn-conan-ndk${{ env.NDK_VERSION }}-${{ github.event.inputs.fptn_tag || '0.4.6' }}-armv8-v3
+          restore-keys: |
+            fptn-conan-ndk${{ env.NDK_VERSION }}-
+
+      - name: Write the Android host profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK_BIN="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CC="$NDK_BIN/aarch64-linux-android${API_LEVEL}-clang"
+          [ -x "$CC" ] || { echo "::error::NDK clang not found at $CC"; exit 1; }
+          CC_VER="$("$CC" -dumpversion | cut -d. -f1)"
+          echo "NDK clang major version: $CC_VER"
+          echo "CC_VER=$CC_VER" >> "$GITHUB_ENV"
+          mkdir -p ~/.conan2/profiles
+          {
+            echo "include(default)"
+            echo
+            echo "[settings]"
+            echo "os=Android"
+            echo "os.api_level=${API_LEVEL}"
+            echo "arch=armv8"
+            echo "compiler=clang"
+            echo "compiler.version=${CC_VER}"
+            echo "compiler.cppstd=20"
+            echo "compiler.libcxx=c++_static"
+            echo "build_type=Release"
+            echo
+            echo "[conf]"
+            echo "tools.android:ndk_path=${NDK_HOME}"
+            echo "tools.build:compiler_executables={'c': '${NDK_BIN}/aarch64-linux-android${API_LEVEL}-clang', 'cpp': '${NDK_BIN}/aarch64-linux-android${API_LEVEL}-clang++', 'ar': '${NDK_BIN}/llvm-ar', 'ranlib': '${NDK_BIN}/llvm-ranlib', 'strip': '${NDK_BIN}/llvm-strip'}"
+          } > ~/.conan2/profiles/android
+          echo "----- host profile -----"
+          cat ~/.conan2/profiles/android
+
+      - name: Clone and prepare FPTN
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.fptn_tag || '0.4.6' }}"
+          echo "FPTN_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "FPTN_VERSION=$TAG" >> "$GITHUB_ENV"
+          rm -rf /tmp/fptn
+          git clone --depth 1 --branch "$TAG" https://github.com/fptn-project/fptn /tmp/fptn
+          cd /tmp/fptn
+          # Only the CLI is shipped, so the server/passwd targets are not
+          # configured at all and their prometheus-cpp dependency is dropped.
+          sed -i 's|^    self.requires("prometheus-cpp/1.3.0")|    pass  # server-only dep, not needed for the CLI|' conanfile.py
+          sed -i 's|^        add_subdirectory(src/fptn-server)|        # add_subdirectory(src/fptn-server)  # not built for Android|' CMakeLists.txt
+          sed -i 's|^        add_subdirectory(src/fptn-passwd)|        # add_subdirectory(src/fptn-passwd)  # not built for Android|' CMakeLists.txt
+          # Do not treat warnings as errors in our own translation units either:
+          # the NDK clang patch level differs from the desktop one.
+          sed -i 's|^set(CMAKE_COMPILE_WARNING_AS_ERROR ON).*|set(CMAKE_COMPILE_WARNING_AS_ERROR OFF)|' CMakeLists.txt
+          sed -i 's|add_compile_options(-Wall -Werror -pedantic)|add_compile_options(-Wall -pedantic)|' CMakeLists.txt
+          echo "----- patches applied -----"
+          grep -n "prometheus-cpp\|add_subdirectory(src/fptn-\|CMAKE_COMPILE_WARNING_AS_ERROR\|-Werror" CMakeLists.txt conanfile.py | head -20
+
+      - name: Conan install for Android arm64
+        shell: bash
+        working-directory: /tmp/fptn
+        run: |
+          set -euo pipefail
+          export FPTN_VERSION="${FPTN_VERSION}"
+          conan install . \
+            --output-folder=build-android \
+            --profile:host=android --profile:build=default \
+            -s build_type=Release \
+            -o with_gui_client=False \
+            -o build_only_fptn_lib=False \
+            --build=missing \
+            -c tools.build:jobs="$(nproc)" 2>&1 | tail -80
+
+      - name: Configure
+        shell: bash
+        working-directory: /tmp/fptn/build-android
+        run: |
+          set -euo pipefail
+          export FPTN_VERSION="${FPTN_VERSION}"
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFPTN_VERSION="${FPTN_VERSION}" \
+            -DFPTN_BUILD_WITH_GUI_CLIENT=OFF \
+            -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF
+          # Third-party sources fetched during configure are not ours: relax
+          # their -Werror so a clang patch-level difference cannot fail us.
+          find _deps -maxdepth 3 -name CMakeLists.txt -print0 2>/dev/null \
+            | xargs -0 -r sed -i 's/-Werror//g; s/set(CMAKE_COMPILE_WARNING_AS_ERROR ON)/set(CMAKE_COMPILE_WARNING_AS_ERROR OFF)/g' || true
+
+      - name: Build fptn-client-cli
+        shell: bash
+        working-directory: /tmp/fptn/build-android
+        run: |
+          set -euo pipefail
+          cmake --build . --target fptn-client-cli -j"$(nproc)" 2>&1 | tail -120
+
+      - name: Verify and stage the binary
+        shell: bash
+        working-directory: /tmp/fptn
+        run: |
+          set -euo pipefail
+          BIN="$(find build-android -type f -perm -u+x -name 'fptn-client*' ! -name '*.o' | head -1)"
+          if [ -z "$BIN" ]; then
+            echo "::error::fptn-client binary was not produced"
+            find build-android -maxdepth 5 -type f -name '*fptn*' | head -40
+            exit 1
+          fi
+          STRIP="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          echo "Built: $BIN"; file "$BIN"; ls -la "$BIN"
+          file "$BIN" | grep -qi "ELF" || { echo "::error::not an ELF"; exit 1; }
+          file "$BIN" | grep -qiE "ARM aarch64|arm64" || { echo "::error::not arm64"; exit 1; }
+          # It must be a bionic (Android) binary, not a glibc/musl host one.
+          READELF="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          "$READELF" -d "$BIN" | head -40
+          if "$READELF" -d "$BIN" | grep -q "libc\+\+_shared\.so"; then
+            echo "::error::binary links libc++_shared.so; profile must use c++_static"
+            exit 1
+          fi
+          "$STRIP" "$BIN" || true
+          mkdir -p "$GITHUB_WORKSPACE/fptn-out"
+          install -m 0755 "$BIN" "$GITHUB_WORKSPACE/fptn-out/fptn-client"
+          ls -la "$GITHUB_WORKSPACE/fptn-out/"
+          sha256sum "$GITHUB_WORKSPACE/fptn-out/fptn-client" | tee "$GITHUB_WORKSPACE/fptn-out/SHA256SUMS.txt"
+          {
+            echo "## FPTN Android probe"
+            echo
+            echo "- FPTN tag: \`${FPTN_TAG}\`"
+            echo "- NDK: \`${NDK_VERSION}\`, API level ${API_LEVEL}, arch armv8, libcxx c++_static"
+            echo
+            echo '```'
+            file "$GITHUB_WORKSPACE/fptn-out/fptn-client"
+            ls -la "$GITHUB_WORKSPACE/fptn-out/fptn-client"
+            cat "$GITHUB_WORKSPACE/fptn-out/SHA256SUMS.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload fptn-client artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: fptn-client-arm64-v8a
+          path: |
+            fptn-out/fptn-client
+            fptn-out/SHA256SUMS.txt
+          if-no-files-found: error

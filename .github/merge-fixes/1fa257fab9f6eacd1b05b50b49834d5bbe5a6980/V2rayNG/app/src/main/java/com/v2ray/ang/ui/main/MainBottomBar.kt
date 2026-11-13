@@ -1,5 +1,7 @@
 package com.v2ray.ang.ui.main
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -19,14 +21,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
@@ -43,6 +49,7 @@ import com.v2ray.ang.R
 import com.v2ray.ang.ui.compose.colorFabActive
 import com.v2ray.ang.ui.compose.colorFabInactiveDark
 import com.v2ray.ang.ui.compose.colorFabInactiveLight
+import kotlinx.coroutines.launch
 
 private val KNOB_SIZE = 56.dp
 private val BAR_MAX_WIDTH = 480.dp
@@ -66,7 +73,16 @@ fun MainBottomBar(
     onAction: (MainAction) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val scope = rememberCoroutineScope()
+    val rotationAnim = remember { Animatable(0f) }
     val textLayoutDirection = LocalLayoutDirection.current
+
+    LaunchedEffect(isRunning) {
+        if (!isRunning) {
+            rotationAnim.snapTo(0f)
+        }
+    }
+
     // The track is tall enough for two lines of text at the largest size (at the current font scale), so
     // its height is the same whether the message takes one line or two, in every language.
     val twoLinesHeight = with(LocalDensity.current) {
@@ -132,6 +148,9 @@ fun MainBottomBar(
                                 }
                             },
                             modifier = Modifier.semantics { contentDescription = displayText }
+                        )
+                    }
+                }
                 FloatingActionButton(
                     onClick = {
                         if (!isRunning) {
