@@ -164,7 +164,17 @@ jobs:
           # the NDK clang patch level differs from the desktop one.
           sed -i 's|^set(CMAKE_COMPILE_WARNING_AS_ERROR ON).*|set(CMAKE_COMPILE_WARNING_AS_ERROR OFF)|' CMakeLists.txt
           sed -i 's|add_compile_options(-Wall -Werror -pedantic)|add_compile_options(-Wall -pedantic)|' CMakeLists.txt
+          # Boost 1.90 ships boost.process as header-only, so Conan does not
+          # export a `Boost::process` target (the log declares filesystem/random/
+          # locale but not process), and the client's target_link_libraries fails
+          # with "Target fptn-client-cli links to Boost::process but the target
+          # was not found". process needs no library to link - the headers come
+          # from Boost::boost, which is already linked - so drop the reference.
+          grep -rl 'Boost::process' src CMakeLists.txt 2>/dev/null \
+            | xargs -r sed -i -E '/^[[:space:]]*Boost::process[[:space:]]*$/d' || true
           echo "----- patches applied -----"
+          echo "Boost::process references left (expect none):"
+          grep -rn 'Boost::process' src CMakeLists.txt 2>/dev/null || echo "  none"
           grep -nE "prometheus-cpp|add_subdirectory\((src/fptn-|tests)|enable_testing|install\(TARGETS|CMAKE_COMPILE_WARNING_AS_ERROR|-Werror" CMakeLists.txt conanfile.py | head -30
 
       - name: Conan install for Android arm64
