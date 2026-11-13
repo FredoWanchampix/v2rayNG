@@ -219,17 +219,54 @@ jobs:
           echo >> merge-report.md
           echo "- Result: **clean merge**, no conflicts." >> merge-report.md
 
-          # Форк держит свою версию приложения с суффиксом, но номер берём из upstream,
-          # чтобы versionCode всегда рос и обновления устанавливались поверх.
-          UP_VERSION_NAME="$(git show "$UPSTREAM_SHA:V2rayNG/app/build.gradle.kts" \
-            | sed -n 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
-          UP_VERSION_CODE="$(git show "$UPSTREAM_SHA:V2rayNG/app/build.gradle.kts" \
-            | sed -n 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*\([0-9]*\).*/\1/p' | head -n1)"
+          # Version policy: follow upstream, but NEVER regress.
+          #
+          # Taking the upstream version unconditionally would undo the release
+          # train: build.yml bumps master to the next development version after a
+          # stable release (so betas are newer than what users have installed),
+          # and the very next sync would overwrite that bump back to upstream's
+          # older number. The app compares only the dotted version, so the beta
+          # would stop being offered - exactly the "pre-release switch does
+          # nothing" bug. Hence: version = max(upstream, current fork).
+          read_gradle_field() { # $1=sha $2=field $3=sed-pattern
+            git show "$1:V2rayNG/app/build.gradle.kts" \
+              | sed -n "$3" | head -n1
+          }
+          UP_VERSION_NAME="$(read_gradle_field "$UPSTREAM_SHA" versionName \
+            's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p')"
+          UP_VERSION_CODE="$(read_gradle_field "$UPSTREAM_SHA" versionCode \
+            's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*\([0-9]*\).*/\1/p')"
+          FORK_VERSION_NAME="$(read_gradle_field "$FORK_SHA" versionName \
+            's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p')"
+          FORK_VERSION_CODE="$(read_gradle_field "$FORK_SHA" versionCode \
+            's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*\([0-9]*\).*/\1/p')"
 
           if [ -z "$UP_VERSION_NAME" ] || [ -z "$UP_VERSION_CODE" ]; then
             echo "::error::Cannot read upstream version from build.gradle.kts."
             exit 1
           fi
+
+          # Compares two dotted versions; echoes the greater one.
+          version_max() {
+            a="$1"; b="$2"
+            old_ifs="$IFS"; IFS=.
+            # shellcheck disable=SC2086
+            set -- $a
+            a1="${1:-0}"; a2="${2:-0}"; a3="${3:-0}"
+            # shellcheck disable=SC2086
+            set -- $b
+            b1="${1:-0}"; b2="${2:-0}"; b3="${3:-0}"
+            IFS="$old_ifs"
+            if [ "$a1" -gt "$b1" ]; then echo "$a"; return; fi
+            if [ "$b1" -gt "$a1" ]; then echo "$b"; return; fi
+            if [ "$a2" -gt "$b2" ]; then echo "$a"; return; fi
+            if [ "$b2" -gt "$a2" ]; then echo "$b"; return; fi
+            if [ "$a3" -ge "$b3" ]; then echo "$a"; else echo "$b"; fi
+          }
+
+          UP_VERSION_NAME="$(version_max "$UP_VERSION_NAME" "${FORK_VERSION_NAME:-0.0.0}")"
+          UP_VERSION_CODE="$(( UP_VERSION_CODE > ${FORK_VERSION_CODE:-0} ? UP_VERSION_CODE : ${FORK_VERSION_CODE:-0} ))"
+          echo "Version after merge: ${UP_VERSION_NAME} (${UP_VERSION_CODE}); upstream=${FORK_VERSION_NAME:-?}/fork, code kept monotonic"
 
           sed -i -E "s/^([[:space:]]*versionCode[[:space:]]*=[[:space:]]*)[0-9]+/\1${UP_VERSION_CODE}/" \
             V2rayNG/app/build.gradle.kts
