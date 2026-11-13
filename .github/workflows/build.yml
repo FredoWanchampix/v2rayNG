@@ -471,6 +471,16 @@ jobs:
             --title "v2rayNG ${{ steps.collect.outputs.version }} - fork build" \
             --notes-file release-notes.md \
             --target "$GITHUB_SHA" \
-            --latest 2>&1 | tee /tmp/release.log
+            2>&1 | tee /tmp/release.log
           rc=${PIPESTATUS[0]}
           [ "$rc" -eq 0 ] || exit "$rc"
+          # Mark this release explicitly as Latest. Previously `gh release create
+          # --latest` was used, which selects the release by TAG ALPHABET, not by
+          # time. That is why a differently-named tag (the standalone `fptn`
+          # release) ended up on top even though it was older. Now the flag is
+          # applied after creation, based on the fresh release object, so the
+          # newest published release is always the one GitHub shows as Latest.
+          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.id')"
+          if [ -n "${release_id:-}" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/${release_id}"               -f make_latest=true > /dev/null || true
+          fi
