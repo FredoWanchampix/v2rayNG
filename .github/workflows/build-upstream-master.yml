@@ -45,9 +45,17 @@ env:
   UPSTREAM_REPO: 2dust/v2rayNG
 
 jobs:
+  # FPTN is a hard gate here too: a sync must not publish a release whose APK is
+  # missing the fptn-client engine. Reuses the same workflow as build.yml.
+  fptn:
+    uses: ./.github/workflows/fptn-android-probe.yml
+    with:
+      fptn_tag: "0.4.6"
+
   sync-and-build:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    needs: fptn
 
     steps:
       - name: Checkout fork
@@ -465,30 +473,61 @@ jobs:
           sha256sum V2rayNG/app/src/main/assets/engines/* >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Build FPTN client (best effort)
-        continue-on-error: true
+      - name: Download FPTN client (hard gate)
+        uses: actions/download-artifact@v8
+        with:
+          name: fptn-client-arm64-v8a
+          path: fptn-in
+
+      - name: Bundle FPTN client into assets
+        shell: bash
+        env:
+          FPTN_SHA256: ${{ needs.fptn.outputs.sha256 }}
+          FPTN_SIZE: ${{ needs.fptn.outputs.size }}
+        run: |
+          set -euo pipefail
+          # Hard gate: refuse to publish a release whose fptn-client is missing,
+          # truncated or corrupted. No continue-on-error fallback.
+          SRC="fptn-in/fptn-client"
+          if [ ! -f "$SRC" ]; then
+            echo "::error::FPTN client artifact is missing (fptn-in/fptn-client)"
+            ls -la fptn-in 2>/dev/null || true
+            exit 1
+          fi
+          ACTUAL_SHA="$(sha256sum "$SRC" | cut -d' ' -f1)"
+          ACTUAL_SIZE="$(stat -c%s "$SRC")"
+          echo "fptn-client sha256=$ACTUAL_SHA size=$ACTUAL_SIZE"
+          echo "expected    sha256=$FPTN_SHA256 size=$FPTN_SIZE"
+          if [ -n "$FPTN_SHA256" ] && [ "$ACTUAL_SHA" != "$FPTN_SHA256" ]; then
+            echo "::error::FPTN client checksum mismatch"; exit 1
+          fi
+          file "$SRC" | grep -qi "ELF" || { echo "::error::fptn-client is not an ELF"; exit 1; }
+          file "$SRC" | grep -qiE "ARM aarch64|arm64" || { echo "::error::fptn-client is not arm64"; exit 1; }
+          install -m 0755 "$SRC" V2rayNG/app/src/main/assets/engines/fptn-client
+          echo "FPTN client bundled: $(sha256sum V2rayNG/app/src/main/assets/engines/fptn-client)"
+
+      - name: Verify all sidecar engines are bundled
         shell: bash
         run: |
           set -euo pipefail
-          # FPTN has no Android artifact upstream: the C++ client is cross
-          # compiled here with the NDK. If any dependency proves unstable the
-          # step is allowed to fail: the app then reports the engine as not
-          # bundled instead of breaking the whole release.
-          git clone --depth 1 https://github.com/fptn-project/fptn /tmp/fptn
-          cd /tmp/fptn
-          cmake -S . -B build \
-            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 \
-            -DCMAKE_BUILD_TYPE=Release -DFPTN_BUILD_CLIENT=ON -DFPTN_BUILD_SERVER=OFF
-          cmake --build build -j"$(nproc)"
-          BIN="$(find build -type f -perm -u+x \( -name 'fptn-client*' -o -name 'fptn_client*' \) | head -1)"
-          if [ -z "$BIN" ]; then
-            echo "::warning::fptn-client binary not found after build; skipping engine"
-            exit 0
-          fi
-          install -m 0755 "$BIN" V2rayNG/app/src/main/assets/engines/fptn-client
-          cd -
-          echo "FPTN client bundled from $BIN"
+          # Every engine the fork advertises must physically be in the assets
+          # before any APK is built. This is what previously slipped by:
+          # fptn-client was silently missing from shipped releases.
+          D="V2rayNG/app/src/main/assets/engines"
+          missing=0
+          for e in mihomo sing-box mimic-client fptn-client; do
+            if [ -f "$D/$e" ]; then
+              printf '%s\n' "$D/$e: $(stat -c%s "$D/$e") bytes  $(sha256sum "$D/$e" | cut -c1-16)"
+            else
+              echo "::error::missing engine: $D/$e"; missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          echo "## Bundled sidecar engines" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          ls -la "$D" >> "$GITHUB_STEP_SUMMARY"
+          sha256sum "$D"/* >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Detect signing material
         id: signing

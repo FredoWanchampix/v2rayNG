@@ -1,6 +1,6 @@
-name: FPTN Android build probe
+name: FPTN Android client build
 
-# Standalone probe that cross-compiles the real FPTN CLI client for Android
+# Reusable workflow that cross-compiles the real FPTN CLI client for Android
 # arm64. Kept separate from the release build so toolchain problems can be
 # iterated on in minutes instead of burning a full APK build each time.
 #
@@ -38,16 +38,30 @@ on:
         required: false
         default: "0.4.6"
         type: string
-  push:
-    branches:
-      - ci-master-build
+  workflow_call:
+    inputs:
+      fptn_tag:
+        description: "FPTN git tag to build"
+        required: false
+        default: "0.4.6"
+        type: string
+    outputs:
+      sha256:
+        description: "SHA256 of the produced fptn-client binary"
+        value: ${{ jobs.build-fptn-android.outputs.sha256 }}
+      size:
+        description: "Size in bytes of the stripped fptn-client binary"
+        value: ${{ jobs.build-fptn-android.outputs.size }}
+      artifact_id:
+        description: "Actions artifact id of the fptn-client-arm64-v8a artifact"
+        value: ${{ jobs.build-fptn-android.outputs.artifact_id }}
 
 permissions:
   contents: read
 
-concurrency:
-  group: fptn-probe
-  cancel-in-progress: true
+# No `concurrency` group here on purpose: this workflow is called from both
+# build.yml and build-upstream-master.yml, and a shared group would let one
+# caller cancel the other's FPTN build. Callers serialise themselves.
 
 env:
   NDK_VERSION: "30.0.16248370"
@@ -62,6 +76,10 @@ jobs:
   build-fptn-android:
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    outputs:
+      sha256: ${{ steps.stage.outputs.sha256 }}
+      size: ${{ steps.stage.outputs.size }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
 
     steps:
       - name: Setup Android SDK cmdline-tools
@@ -104,7 +122,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.conan2/p
-          key: fptn-conan-ndk${{ env.NDK_VERSION }}-${{ github.event.inputs.fptn_tag || '0.4.6' }}-armv8-v3
+          key: fptn-conan-ndk${{ env.NDK_VERSION }}-${{ inputs.fptn_tag || github.event.inputs.fptn_tag || '0.4.6' }}-armv8-v3
           restore-keys: |
             fptn-conan-ndk${{ env.NDK_VERSION }}-
 
@@ -143,7 +161,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${{ github.event.inputs.fptn_tag || '0.4.6' }}"
+          TAG="${{ inputs.fptn_tag || github.event.inputs.fptn_tag || '0.4.6' }}"
           echo "FPTN_TAG=$TAG" >> "$GITHUB_ENV"
           echo "FPTN_VERSION=$TAG" >> "$GITHUB_ENV"
           rm -rf /tmp/fptn
@@ -218,7 +236,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ~/.conan2/p
-          key: fptn-conan-ndk${{ env.NDK_VERSION }}-${{ github.event.inputs.fptn_tag || '0.4.6' }}-armv8-v3
+          key: fptn-conan-ndk${{ env.NDK_VERSION }}-${{ inputs.fptn_tag || github.event.inputs.fptn_tag || '0.4.6' }}-armv8-v3
 
       - name: Resolve Boost.Process for Android
         shell: bash
@@ -414,6 +432,7 @@ jobs:
           exit "$rc"
 
       - name: Verify and stage the binary
+        id: stage
         shell: bash
         working-directory: /tmp/fptn
         run: |
@@ -440,6 +459,8 @@ jobs:
           install -m 0755 "$BIN" "$GITHUB_WORKSPACE/fptn-out/fptn-client"
           ls -la "$GITHUB_WORKSPACE/fptn-out/"
           sha256sum "$GITHUB_WORKSPACE/fptn-out/fptn-client" | tee "$GITHUB_WORKSPACE/fptn-out/SHA256SUMS.txt"
+          echo "sha256=$(sha256sum "$GITHUB_WORKSPACE/fptn-out/fptn-client" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "size=$(stat -c%s "$GITHUB_WORKSPACE/fptn-out/fptn-client")" >> "$GITHUB_OUTPUT"
           {
             echo "## FPTN Android probe"
             echo
@@ -454,6 +475,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload fptn-client artifact
+        id: upload
         uses: actions/upload-artifact@v7
         with:
           name: fptn-client-arm64-v8a
