@@ -290,29 +290,65 @@ class ServerUiState(
         }
     }
 
-    /** Packs every non-blank AmneziaWG field into the JSON blob the mihomo sidecar consumes. */
+    /**
+     * Packs the non-blank AmneziaWG fields into the JSON blob the mihomo sidecar
+     * consumes, keeping only the parameters valid for the selected version.
+     *
+     * mihomo runs two incompatible AmneziaWG implementations and rejects a mix:
+     * version 3 accepts header-protection-key / content-padding-addition / the
+     * five rekey-keepalive timings / random-trailers / disable-cookies and
+     * *rejects* j1-j3 and itime, while the legacy v1.x/v2 implementation is the
+     * other way round. The editor hides the irrelevant half, but the hidden
+     * fields still hold their old values in this state object (for example after
+     * importing an awg:// link and then switching the version), so they are
+     * filtered here too - otherwise a profile would carry an invalid mix into
+     * the generated config and mihomo would refuse to start it.
+     *
+     * s1-s4, jc/jmin/jmax, h1-h4 and i1-i5 are valid in both implementations.
+     */
     private fun buildAmneziaOptions(): String {
         val opts = org.json.JSONObject()
-        awgVersion.toIntOrNull()?.let { opts.put("version", it) }
+        val version = awgVersion.trim()
+        // mihomo: `3` selects the AmneziaWG v3 implementation; ANY other value
+        // (including unset) selects the legacy v1.x/v2 implementation. So the
+        // test is equality with "3", not inequality with "1".
+        val isV3 = version == "3"
+        version.toIntOrNull()?.let { opts.put("version", it) }
+
+        // Integer knobs shared by every version. `itime` is v1.5-only, so it is
+        // handled with the legacy block below instead.
         mapOf(
             "jc" to awgJc, "jmin" to awgJmin, "jmax" to awgJmax,
-            "s1" to awgS1, "s2" to awgS2, "s3" to awgS3, "s4" to awgS4,
-            "itime" to awgItime
+            "s1" to awgS1, "s2" to awgS2, "s3" to awgS3, "s4" to awgS4
         ).forEach { (k, v) -> v.toIntOrNull()?.let { opts.put(k, it) } }
+
+        // String knobs shared by every version.
         mapOf(
             "h1" to awgH1, "h2" to awgH2, "h3" to awgH3, "h4" to awgH4,
-            "i1" to awgI1, "i2" to awgI2, "i3" to awgI3, "i4" to awgI4, "i5" to awgI5,
-            "j1" to awgJ1, "j2" to awgJ2, "j3" to awgJ3,
-            "header-protection-key" to awgHeaderProtectionKey,
-            "content-padding-addition" to awgContentPaddingAddition,
-            "rekey-after-time" to awgRekeyAfterTime,
-            "rekey-timeout" to awgRekeyTimeout,
-            "reject-after-time" to awgRejectAfterTime,
-            "keepalive-timeout" to awgKeepaliveTimeout,
-            "max-handshake-attempts" to awgMaxHandshakeAttempts
+            "i1" to awgI1, "i2" to awgI2, "i3" to awgI3, "i4" to awgI4, "i5" to awgI5
         ).forEach { (k, v) -> v.takeIf { it.isNotBlank() }?.let { opts.put(k, it) } }
-        if (awgRandomTrailers) opts.put("randomTrailers", true)
-        if (awgDisableCookies) opts.put("disableCookies", true)
+
+        if (isV3) {
+            // AmneziaWG 3.x parameters (3.1 for random-trailers/disable-cookies).
+            mapOf(
+                "header-protection-key" to awgHeaderProtectionKey,
+                "content-padding-addition" to awgContentPaddingAddition,
+                "rekey-after-time" to awgRekeyAfterTime,
+                "rekey-timeout" to awgRekeyTimeout,
+                "reject-after-time" to awgRejectAfterTime,
+                "keepalive-timeout" to awgKeepaliveTimeout,
+                "max-handshake-attempts" to awgMaxHandshakeAttempts
+            ).forEach { (k, v) -> v.takeIf { it.isNotBlank() }?.let { opts.put(k, it) } }
+            if (awgRandomTrailers) opts.put("randomTrailers", true)
+            if (awgDisableCookies) opts.put("disableCookies", true)
+        } else {
+            // AmneziaWG 1.5-only junk packets and their cadence.
+            mapOf(
+                "j1" to awgJ1, "j2" to awgJ2, "j3" to awgJ3
+            ).forEach { (k, v) -> v.takeIf { it.isNotBlank() }?.let { opts.put(k, it) } }
+            awgItime.toIntOrNull()?.let { opts.put("itime", it) }
+        }
+
         return if (opts.length() == 0) "" else opts.toString()
     }
 

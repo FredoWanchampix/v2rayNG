@@ -210,7 +210,12 @@ class MainActivity : HelperBaseComponentActivity() {
             EConfigType.HTTP.value -> Intent(this, ServerHttpActivity::class.java)
             EConfigType.TROJAN.value -> Intent(this, ServerTrojanActivity::class.java)
             EConfigType.WIREGUARD.value -> Intent(this, ServerWireguardActivity::class.java)
-            EConfigType.HYSTERIA2.value -> Intent(this, ServerHysteria2Activity::class.java)
+            // Mimic is a Hysteria2-family transport, so it shares that editor:
+            // ServerUiState.from() maps the stored MIMIC type back to
+            // hy2Transport = "mimic". Without this branch MIMIC profiles fell
+            // into `else` and opened the HTTP proxy editor.
+            EConfigType.HYSTERIA2.value, EConfigType.MIMIC.value ->
+                Intent(this, ServerHysteria2Activity::class.java)
             EConfigType.AMNEZIAWG.value -> Intent(this, ServerAmneziaActivity::class.java)
             EConfigType.NAIVE.value -> Intent(this, ServerNaiveActivity::class.java)
             EConfigType.OPENCONNECT.value -> Intent(this, ServerOpenconnectActivity::class.java)
@@ -267,7 +272,8 @@ class MainActivity : HelperBaseComponentActivity() {
             EConfigType.HTTP -> ServerHttpActivity::class.java
             EConfigType.TROJAN -> ServerTrojanActivity::class.java
             EConfigType.WIREGUARD -> ServerWireguardActivity::class.java
-            EConfigType.HYSTERIA2 -> ServerHysteria2Activity::class.java
+            // See importServerIntent: MIMIC is edited through the Hysteria2 form.
+            EConfigType.HYSTERIA2, EConfigType.MIMIC -> ServerHysteria2Activity::class.java
             EConfigType.AMNEZIAWG -> ServerAmneziaActivity::class.java
             EConfigType.NAIVE -> ServerNaiveActivity::class.java
             EConfigType.OPENCONNECT -> ServerOpenconnectActivity::class.java

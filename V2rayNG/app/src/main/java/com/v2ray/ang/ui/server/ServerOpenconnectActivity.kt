@@ -3,18 +3,23 @@ package com.v2ray.ang.ui.server
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.KeyboardType
 import com.v2ray.ang.R
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.EConfigType
+import com.v2ray.ang.ui.compose.FormDropdownField
 import com.v2ray.ang.ui.compose.FormTextField
 import com.v2ray.ang.ui.compose.SettingsSwitchItem
 
-import com.v2ray.ang.ui.compose.FormDropdownField
-
 /**
- * Editor for OpenConnect / Cisco AnyConnect profiles (engine: sing-box
- * sidecar, openconnect endpoint routed for all traffic).
+ * Editor for OpenConnect / Cisco AnyConnect profiles (engine: sing-box sidecar,
+ * `openconnect` endpoint routed for all traffic).
+ *
+ * The fields map onto the sing-box openconnect endpoint schema: flavor selects
+ * the VPN dialect (anyconnect / gp / fortinet / f5 / pulse / nc), auth_group
+ * preselects a gateway group, and SNI + allow-insecure go into the endpoint's
+ * own `tls` object (tls.server_name / tls.insecure) - sing-box does not accept
+ * them as top-level keys, which is why the generic stream-security block is not
+ * reused here.
  */
 class ServerOpenconnectActivity : BaseServerActivity() {
 
@@ -45,9 +50,22 @@ class ServerOpenconnectActivity : BaseServerActivity() {
         FormDropdownField(
             label = stringResource(R.string.oc_lab_flavor),
             value = s.ocFlavor,
-            options = listOf("anyconnect", "gp", "fortinet", "f5", "pulse"),
+            // sing-box accepts nc (Juniper Network Connect) in addition to the
+            // five dialects that were listed before.
+            options = listOf("anyconnect", "gp", "fortinet", "f5", "pulse", "nc"),
             onValueChange = { s.ocFlavor = it }
         )
         FormTextField(stringResource(R.string.oc_lab_auth_group), s.ocAuthGroup, { s.ocAuthGroup = it })
+        FormTextField(
+            label = stringResource(R.string.server_lab_sni),
+            value = s.sni,
+            onValueChange = { s.sni = it },
+            supportingText = stringResource(R.string.oc_lab_sni_hint)
+        )
+        SettingsSwitchItem(
+            title = stringResource(R.string.server_lab_allow_insecure),
+            checked = s.allowInsecure,
+            onCheckedChange = { s.allowInsecure = it }
+        )
     }
 }

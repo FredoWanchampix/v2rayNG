@@ -616,6 +616,11 @@
     <string name="menu_item_import_config_manually_openconnect">Manually[OpenConnect]</string>
     <string name="menu_item_import_config_manually_fptn">Manually[FPTN]</string>
     <string name="server_lab_hy2_transport">Transport</string>
+    <string name="server_lab_hy2_transport_hint">Default runs on the Xray core (obfuscation, port hopping, TLS). Mimic runs the standalone mimic-client engine and only uses the server, the uuid and the mimicry domains.</string>
+    <string name="mimic_lab_uuid">UUID</string>
+    <string name="naive_lab_sni_hint">NaiveProxy only accepts SNI for TLS: it has no allow-insecure or ALPN option, because a self-signed certificate would break the browser-like traffic profile it imitates.</string>
+    <string name="oc_lab_sni_hint">Server name for TLS SNI and certificate hostname verification.</string>
+    <string name="oc_lab_allow_insecure_hint">Accept a self-signed or mismatched server certificate. Prefer the certificate fingerprint when possible.</string>
     <string name="server_hy2_transport_default">default (QUIC)</string>
     <string name="server_hy2_transport_mimic">mimic (MTP + TLS mimicry)</string>
     <string name="server_lab_mimic_domains">Mimicry domains (JSON array)</string>
@@ -637,6 +642,13 @@
     <string name="awg_lab_i3">i3</string>
     <string name="awg_lab_i4">i4</string>
     <string name="awg_lab_i5">i5</string>
+    <string name="awg_lab_j1">j1 (v1.5 only)</string>
+    <string name="awg_lab_j2">j2 (v1.5 only)</string>
+    <string name="awg_lab_j3">j3 (v1.5 only)</string>
+    <string name="awg_lab_itime">Junk packet interval, itime (v1.5 only)</string>
+    <string name="awg_lab_version_hint">mihomo rejects mixing v1.5-only (j1-j3, itime) with v3-only fields. Pick version 3 for AmneziaWG 3.x servers, 1 for legacy 1.x/2 servers.</string>
+    <string name="awg_lab_v15_section">AmneziaWG 1.5 parameters</string>
+    <string name="awg_lab_v3_section">AmneziaWG 3.x parameters</string>
     <string name="awg_lab_header_protection_key">Header protection key (v3)</string>
     <string name="awg_lab_content_padding">Content padding addition (v3)</string>
     <string name="awg_lab_rekey_after_time">Rekey after time (v3)</string>

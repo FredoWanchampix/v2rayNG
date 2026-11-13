@@ -153,12 +153,19 @@ jobs:
           sed -i -E 's|^([[:space:]]*)add_subdirectory\(src/fptn-passwd\)|\1# add_subdirectory(src/fptn-passwd)  # not built for Android|' CMakeLists.txt
           sed -i -E 's|^([[:space:]]*)install\(TARGETS fptn-server .*\)|\1# install() removed: fptn-server is not built for Android|' CMakeLists.txt
           sed -i -E 's|^([[:space:]]*)install\(TARGETS fptn-passwd .*\)|\1# install() removed: fptn-passwd is not built for Android|' CMakeLists.txt
+          # The top-level `add_subdirectory(tests)` pulls tests/server, which does
+          # find_package(prometheus-cpp REQUIRED). That package was dropped above
+          # together with the server, so Configure pass 2 failed with
+          # "Could not find a package configuration file provided by prometheus-cpp".
+          # Tests are not needed to ship the CLI.
+          sed -i -E 's|^([[:space:]]*)add_subdirectory\(tests\)|\1# add_subdirectory(tests)  # server tests need prometheus-cpp, not built for Android|' CMakeLists.txt
+          sed -i -E 's|^([[:space:]]*)enable_testing\(\)|\1# enable_testing()  # disabled with tests/ for the Android build|' CMakeLists.txt
           # Do not treat warnings as errors in our own translation units either:
           # the NDK clang patch level differs from the desktop one.
           sed -i 's|^set(CMAKE_COMPILE_WARNING_AS_ERROR ON).*|set(CMAKE_COMPILE_WARNING_AS_ERROR OFF)|' CMakeLists.txt
           sed -i 's|add_compile_options(-Wall -Werror -pedantic)|add_compile_options(-Wall -pedantic)|' CMakeLists.txt
           echo "----- patches applied -----"
-          grep -n "prometheus-cpp\|add_subdirectory(src/fptn-\|CMAKE_COMPILE_WARNING_AS_ERROR\|-Werror" CMakeLists.txt conanfile.py | head -20
+          grep -nE "prometheus-cpp|add_subdirectory\((src/fptn-|tests)|enable_testing|install\(TARGETS|CMAKE_COMPILE_WARNING_AS_ERROR|-Werror" CMakeLists.txt conanfile.py | head -30
 
       - name: Conan install for Android arm64
         shell: bash

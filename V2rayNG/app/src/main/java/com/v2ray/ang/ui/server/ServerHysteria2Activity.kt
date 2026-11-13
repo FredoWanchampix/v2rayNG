@@ -9,6 +9,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
@@ -24,6 +25,25 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * Editor for Hysteria2 profiles, which also covers the Mimic transport.
+ *
+ * Hysteria2 and Mimic are two transports of the same protocol family, but they
+ * are served by different cores and therefore consume a different set of
+ * fields:
+ *
+ *  - transport "default" runs on the Xray core (native Hysteria2): obfs
+ *    (none/salamander/gecko), obfs password, gecko packet sizes, port hopping,
+ *    bandwidth hints, TLS (sni / allow-insecure / ech / pin / fetch-pin button)
+ *    all take effect.
+ *  - transport "mimic" runs on the standalone `mimic-client` sidecar. That
+ *    engine only reads server:port, the password (used as the Mimic uuid) and
+ *    the list of masking domains; every Hysteria2/TLS knob above is ignored by
+ *    it, so the form hides them and shows the Mimic fields instead.
+ *
+ * The stored profile type follows the transport: HYSTERIA2 for "default",
+ * MIMIC for "mimic" (see ServerUiState.toProfileItem / .from).
+ */
 class ServerHysteria2Activity : BaseServerActivity() {
 
     override val serverConfigType: EConfigType = EConfigType.HYSTERIA2
@@ -35,29 +55,47 @@ class ServerHysteria2Activity : BaseServerActivity() {
                 initialConfig = initialConfig
             )
         }.apply {
+            // The form is shared by HYSTERIA2 and MIMIC; the real type is
+            // derived from hy2Transport when saving.
             configType = EConfigType.HYSTERIA2
         }
+
+        val transportDefault = stringResource(R.string.server_hy2_transport_default)
+        val transportMimic = stringResource(R.string.server_hy2_transport_mimic)
+        val isMimic = uiState.hy2Transport == "mimic"
 
         ServerEditorScaffold(
             title = serverConfigType.toString(),
             onSaveClick = { saveServer(uiState) }
         ) {
             CommonBasicFields(uiState)
-            val transportDefault = stringResource(R.string.server_hy2_transport_default)
-            val transportMimic = stringResource(R.string.server_hy2_transport_mimic)
+
+            // Transport selector. Everything below branches on it so the user
+            // only ever sees fields the chosen engine actually consumes.
             FormDropdownField(
                 label = stringResource(R.string.server_lab_hy2_transport),
-                value = if (uiState.hy2Transport == "mimic") transportMimic else transportDefault,
+                value = if (isMimic) transportMimic else transportDefault,
                 options = listOf(transportDefault, transportMimic),
+                supportingText = stringResource(R.string.server_lab_hy2_transport_hint),
                 onValueChange = { picked ->
                     uiState.hy2Transport = if (picked == transportMimic) "mimic" else ""
                 }
             )
-            if (uiState.hy2Transport == "mimic") {
-                MimicTransportFields(uiState)
-            }
-            Hysteria2ProtocolFields(uiState)
 
+            // Both transports authenticate with a secret: Hysteria2 calls it a
+            // password, Mimic reuses it as the uuid. Show it once, always.
+            FormTextField(
+                label = stringResource(if (isMimic) R.string.mimic_lab_uuid else R.string.server_lab_id3),
+                value = uiState.password,
+                onValueChange = { uiState.password = it },
+                isError = uiState.isPasswordError
+            )
+
+            if (isMimic) {
+                MimicTransportFields(uiState)
+            } else {
+                Hysteria2ProtocolFields(uiState)
+            }
         }
     }
 
@@ -65,7 +103,9 @@ class ServerHysteria2Activity : BaseServerActivity() {
         if (config.password.isNullOrBlank()) {
             return false
         }
-        if (config.security.isNullOrBlank()) {
+        // Mimic profiles have no Xray TLS layer; keep the default only for the
+        // native Hysteria2 transport.
+        if (config.configType == EConfigType.HYSTERIA2 && config.security.isNullOrBlank()) {
             config.security = AppConfig.TLS
         }
         return true
@@ -73,6 +113,9 @@ class ServerHysteria2Activity : BaseServerActivity() {
 
     @Composable
     private fun MimicTransportFields(state: ServerUiState) {
+        // Mimic masks traffic as one of the domains below; the rest of the
+        // Hysteria2/TLS knobs are not read by the mimic-client sidecar, so they
+        // are intentionally not shown here.
         FormTextField(
             label = stringResource(R.string.server_lab_mimic_domains),
             value = state.mimicDomains,
@@ -86,12 +129,6 @@ class ServerHysteria2Activity : BaseServerActivity() {
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
 
-        FormTextField(
-            label = stringResource(R.string.server_lab_id3),
-            value = state.password,
-            onValueChange = { state.password = it },
-            isError = state.isPasswordError
-        )
         val obfsOptions = listOf("none", "salamander", "gecko")
         val selectedObfs = when {
             state.obfs.equals("gecko", ignoreCase = true) -> "gecko"
@@ -122,12 +159,14 @@ class ServerHysteria2Activity : BaseServerActivity() {
                 FormTextField(
                     stringResource(R.string.server_lab_min_packet_size),
                     state.minPacketSize,
-                    { state.minPacketSize = it }
+                    { state.minPacketSize = it },
+                    keyboardType = KeyboardType.Number
                 )
                 FormTextField(
                     stringResource(R.string.server_lab_max_packet_size),
                     state.maxPacketSize,
-                    { state.maxPacketSize = it }
+                    { state.maxPacketSize = it },
+                    keyboardType = KeyboardType.Number
                 )
             }
         }
@@ -185,13 +224,6 @@ class ServerHysteria2Activity : BaseServerActivity() {
                     context.toast(R.string.server_lab_address)
                     return@Button
                 }
-                if (
-                    state.configType != EConfigType.HYSTERIA2 &&
-                    (state.port.toIntOrNull() ?: 0) <= 0
-                ) {
-                    context.toast(R.string.server_lab_port)
-                    return@Button
-                }
                 val temp = state.toProfileItem(initialConfig)
                 scope.launch {
                     state.isFetchingCert = true
@@ -217,5 +249,3 @@ class ServerHysteria2Activity : BaseServerActivity() {
         }
     }
 }
-
-

@@ -619,6 +619,11 @@
     <string name="menu_item_import_config_manually_openconnect">Вручную[OpenConnect]</string>
     <string name="menu_item_import_config_manually_fptn">Вручную[FPTN]</string>
     <string name="server_lab_hy2_transport">Транспорт</string>
+    <string name="server_lab_hy2_transport_hint">Default — на ядре Xray (обфускация, port hopping, TLS). Mimic — на отдельном движке mimic-client, которому нужны только сервер, uuid и домены мимикрии.</string>
+    <string name="mimic_lab_uuid">UUID</string>
+    <string name="naive_lab_sni_hint">NaiveProxy принимает в TLS только SNI: опций allow-insecure и ALPN нет, так как самоподписанный сертификат разрушает браузерный профиль трафика, который он имитирует.</string>
+    <string name="oc_lab_sni_hint">Имя сервера для TLS SNI и проверки имени хоста в сертификате.</string>
+    <string name="oc_lab_allow_insecure_hint">Принимать самоподписанный или несовпадающий сертификат сервера. По возможности используйте отпечаток сертификата.</string>
     <string name="server_hy2_transport_default">по умолчанию (QUIC)</string>
     <string name="server_hy2_transport_mimic">mimic (MTP + TLS-мимикрия)</string>
     <string name="server_lab_mimic_domains">Домены мимикрии (JSON-массив)</string>
@@ -640,6 +645,13 @@
     <string name="awg_lab_i3">i3</string>
     <string name="awg_lab_i4">i4</string>
     <string name="awg_lab_i5">i5</string>
+    <string name="awg_lab_j1">j1 (только v1.5)</string>
+    <string name="awg_lab_j2">j2 (только v1.5)</string>
+    <string name="awg_lab_j3">j3 (только v1.5)</string>
+    <string name="awg_lab_itime">Интервал мусорных пакетов, itime (только v1.5)</string>
+    <string name="awg_lab_version_hint">mihomo отклоняет смешивание полей v1.5 (j1-j3, itime) и v3. Выберите версию 3 для серверов AmneziaWG 3.x, 1 — для legacy 1.x/2.</string>
+    <string name="awg_lab_v15_section">Параметры AmneziaWG 1.5</string>
+    <string name="awg_lab_v3_section">Параметры AmneziaWG 3.x</string>
     <string name="awg_lab_header_protection_key">Ключ защиты заголовка (v3)</string>
     <string name="awg_lab_content_padding">Добавка паддинга (v3)</string>
     <string name="awg_lab_rekey_after_time">Rekey после (v3)</string>
