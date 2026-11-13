@@ -161,7 +161,14 @@ jobs:
             fi
 
             if [ "$RESOLVED" = 1 ] && [ -z "$(git diff --name-only --diff-filter=U)" ]; then
-              git add -A
+              # Re-stage everything EXCEPT submodules (see the note above): a bare
+              # `git add -A` here would rewrite the auto-merged submodule gitlink
+              # back to the pre-merge working-tree commit.
+              if [ "${#EXCL[@]}" -gt 0 ]; then
+                git add -A -- . "${EXCL[@]}"
+              else
+                git add -A
+              fi
               git commit --no-edit
               RESOLVED_POLICY=1
               echo "policy=resolved-by-rules" >> "$GITHUB_OUTPUT"
