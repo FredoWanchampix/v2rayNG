@@ -19,10 +19,6 @@ on:
     - cron: "17 3 * * *"
   workflow_dispatch:
     inputs:
-      release_tag:
-        description: "Optional release tag"
-        required: false
-        type: string
       publish:
         description: "Push merged result to master"
         required: false
@@ -31,6 +27,11 @@ on:
   push:
     branches:
       - ci-master-build
+
+# Scope: merge upstream, verify the merge builds (including the FPTN engine
+# gate), and publish the merged SOURCE to master. It does not publish releases.
+# Releases are created only by the "Build APK" workflow with an explicit
+# release_channel, so a single commit never yields two parallel builds.
 
 permissions:
   contents: write
@@ -665,15 +666,16 @@ jobs:
           done < /tmp/err.txt
           echo "Emitted $n annotation lines from the Gradle logs."
 
-      - name: Collect APKs and release notes
+      - name: Collect APKs
         id: release
-        env:
-          REQUESTED_TAG: ${{ github.event.inputs.release_tag }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO_WRITE_TOKEN: ${{ secrets.REPO_WRITE_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
+          # This workflow verifies a merge end to end: it builds the APKs so a
+          # bad merge cannot silently land on master. It does NOT publish a
+          # release any more - releases come only from the "Build APK" workflow
+          # with an explicit release_channel, so one commit never produces two
+          # near-identical builds/releases.
           VERSION_NAME="${VERSION_NAME:-$(sed -n 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' V2rayNG/app/build.gradle.kts | head -n1)}"
           [ -n "$VERSION_NAME" ] || { echo "::error::Cannot determine version."; exit 1; }
 
@@ -685,108 +687,9 @@ jobs:
           cp "${APKS[@]}" release-assets/
           ( cd release-assets && sha256sum ./*.apk > SHA256SUMS.txt )
 
-          # Release channel, mirroring upstream 2dust/v2rayNG:
-          #   - an explicit release_tag input publishes a STABLE release and moves
-          #     GitHub's "Latest" pointer onto it;
-          #   - an automatic sync (schedule or a plain dispatch) publishes a
-          #     PRERELEASE, i.e. the in-development build. Upstream does exactly
-          #     this (their 2.4.0 sat as a prerelease while 2.3.15 was Latest),
-          #     and it is what makes the app's "Check pre-release versions" switch
-          #     meaningful: OFF -> /releases/latest (GitHub excludes prereleases),
-          #     ON  -> /releases, newest by published_at, betas included.
-          #
-          # The version itself comes from upstream (written into build.gradle.kts
-          # during the merge), so a beta is newer than the installed stable build
-          # exactly when upstream has moved ahead - which is the correct signal.
-          if [ -n "${REQUESTED_TAG:-}" ]; then
-            RELEASE_TAG="$REQUESTED_TAG"
-            IS_PRERELEASE="false"
-            case "$RELEASE_TAG" in
-              *beta*|*alpha*|*rc*|*-pre*) IS_PRERELEASE="true" ;;
-            esac
-          else
-            RELEASE_TAG="v${VERSION_NAME}-beta.$(date -u +%Y%m%d-%H%M%S)"
-            IS_PRERELEASE="true"
-          fi
-          echo "Publishing ${RELEASE_TAG} (prerelease=${IS_PRERELEASE})"
-
-          {
-            echo "# v2rayNG ${VERSION_NAME} - fork build"
-            echo
-            echo "- Upstream: https://github.com/${UPSTREAM_REPO} @ \`${UPSTREAM_SHA}\`"
-            echo "- Merge policy: \`${MERGE_POLICY}\`"
-            echo "- Build type: $([ "$SUB" = release ] && echo 'release (signed)' || echo 'debug')"
-            echo
-            echo "## Checksums"
-            echo '```'
-            cat release-assets/SHA256SUMS.txt
-            echo '```'
-            echo
-            echo "## Which APK"
-            echo
-            echo "- \`universal\` - works on any architecture"
-            echo "- \`arm64-v8a\` - 64-bit ARM (most phones since 2017)"
-            echo "- \`armeabi-v7a\` - 32-bit ARM"
-            echo "- \`x86_64\` / \`x86\` - emulators"
-          } > release-notes.md
-          # ---- Changelog for THIS release only ----
-          # A token is required to list releases; REPO_WRITE_TOKEN has wider scope.
-          export GH_TOKEN="${REPO_WRITE_TOKEN:-${GITHUB_TOKEN:-}}"
-          git fetch --tags --force origin >/dev/null 2>&1 || true
-
-          # Most recent published release other than the one being created now.
-          # It MUST be picked by publication time: sorting tag names as text picks
-          # the wrong neighbour (v2.3.15-fork-2026... sorts after
-          # v2.3.15-engines-ui2), which made every changelog repeat the same
-          # commit range instead of listing only what is new in THIS release.
-          export RELEASE_TAG
-          PREV_TAG="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
-            --json tagName,publishedAt \
-            --jq '[.[] | select(.tagName != env.RELEASE_TAG)] | sort_by(.publishedAt) | last | .tagName // ""' \
-            2>/dev/null || true)"
-          if [ -n "$PREV_TAG" ] && ! git rev-parse -q --verify \
-              "refs/tags/${PREV_TAG}^{commit}" >/dev/null 2>&1; then
-            PREV_TAG=""
-          fi
-          echo "Previous release tag: ${PREV_TAG:-<none>}"
-
-          # Keep upstream commits out of the fork list; they get their own
-          # section below, otherwise every merged commit would appear twice.
-          NOT_ARGS=()
-          if [ -n "${UPSTREAM_SHA:-}" ]; then NOT_ARGS=(--not "$UPSTREAM_SHA"); fi
-
-          {
-            echo
-            echo "## What changed in this release"
-            echo
-            echo "### Fork commits"
-            echo
-            if [ -n "$PREV_TAG" ]; then
-              RANGE_LOG="$(git log --no-merges --date=short \
-                --pretty=format:'- %s (%h, %ad)' "${PREV_TAG}..HEAD" "${NOT_ARGS[@]}" 2>/dev/null || true)"
-            else
-              RANGE_LOG="$(git log --no-merges -n 20 --date=short \
-                --pretty=format:'- %s (%h, %ad)' HEAD "${NOT_ARGS[@]}" 2>/dev/null || true)"
-            fi
-            if [ -n "$RANGE_LOG" ]; then printf '%s\n' "$RANGE_LOG"; else echo "- No new fork commits."; fi
-            echo
-            echo "### Upstream commits integrated"
-            echo
-            if [ "${MERGE_POLICY:-}" = "already-up-to-date" ]; then
-              echo "- Already up to date with \`${UPSTREAM_REPO}\`; nothing new."
-            elif [ -n "${MERGE_BASE:-}" ] && [ -n "${UPSTREAM_SHA:-}" ]; then
-              UP_LOG="$(git log --no-merges --date=short \
-                --pretty=format:'- %s (%h, %ad)' "${MERGE_BASE}..${UPSTREAM_SHA}" 2>/dev/null || true)"
-              if [ -n "$UP_LOG" ]; then printf '%s\n' "$UP_LOG"; else echo "- None."; fi
-            else
-              echo "- Not a merge run."
-            fi
-          } >> release-notes.md
-
-          echo "tag=$RELEASE_TAG"     >> "$GITHUB_OUTPUT"
           echo "version=$VERSION_NAME" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
-          cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
+          echo "Merged build produced ${#APKS[@]} APK(s) for version $VERSION_NAME." >> "$GITHUB_STEP_SUMMARY"
+          ls -la release-assets
 
       - name: Upload artifacts
         if: always()
@@ -823,42 +726,32 @@ jobs:
           fi
           echo "Published $(git rev-parse HEAD) to master" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish GitHub Release
+      - name: Report where to publish a release
         if: success()
         env:
-          GH_TOKEN: ${{ secrets.REPO_WRITE_TOKEN || secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
-          RELEASE_VERSION: ${{ steps.release.outputs.version }}
-          IS_PRERELEASE: ${{ steps.release.outputs.prerelease }}
+          BUILT_VERSION: ${{ steps.release.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          GH_FLAGS=(--repo "$GITHUB_REPOSITORY"
-                    --title "v2rayNG ${RELEASE_VERSION} - fork build"
-                    --notes-file release-notes.md
-                    --target "$(git rev-parse HEAD)")
-          if [ "${IS_PRERELEASE:-true}" = "true" ]; then
-            # Automatic sync builds are the in-development channel, published as a
-            # GitHub prerelease so that /releases/latest keeps pointing at the last
-            # stable build and the app's "check pre-release versions" switch has a
-            # real beta to find. This mirrors upstream, whose 2.4.0 sat as a
-            # prerelease while 2.3.15 was Latest.
-            GH_FLAGS+=(--prerelease)
-          fi
-          gh release create "$RELEASE_TAG" release-assets/* "${GH_FLAGS[@]}" \
-            2>&1 | tee /tmp/release.log
-          rc=${PIPESTATUS[0]}
-          [ "$rc" -eq 0 ] || exit "$rc"
-
-          # Latest is set explicitly after creation, and ONLY for a stable build.
-          # `gh release create --latest` used to pick the release by TAG ALPHABET
-          # instead of by time, which is how an older differently-named tag ended
-          # up on top of the release list.
-          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.id')"
-          if [ "${IS_PRERELEASE:-true}" = "true" ]; then
-            echo "Prerelease published; leaving the Latest pointer on the last stable release."
-          elif [ -n "${release_id:-}" ]; then
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/${release_id}" \
-              -f make_latest=true > /dev/null || true
-            echo "Marked $RELEASE_TAG as Latest."
-          fi
+          # This workflow no longer publishes releases. It used to, which meant a
+          # manual sync plus the (then push-triggered) Build APK produced two
+          # almost identical APK builds for the same commit - and sometimes two
+          # releases. Publishing now happens only when it is explicitly
+          # requested, from the "Build APK" workflow:
+          #   release_channel=stable     -> stable release, moves GitHub's Latest
+          #   release_channel=prerelease -> beta, flagged as a prerelease
+          #   release_channel=none       -> build and test only, publish nothing
+          #
+          # The APKs built here are still uploaded as an artifact so a merge can
+          # be verified end to end (it proves the merged sources compile and the
+          # engine gate passes) without spending a release on it.
+          {
+            echo "## Release"
+            echo
+            echo "No release was published by this run."
+            echo
+            echo "Merged source is on \`master\`; the APKs of this run are attached as the"
+            echo "\`v2rayNG-${BUILT_VERSION}\` artifact. To publish, run the **Build APK**"
+            echo "workflow and pick a release channel (\`stable\` or \`prerelease\`)."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Sync complete: merged source published to master, no release created."
