@@ -123,7 +123,7 @@ jobs:
           echo "All required native libraries are staged."
 
       - name: Setup Java
-        uses: actions/setup-java@v6.1.0
+        uses: actions/setup-java@v6.2.0
         with:
           distribution: temurin
           java-version: "21"
@@ -357,13 +357,19 @@ jobs:
           # ---- Changelog for THIS release only ----
           # A token is required to list releases; REPO_WRITE_TOKEN has wider scope.
           export GH_TOKEN="${REPO_WRITE_TOKEN:-${GITHUB_TOKEN:-}}"
+          export RELEASE_TAG
           git fetch --tags --force origin >/dev/null 2>&1 || true
 
           # Most recent published release other than the one being created now.
           # Tag names sort correctly as text: v<version>-fork-<YYYYMMDD-HHMMSS>.
-          PREV_TAG="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 50 \
-            --json tagName --jq '.[].tagName' 2>/dev/null \
-            | grep -v -x -F "$RELEASE_TAG" | sort -r | head -1 || true)"
+          # Pick the previously published release by PUBLICATION TIME.
+          # Sorting tag names as text picks the wrong "previous" release
+          # (v2.3.15-fork-2026... > v2.3.15-engines-ui2), which made every
+          # changelog repeat the same commit range.
+          PREV_TAG="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
+            --json tagName,publishedAt \
+            --jq '[.[] | select(.tagName != env.RELEASE_TAG)] | sort_by(.publishedAt) | last | .tagName' \
+            2>/dev/null || true)"
           if [ -n "$PREV_TAG" ] && ! git rev-parse -q --verify \
               "refs/tags/${PREV_TAG}^{commit}" >/dev/null 2>&1; then
             PREV_TAG=""

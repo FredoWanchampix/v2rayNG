@@ -14,6 +14,13 @@ import java.io.File
  * interface, so it replaces the whole Xray + hev-tun stack for FPTN profiles.
  * In VpnService mode Android allows only one VPN slot, therefore FPTN profiles
  * are served in root mode only; the UI reports that explicitly.
+ *
+ * CLI contract (fptn-client-cli, verified against the upstream source): the
+ * only credential is `--access-token` (a JWT that already carries the server
+ * list); there are NO `--server-ip/--server-port/--username` flags. A server
+ * inside the token is selected by name via `--preferred-server`, and the SNI
+ * for TLS obfuscation is passed with `--sni`. Passing an unknown flag makes
+ * argparse abort the process, so we only ever emit supported options.
  */
 object FptnRootRunner {
 
@@ -33,14 +40,18 @@ object FptnRootRunner {
             return false
         }
         val token = profile.fptnToken.orEmpty()
+        if (token.isBlank()) {
+            LogUtil.e(AppConfig.TAG, "FptnRootRunner: FPTN profile has no access token")
+            return false
+        }
         val args = buildList {
+            // The JWT is the single source of truth for the server list.
             add("--access-token"); add(token)
-            add("--server-ip"); add(profile.server.orEmpty())
-            add("--server-port"); add(profile.serverPort.orEmpty())
-            add("--username"); add(profile.username.orEmpty())
             add("--tun-interface-name"); add(TUN_NAME)
+            // Prefer a specific server by name when the profile records one.
+            profile.server?.takeIf { it.isNotBlank() }?.let { add("--preferred-server"); add(it) }
             profile.sni?.takeIf { it.isNotBlank() }?.let { add("--sni"); add(it) }
-        }.joinToString(" ") { "\'" + it.replace("'", "'\\''") + "\'" }
+        }.joinToString(" ") { "'" + it.replace("'", "'\\''") + "'" }
         val pidFile = File(context.filesDir, PID_FILE).absolutePath
         val logFile = File(context.filesDir, LOG_FILE).absolutePath
         val script = buildString {
