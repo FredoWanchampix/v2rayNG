@@ -27,7 +27,8 @@ private enum class ImportMenuAction(@StringRes val labelRes: Int, val action: Ma
     AmneziaWG(R.string.menu_item_import_config_manually_amneziawg, MainAction.ImportManually(EConfigType.AMNEZIAWG.value)),
     Naive(R.string.menu_item_import_config_manually_naive, MainAction.ImportManually(EConfigType.NAIVE.value)),
     OpenConnect(R.string.menu_item_import_config_manually_openconnect, MainAction.ImportManually(EConfigType.OPENCONNECT.value)),
-    Fptn(R.string.menu_item_import_config_manually_fptn, MainAction.ImportManually(EConfigType.FPTN.value))
+    Fptn(R.string.menu_item_import_config_manually_fptn, MainAction.ImportManually(EConfigType.FPTN.value)),
+    Masque(R.string.menu_item_import_config_manually_masque, MainAction.ImportManually(EConfigType.MASQUE.value))
 }
 
 enum class MainMoreMenuAction(@StringRes val labelRes: Int) {

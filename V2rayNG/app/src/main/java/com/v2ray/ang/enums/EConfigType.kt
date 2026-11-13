@@ -20,8 +20,10 @@ enum class EConfigType(val value: Int, val protocolScheme: String) {
     FPTN(14, AppConfig.FPTN),
     MIMIC(15, AppConfig.MIMIC),
     HTTP(10, AppConfig.HTTP),
+    MASQUE(16, AppConfig.MASQUE),
     POLICYGROUP(101, AppConfig.CUSTOM),
-    PROXYCHAIN(102, AppConfig.CUSTOM);
+    PROXYCHAIN(102, AppConfig.CUSTOM),
+    CUSTOM_OUTBOUND(103, AppConfig.CUSTOM);
 
     companion object {
         fun fromInt(value: Int) = entries.firstOrNull { it.value == value }
