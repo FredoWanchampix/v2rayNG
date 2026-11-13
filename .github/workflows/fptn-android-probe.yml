@@ -176,7 +176,7 @@ jobs:
             --build=missing \
             -c tools.build:jobs="$(nproc)" 2>&1 | tail -80
 
-      - name: Configure (pass 1: fetch third-party sources)
+      - name: "Configure (pass 1: fetch third-party sources)"
         shell: bash
         working-directory: /tmp/fptn/build-android
         run: |
