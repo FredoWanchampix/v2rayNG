@@ -648,8 +648,30 @@ jobs:
           cp "${APKS[@]}" release-assets/
           ( cd release-assets && sha256sum ./*.apk > SHA256SUMS.txt )
 
-          if [ -n "${REQUESTED_TAG:-}" ]; then RELEASE_TAG="$REQUESTED_TAG"
-          else RELEASE_TAG="v${VERSION_NAME}-fork-$(date -u +%Y%m%d-%H%M%S)"; fi
+          # Release channel, mirroring upstream 2dust/v2rayNG:
+          #   - an explicit release_tag input publishes a STABLE release and moves
+          #     GitHub's "Latest" pointer onto it;
+          #   - an automatic sync (schedule or a plain dispatch) publishes a
+          #     PRERELEASE, i.e. the in-development build. Upstream does exactly
+          #     this (their 2.4.0 sat as a prerelease while 2.3.15 was Latest),
+          #     and it is what makes the app's "Check pre-release versions" switch
+          #     meaningful: OFF -> /releases/latest (GitHub excludes prereleases),
+          #     ON  -> /releases, newest by published_at, betas included.
+          #
+          # The version itself comes from upstream (written into build.gradle.kts
+          # during the merge), so a beta is newer than the installed stable build
+          # exactly when upstream has moved ahead - which is the correct signal.
+          if [ -n "${REQUESTED_TAG:-}" ]; then
+            RELEASE_TAG="$REQUESTED_TAG"
+            IS_PRERELEASE="false"
+            case "$RELEASE_TAG" in
+              *beta*|*alpha*|*rc*|*-pre*) IS_PRERELEASE="true" ;;
+            esac
+          else
+            RELEASE_TAG="v${VERSION_NAME}-beta.$(date -u +%Y%m%d-%H%M%S)"
+            IS_PRERELEASE="true"
+          fi
+          echo "Publishing ${RELEASE_TAG} (prerelease=${IS_PRERELEASE})"
 
           {
             echo "# v2rayNG ${VERSION_NAME} - fork build"
@@ -726,6 +748,7 @@ jobs:
 
           echo "tag=$RELEASE_TAG"     >> "$GITHUB_OUTPUT"
           echo "version=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
           cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload artifacts
@@ -768,25 +791,37 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.REPO_WRITE_TOKEN || secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          IS_PRERELEASE: ${{ steps.release.outputs.prerelease }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "$RELEASE_TAG" \
-            release-assets/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "v2rayNG ${{ steps.release.outputs.version }} - fork build" \
-            --notes-file release-notes.md \
-            --target "$(git rev-parse HEAD)" \
+          GH_FLAGS=(--repo "$GITHUB_REPOSITORY"
+                    --title "v2rayNG ${RELEASE_VERSION} - fork build"
+                    --notes-file release-notes.md
+                    --target "$(git rev-parse HEAD)")
+          if [ "${IS_PRERELEASE:-true}" = "true" ]; then
+            # Automatic sync builds are the in-development channel, published as a
+            # GitHub prerelease so that /releases/latest keeps pointing at the last
+            # stable build and the app's "check pre-release versions" switch has a
+            # real beta to find. This mirrors upstream, whose 2.4.0 sat as a
+            # prerelease while 2.3.15 was Latest.
+            GH_FLAGS+=(--prerelease)
+          fi
+          gh release create "$RELEASE_TAG" release-assets/* "${GH_FLAGS[@]}" \
             2>&1 | tee /tmp/release.log
           rc=${PIPESTATUS[0]}
           [ "$rc" -eq 0 ] || exit "$rc"
-          # Mark this release explicitly as Latest. Previously `gh release create
-          # --latest` was used, which selects the release by TAG ALPHABET, not by
-          # time. That is why a differently-named tag (the standalone `fptn`
-          # release) ended up on top even though it was older. Now the flag is
-          # applied after creation, based on the fresh release object, so the
-          # newest published release is always the one GitHub shows as Latest.
+
+          # Latest is set explicitly after creation, and ONLY for a stable build.
+          # `gh release create --latest` used to pick the release by TAG ALPHABET
+          # instead of by time, which is how an older differently-named tag ended
+          # up on top of the release list.
           release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.id')"
-          if [ -n "${release_id:-}" ]; then
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/${release_id}"               -f make_latest=true > /dev/null || true
+          if [ "${IS_PRERELEASE:-true}" = "true" ]; then
+            echo "Prerelease published; leaving the Latest pointer on the last stable release."
+          elif [ -n "${release_id:-}" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/${release_id}" \
+              -f make_latest=true > /dev/null || true
+            echo "Marked $RELEASE_TAG as Latest."
           fi

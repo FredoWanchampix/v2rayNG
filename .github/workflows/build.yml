@@ -3,8 +3,27 @@ name: Build APK
 on:
   workflow_dispatch:
     inputs:
+      release_channel:
+        description: "Release channel to publish"
+        required: false
+        type: choice
+        default: "none"
+        options:
+          - none
+          - stable
+          - prerelease
+      version_bump:
+        description: "Version bump (prerelease: bump makes the beta newer than stable; stable: keep none to publish current, then master auto-advances)"
+        required: false
+        type: choice
+        default: "none"
+        options:
+          - none
+          - patch
+          - minor
+          - major
       release_tag:
-        description: "Optional release tag (publishes a GitHub Release)"
+        description: "Optional explicit release tag (overrides channel naming)"
         required: false
         type: string
   push:
@@ -58,6 +77,145 @@ jobs:
           submodules: recursive
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Prepare release version and tag
+        id: prepare
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Release channels mirror upstream 2dust/v2rayNG, where master carries the
+          # NEXT version and the in-development build is published as a GitHub
+          # *prerelease* (their 2.4.0 was a prerelease while 2.3.15 was the stable
+          # Latest). The app then picks a channel:
+          #   "Check pre-release versions" OFF -> /releases/latest, which GitHub
+          #       resolves to the newest non-draft, non-prerelease release;
+          #   ON -> /releases, newest by published_at, betas included.
+          #
+          # For the switch to mean anything, a beta must carry a HIGHER dotted
+          # version than the stable build the user has installed: the app compares
+          # only the dotted prefix of the tag (v2.4.1-beta.2026... -> 2.4.1) and
+          # offers an update only when it is greater. That is why publishing a
+          # stable release bumps master to the next patch afterwards, opening the
+          # next development cycle - exactly the upstream release train.
+          CHANNEL="${{ inputs.release_channel || 'none' }}"
+          BUMP="${{ inputs.version_bump || 'none' }}"
+          EXPLICIT_TAG="${{ inputs.release_tag || '' }}"
+          GRADLE="V2rayNG/app/build.gradle.kts"
+
+          CUR_VER="$(sed -n 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$GRADLE" | head -n1)"
+          CUR_CODE="$(sed -n 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*\([0-9]*\).*/\1/p' "$GRADLE" | head -n1)"
+          [ -n "$CUR_VER" ] || { echo "::error::cannot read versionName"; exit 1; }
+          [ -n "$CUR_CODE" ] || { echo "::error::cannot read versionCode"; exit 1; }
+          echo "Current version in master: $CUR_VER (versionCode $CUR_CODE)"
+
+          bump_version() {
+            # POSIX read from a here-doc rather than bash's `<<<` herestring, so
+            # the same snippet can be exercised under plain sh.
+            local v="$1" how="$2" a b c
+            IFS=. read -r a b c <<EOF
+          $v
+          EOF
+            case "$how" in
+              major) echo "$((a + 1)).0.0" ;;
+              minor) echo "$a.$((b + 1)).0" ;;
+              patch) echo "$a.$b.$((c + 1))" ;;
+              *)     echo "$v" ;;
+            esac
+          }
+
+          # No channel and no explicit tag: plain push build, publish nothing.
+          if [ "$CHANNEL" = "none" ] && [ -z "$EXPLICIT_TAG" ]; then
+            {
+              echo "release_tag="
+              echo "prerelease=false"
+              echo "version=$CUR_VER"
+              echo "version_code=$CUR_CODE"
+              echo "bump_after_release=false"
+            } >> "$GITHUB_OUTPUT"
+            echo "No release channel selected: building without publishing."
+            exit 0
+          fi
+
+          # A prerelease must be strictly NEWER than the stable version users have,
+          # otherwise compareVersions() in the app sees equality and never offers it
+          # - the switch would look dead again. With version_bump=none on the
+          # prerelease channel, bump the patch level automatically.
+          EFFECTIVE_BUMP="$BUMP"
+          if [ "$CHANNEL" = "prerelease" ] && [ -z "$EXPLICIT_TAG" ] && [ "$BUMP" = "none" ]; then
+            EFFECTIVE_BUMP="patch"
+            echo "::warning::prerelease channel with version_bump=none: bumping the patch level so the beta is newer than the installed stable build."
+          fi
+          NEW_VER="$(bump_version "$CUR_VER" "$EFFECTIVE_BUMP")"
+          NEW_CODE=$((CUR_CODE + 1))
+
+          if [ -n "$EXPLICIT_TAG" ]; then
+            TAG="$EXPLICIT_TAG"
+            # An explicit tag decides its own channel from its name, so
+            # v1.2.3-beta.1 is still published as a prerelease.
+            PRE="false"
+            case "$EXPLICIT_TAG" in
+              *beta*|*alpha*|*rc*|*-pre*) PRE="true" ;;
+            esac
+            # The built APK must report the SAME version as the tag it is
+            # published under. Otherwise versionName stays at the old value, the
+            # app's compareVersions() sees no difference and the release can never
+            # be offered as an update - which is exactly the bug that made the
+            # "check pre-release versions" switch look dead.
+            TAG_VER="$(printf '%s' "$TAG" | sed -e 's/^v//' -e 's/-.*$//')"
+            if printf '%s' "$TAG_VER" | grep -qE '^[0-9]+(\.[0-9]+)+$'; then
+              NEW_VER="$TAG_VER"
+            else
+              echo "::error::Cannot read a dotted version out of tag '${TAG}' (got '${TAG_VER}'). Use e.g. v2.4.1 or v2.4.1-beta.1."
+              exit 1
+            fi
+          elif [ "$CHANNEL" = "prerelease" ]; then
+            TAG="v${NEW_VER}-beta.$(date -u +%Y%m%d-%H%M%S)"
+            PRE="true"
+          else
+            TAG="v${NEW_VER}"
+            PRE="false"
+          fi
+
+          # Refuse to clobber an existing tag: that would silently overwrite a
+          # published release instead of failing loudly.
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::Tag ${TAG} already exists. Choose version_bump=patch/minor/major to publish a new version."
+            exit 1
+          fi
+
+          # Persist the version so the APK reports the tag it belongs to.
+          sed -i -E "s/^([[:space:]]*versionCode[[:space:]]*=[[:space:]]*)[0-9]+/\1${NEW_CODE}/" "$GRADLE"
+          sed -i -E "s/^([[:space:]]*versionName[[:space:]]*=[[:space:]]*)\"[^\"]*\"/\1\"${NEW_VER}\"/" "$GRADLE"
+          grep -nE "^[[:space:]]*version(Code|Name)" "$GRADLE" | head
+
+          # After a STABLE release the development cycle moves on: master becomes
+          # the next patch, so subsequent betas are newer than what users have.
+          BUMP_AFTER="false"
+          NEXT_VER="$NEW_VER"
+          if [ "$PRE" = "false" ] && [ "$BUMP" = "none" ]; then
+            BUMP_AFTER="true"
+            NEXT_VER="$(bump_version "$NEW_VER" patch)"
+          fi
+
+          {
+            echo "release_tag=$TAG"
+            echo "prerelease=$PRE"
+            echo "version=$NEW_VER"
+            echo "version_code=$NEW_CODE"
+            echo "bump_after_release=$BUMP_AFTER"
+            echo "next_version=$NEXT_VER"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Release"
+            echo
+            echo "- Tag: \`$TAG\`"
+            echo "- Version: \`$NEW_VER\` (versionCode $NEW_CODE)"
+            echo "- Channel: \`${CHANNEL:-explicit}\` -> prerelease=$PRE"
+            if [ "$BUMP_AFTER" = "true" ]; then
+              echo "- After publishing, master moves to the next development version: \`$NEXT_VER\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Will publish $TAG as version $NEW_VER (prerelease=$PRE, bump_after=$BUMP_AFTER -> $NEXT_VER)"
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
@@ -406,18 +564,26 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub Release
-        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        if: github.event_name == 'workflow_dispatch' && steps.prepare.outputs.release_tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO_WRITE_TOKEN: ${{ secrets.REPO_WRITE_TOKEN }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG: ${{ steps.prepare.outputs.release_tag }}
+          RELEASE_VERSION: ${{ steps.prepare.outputs.version }}
+          IS_PRERELEASE: ${{ steps.prepare.outputs.prerelease }}
         shell: bash
         run: |
           set -euo pipefail
           {
-            echo "# v2rayNG ${{ steps.collect.outputs.version }} - fork build"
+            echo "# v2rayNG ${RELEASE_VERSION} - fork build"
             echo
+            if [ "$IS_PRERELEASE" = "true" ]; then
+              echo "> **Pre-release (beta).** Install it only if you enabled"
+              echo "> \"Check pre-release versions\" in Settings -> Check for update."
+              echo
+            fi
             echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Channel: $([ "$IS_PRERELEASE" = "true" ] && echo 'prerelease' || echo 'stable')"
             echo "- Build type: $([ "${{ steps.signing.outputs.release }}" = "true" ] && echo "release (signed)" || echo "debug (debug-signed)")"
             echo
             echo "## Checksums"
@@ -425,21 +591,18 @@ jobs:
             cat release-assets/SHA256SUMS.txt
             echo '```'
           } > release-notes.md
+
           # ---- Changelog for THIS release only ----
           # A token is required to list releases; REPO_WRITE_TOKEN has wider scope.
           export GH_TOKEN="${REPO_WRITE_TOKEN:-${GITHUB_TOKEN:-}}"
-          export RELEASE_TAG
           git fetch --tags --force origin >/dev/null 2>&1 || true
 
-          # Most recent published release other than the one being created now.
-          # Tag names sort correctly as text: v<version>-fork-<YYYYMMDD-HHMMSS>.
-          # Pick the previously published release by PUBLICATION TIME.
-          # Sorting tag names as text picks the wrong "previous" release
-          # (v2.3.15-fork-2026... > v2.3.15-engines-ui2), which made every
-          # changelog repeat the same commit range.
+          # Previous release by PUBLICATION TIME, never by tag-name sort: sorting
+          # names as text picks the wrong neighbour and every changelog then
+          # repeats the same commit range.
           PREV_TAG="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
             --json tagName,publishedAt \
-            --jq '[.[] | select(.tagName != env.RELEASE_TAG)] | sort_by(.publishedAt) | last | .tagName' \
+            --jq '[.[] | select(.tagName != env.RELEASE_TAG)] | sort_by(.publishedAt) | last | .tagName // ""' \
             2>/dev/null || true)"
           if [ -n "$PREV_TAG" ] && ! git rev-parse -q --verify \
               "refs/tags/${PREV_TAG}^{commit}" >/dev/null 2>&1; then
@@ -465,22 +628,81 @@ jobs:
             if [ -n "$RANGE_LOG" ]; then printf '%s\n' "$RANGE_LOG"; else echo "- No new commits."; fi
           } >> release-notes.md
 
-          gh release create "${{ inputs.release_tag }}" \
-            release-assets/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "v2rayNG ${{ steps.collect.outputs.version }} - fork build" \
-            --notes-file release-notes.md \
-            --target "$GITHUB_SHA" \
-            2>&1 | tee /tmp/release.log
+          GH_FLAGS=(--repo "$GITHUB_REPOSITORY"
+                    --title "v2rayNG ${RELEASE_VERSION} - fork build"
+                    --notes-file release-notes.md
+                    --target "$GITHUB_SHA")
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            # Upstream convention: the in-development build is published as a
+            # GitHub prerelease, so `/releases/latest` keeps pointing at the last
+            # stable build and the app's pre-release switch has something to find.
+            GH_FLAGS+=(--prerelease)
+          fi
+          gh release create "$RELEASE_TAG" release-assets/* "${GH_FLAGS[@]}" 2>&1 | tee /tmp/release.log
           rc=${PIPESTATUS[0]}
           [ "$rc" -eq 0 ] || exit "$rc"
-          # Mark this release explicitly as Latest. Previously `gh release create
-          # --latest` was used, which selects the release by TAG ALPHABET, not by
-          # time. That is why a differently-named tag (the standalone `fptn`
-          # release) ended up on top even though it was older. Now the flag is
-          # applied after creation, based on the fresh release object, so the
-          # newest published release is always the one GitHub shows as Latest.
+
+          # Mark Latest explicitly, but ONLY for a stable release. Setting
+          # make_latest on a prerelease would move GitHub's "Latest" pointer onto
+          # a beta, which is exactly the ordering bug we just fixed: /releases is
+          # sorted by created_at while /releases/latest honours the flag.
           release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.id')"
-          if [ -n "${release_id:-}" ]; then
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/${release_id}"               -f make_latest=true > /dev/null || true
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            echo "Prerelease published; leaving the Latest pointer on the stable release."
+          elif [ -n "${release_id:-}" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/${release_id}" \
+              -f make_latest=true > /dev/null || true
+            echo "Marked $RELEASE_TAG as Latest."
           fi
+
+      - name: Commit the release version to master
+        # The version bump lives only in the runner's working tree, so without
+        # this step the next run would read the OLD versionName and collide on the
+        # tag. Committing keeps master in sync with the published APK.
+        #
+        # For a STABLE release with no explicit bump, master then advances to the
+        # next patch version, opening the next development cycle (upstream release
+        # train): the just-published stable stays the "Latest" release, while new
+        # betas built from master carry the higher version and are offered to users
+        # who enabled pre-releases.
+        #
+        # Both commits are authored as github-actions[bot]; the `build` job guard
+        # skips bot-authored pushes, so this does not start a second build loop.
+        if: success() && steps.prepare.outputs.release_tag != '' && steps.prepare.outputs.version != ''
+        env:
+          REPO_WRITE_TOKEN: ${{ secrets.REPO_WRITE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          GRADLE="V2rayNG/app/build.gradle.kts"
+          NEW_VER="${{ steps.prepare.outputs.version }}"
+          NEW_CODE="${{ steps.prepare.outputs.version_code }}"
+          TAG="${{ steps.prepare.outputs.release_tag }}"
+          BUMP_AFTER="${{ steps.prepare.outputs.bump_after_release }}"
+          NEXT_VER="${{ steps.prepare.outputs.next_version }}"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "$GRADLE"
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): set version ${NEW_VER} (${NEW_CODE}) for ${TAG}"
+          else
+            echo "Release version already committed."
+          fi
+
+          if [ "$BUMP_AFTER" = "true" ] && [ -n "$NEXT_VER" ]; then
+            NEXT_CODE=$((NEW_CODE + 1))
+            sed -i -E "s/^([[:space:]]*versionCode[[:space:]]*=[[:space:]]*)[0-9]+/\1${NEXT_CODE}/" "$GRADLE"
+            sed -i -E "s/^([[:space:]]*versionName[[:space:]]*=[[:space:]]*)\"[^\"]*\"/\1\"${NEXT_VER}\"/" "$GRADLE"
+            git add "$GRADLE"
+            git commit -m "chore(release): start next development cycle ${NEXT_VER} (${NEXT_CODE})"
+          fi
+
+          if [ -n "${REPO_WRITE_TOKEN:-}" ]; then
+            git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$REPO_WRITE_TOKEN" | base64 -w0)" \
+              push origin "HEAD:refs/heads/master"
+          else
+            git push origin "HEAD:refs/heads/master"
+          fi
+          echo "Published version state to master."

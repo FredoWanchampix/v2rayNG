@@ -32,6 +32,7 @@ import com.v2ray.ang.fmt.WireguardFmt
 import com.v2ray.ang.AngApplication
 import com.v2ray.ang.R
 import com.v2ray.ang.extension.toast
+import com.v2ray.ang.util.ActiveProfileRoute
 import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
@@ -619,19 +620,33 @@ object AngConfigManager {
             LogUtil.i(AppConfig.TAG, url)
             val userAgent = it.subscription.userAgent
             val requestHeaders = it.subscription.requestHeaders
-            // Prefer the credentials the loopback proxy is actually running
-            // with; the persisted settings may lag behind a config change.
-            val liveCreds = SettingsManager.readLocalProxyCredentials()
-            val proxyUsername = liveCreds?.first ?: SettingsManager.getSocksUsername()
-            val proxyPassword = liveCreds?.second ?: SettingsManager.getSocksPassword()
-            val httpPort = SettingsManager.getHttpPort()
-            val proxyAvailable = HttpUtil.isLocalProxyAvailable(httpPort)
+            // Resolve the network path once, the same way the update checker does.
+            // Probing only the loopback HTTP port used to misreport the state in
+            // VPN-tun and root modes, where that inbound may not exist even though
+            // the profile is active and already carrying the app's traffic.
+            val route = ActiveProfileRoute.resolve()
+            ActiveProfileRoute.log("Subscription update '${it.subscription.remarks}'", route)
+            val proxyUsername = route.proxyUsername
+            val proxyPassword = route.proxyPassword
+            val httpPort = route.httpPort
 
             if (it.subscription.updateViaActiveProxy) {
-                if (!proxyAvailable || httpPort <= 0) {
-                    AngApplication.application.toast(R.string.toast_requires_active_proxy)
-                    LogUtil.w(AppConfig.TAG, "Subscription requires active proxy, but it's not running or port is invalid")
-                    return SubscriptionUpdateResult(failureCount = 1)
+                when (route.mode) {
+                    ActiveProfileRoute.Mode.NONE -> {
+                        AngApplication.application.toast(R.string.toast_requires_active_proxy)
+                        LogUtil.w(AppConfig.TAG, "Subscription requires an active profile, but none is running")
+                        return SubscriptionUpdateResult(failureCount = 1)
+                    }
+                    ActiveProfileRoute.Mode.PROFILE_WITHOUT_LOCAL_PROXY -> {
+                        // A profile is running but there is no loopback HTTP inbound to
+                        // force the fetch through. Falling back to a direct request is
+                        // not acceptable here: the app exempts itself from its own
+                        // tunnel, so that request would bypass the profile.
+                        AngApplication.application.toast(R.string.toast_requires_active_proxy_no_local_proxy)
+                        LogUtil.w(AppConfig.TAG, "Subscription requires the local proxy, but it is not listening")
+                        return SubscriptionUpdateResult(failureCount = 1)
+                    }
+                    ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY -> Unit
                 }
             }
 
