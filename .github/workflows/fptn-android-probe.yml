@@ -143,11 +143,16 @@ jobs:
           rm -rf /tmp/fptn
           git clone --depth 1 --branch "$TAG" https://github.com/fptn-project/fptn /tmp/fptn
           cd /tmp/fptn
-          # Only the CLI is shipped, so the server/passwd targets are not
-          # configured at all and their prometheus-cpp dependency is dropped.
-          sed -i 's|^    self.requires("prometheus-cpp/1.3.0")|    pass  # server-only dep, not needed for the CLI|' conanfile.py
-          sed -i 's|^        add_subdirectory(src/fptn-server)|        # add_subdirectory(src/fptn-server)  # not built for Android|' CMakeLists.txt
-          sed -i 's|^        add_subdirectory(src/fptn-passwd)|        # add_subdirectory(src/fptn-passwd)  # not built for Android|' CMakeLists.txt
+          # Only fptn-client-cli is shipped. Commenting out the server/passwd
+          # subdirectories is not enough: the top-level install() rules still
+          # reference those targets and CMake fails with
+          # `install TARGETS given target "fptn-server" which does not exist`.
+          # Drop the prometheus-cpp requirement as well - only the server uses it.
+          sed -i -E 's|^([[:space:]]*)self\.requires\("prometheus-cpp/[0-9.]+"\)|\1pass  # server-only dep, not needed for the CLI|' conanfile.py
+          sed -i -E 's|^([[:space:]]*)add_subdirectory\(src/fptn-server\)|\1# add_subdirectory(src/fptn-server)  # not built for Android|' CMakeLists.txt
+          sed -i -E 's|^([[:space:]]*)add_subdirectory\(src/fptn-passwd\)|\1# add_subdirectory(src/fptn-passwd)  # not built for Android|' CMakeLists.txt
+          sed -i -E 's|^([[:space:]]*)install\(TARGETS fptn-server .*\)|\1# install() removed: fptn-server is not built for Android|' CMakeLists.txt
+          sed -i -E 's|^([[:space:]]*)install\(TARGETS fptn-passwd .*\)|\1# install() removed: fptn-passwd is not built for Android|' CMakeLists.txt
           # Do not treat warnings as errors in our own translation units either:
           # the NDK clang patch level differs from the desktop one.
           sed -i 's|^set(CMAKE_COMPILE_WARNING_AS_ERROR ON).*|set(CMAKE_COMPILE_WARNING_AS_ERROR OFF)|' CMakeLists.txt
@@ -229,6 +234,12 @@ jobs:
             "$LT/CMakeLists.txt"
           echo "----- host include dirs removed? (expect no output) -----"
           grep -n "/usr/include\|/usr/local/include" "$LT/CMakeLists.txt" || echo "none left"
+          # Third-party sources fetched during pass 1 are not ours. camouflagetls
+          # and others build with -Wall -Werror, and a different clang patch
+          # level in the NDK must not be able to fail the Android build.
+          find _deps -maxdepth 3 -name CMakeLists.txt -print0 2>/dev/null \
+            | xargs -0 -r sed -i -E 's/-Werror//g; s/set\(CMAKE_COMPILE_WARNING_AS_ERROR ON\)/set(CMAKE_COMPILE_WARNING_AS_ERROR OFF)/g' || true
+          echo "----- -Werror stripped from fetched deps -----"
 
       - name: Configure (pass 2)
         shell: bash
@@ -244,10 +255,6 @@ jobs:
             -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF \
             -DBUILD_TESTING=OFF \
             -DFETCHCONTENT_FULLY_DISCONNECTED=ON
-          # Third-party sources fetched during configure are not ours: relax
-          # their -Werror so a clang patch-level difference cannot fail us.
-          find _deps -maxdepth 3 -name CMakeLists.txt -print0 2>/dev/null \
-            | xargs -0 -r sed -i 's/-Werror//g; s/set(CMAKE_COMPILE_WARNING_AS_ERROR ON)/set(CMAKE_COMPILE_WARNING_AS_ERROR OFF)/g' || true
 
       - name: Build fptn-client-cli
         shell: bash

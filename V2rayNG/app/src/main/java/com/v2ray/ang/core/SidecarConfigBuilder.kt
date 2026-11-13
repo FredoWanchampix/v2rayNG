@@ -64,19 +64,26 @@ object SidecarConfigBuilder {
                 // `sing-box check`: action=route accepts an endpoint tag.
                 val server = profile.server.orEmpty() +
                         ":" + (profile.serverPort.orEmpty().toIntOrNull() ?: 443)
-                root.put(
-                    "endpoints",
-                    JSONArray().put(
-                        JSONObject()
-                            .put("type", "openconnect")
-                            .put("tag", tag)
-                            .put("server", server)
-                            .put("flavor", profile.ocservFlavor ?: "anyconnect")
-                            .put("username", profile.username.orEmpty())
-                            .put("password", profile.password.orEmpty())
-                            .putOpt("auth_group", profile.ocservAuthGroup?.takeIf { it.isNotBlank() })
-                    )
+                val endpoint = JSONObject()
+                    .put("type", "openconnect")
+                    .put("tag", tag)
+                    .put("server", server)
+                    .put("flavor", profile.ocservFlavor ?: "anyconnect")
+                    .put("username", profile.username.orEmpty())
+                    .put("password", profile.password.orEmpty())
+                    .putOpt("auth_group", profile.ocservAuthGroup?.takeIf { it.isNotBlank() })
+                // The editor exposes SNI and "allow insecure" for OpenConnect, so
+                // they have to reach the endpoint - sing-box takes them under its
+                // own `tls` object (tls.insecure / tls.server_name), not as
+                // top-level keys. Without this both settings were silently
+                // dropped and a self-signed ocserv could never be used.
+                endpoint.put(
+                    "tls",
+                    JSONObject()
+                        .put("insecure", profile.insecure == true)
+                        .putOpt("server_name", profile.sni?.takeIf { it.isNotBlank() })
                 )
+                root.put("endpoints", JSONArray().put(endpoint))
             }
 
             else -> return null
@@ -99,11 +106,18 @@ object SidecarConfigBuilder {
         return root.toString(2)
     }
 
+    /**
+     * TLS block for the naive outbound.
+     *
+     * Deliberately limited to what sing-box accepts there: the naive outbound
+     * documents only `server_name`, `certificate`, `certificate_path` and `ech`.
+     * Emitting `insecure` or `alpn` makes `sing-box check` reject the whole
+     * config, so the insecure/ALPN switches in the editor have no effect for
+     * NaiveProxy (self-signed certs break the naive traffic profile anyway).
+     */
     private fun tlsBlock(profile: ProfileItem): JSONObject = JSONObject()
         .put("enabled", true)
         .putOpt("server_name", profile.sni?.takeIf { it.isNotBlank() })
-        .put("insecure", profile.insecure == true)
-        .putOpt("alpn", profile.alpn?.takeIf { it.isNotBlank() }?.split(",")?.let { JSONArray(it) })
 
     // ---------------- mihomo (AmneziaWG) ----------------
 
@@ -131,19 +145,39 @@ object SidecarConfigBuilder {
         profile.reserved?.takeIf { it.isNotBlank() }?.let { r ->
             sb.append("    reserved: [").append(r.split(",").joinToString(", ") { it.trim() }).append("]\n")
         }
+        // The peer needs an allowed-ips set or mihomo has no routes for it.
+        sb.append("    allowed-ips: ['0.0.0.0/0', '::/0']\n")
         sb.append("    udp: true\n")
         sb.append("    mtu: ").append(profile.mtu ?: 1420).append('\n')
         sb.append("    amnezia-wg-option:\n")
-        sb.append("      version: ").append(opts.optInt("version", 3)).append('\n')
-        listOf("jc", "jmin", "jmax", "s1", "s2", "s3", "s4").forEach { k ->
+        // Only emit `version` when the profile states one. mihomo treats version 3
+        // as "use the AmneziaWG v3 implementation", which *requires* the v3-only
+        // fields and *rejects* the v1.5-only ones (j1-j3, itime). Forcing 3 on a
+        // legacy v1.x/v2 profile therefore made mihomo refuse the config; omitting
+        // the key selects the legacy implementation, which is what those
+        // profiles need.
+        if (opts.has("version")) sb.append("      version: ").append(opts.optInt("version")).append('\n')
+        // Integer knobs. `itime` (AmneziaWG v1.5 junk-packet cadence) is parsed by
+        // AmneziaFmt and edited in the UI, so it must reach the config too.
+        listOf("jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "itime").forEach { k ->
             if (opts.has(k)) sb.append("      ").append(k).append(": ").append(opts.optInt(k)).append('\n')
         }
+        // String-typed knobs per the mihomo schema: h1-h4 are `<uint32>|<min-max>`,
+        // i1-i5/j1-j3 are tag chains, the rest are `<value>|<a-b>` ranges or keys.
+        //
+        // The lookup key must be tried in both cases: AmneziaWG .conf files (and
+        // therefore panels and share links) write `H1`, while the editor and
+        // AmneziaFmt store the lowercase form. The previous code only ever
+        // checked the uppercase spelling, so every one of these fields was
+        // silently dropped from the generated config.
         listOf("h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3",
             "header-protection-key", "content-padding-addition", "rekey-after-time",
             "rekey-timeout", "reject-after-time", "keepalive-timeout", "max-handshake-attempts"
         ).forEach { k ->
-            val key = if (k.length <= 3) k.uppercase() else k
-            if (opts.has(key)) sb.append("      ").append(k).append(": ").append(yq(opts.optString(key))).append('\n')
+            val value = listOf(k, k.uppercase(), k.replace("-", "_")).firstNotNullOfOrNull { key ->
+                opts.optString(key).takeIf { it.isNotBlank() }
+            }
+            if (value != null) sb.append("      ").append(k).append(": ").append(yq(value)).append('\n')
         }
         if (opts.optBoolean("randomTrailers", false)) sb.append("      random-trailers: true\n")
         if (opts.optBoolean("disableCookies", false)) sb.append("      disable-cookies: true\n")
