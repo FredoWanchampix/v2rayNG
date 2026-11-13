@@ -251,6 +251,16 @@ jobs:
             "$LT/CMakeLists.txt"
           echo "----- host include dirs removed? (expect no output) -----"
           grep -n "/usr/include\|/usr/local/include" "$LT/CMakeLists.txt" || echo "none left"
+          # libtuntap defines `struct in6_ifreq` itself, but the NDK sysroot
+          # already declares an identical one in <linux/ipv6.h> (same members:
+          # ifr6_addr / ifr6_prefixlen / ifr6_ifindex), so compiling
+          # tuntap-unix-linux.c fails with "redefinition of 'in6_ifreq'". Drop
+          # libtuntap's copy; the kernel header's definition is ABI-identical and
+          # tuntap_sys_set_ipv6() keeps working unchanged.
+          sed -i '/^struct in6_ifreq {$/,/^};$/d' "$LT/tuntap-unix-linux.c"
+          echo "----- in6_ifreq still defined in libtuntap? (expect none) -----"
+          grep -n "struct in6_ifreq {" "$LT/tuntap-unix-linux.c" || echo "  removed"
+          grep -n "struct in6_ifreq ifrv6" "$LT/tuntap-unix-linux.c" || true
           # Third-party sources fetched during pass 1 are not ours. camouflagetls
           # and others build with -Wall -Werror, and a different clang patch
           # level in the NDK must not be able to fail the Android build.
