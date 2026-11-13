@@ -93,9 +93,15 @@ jobs:
           conan --version
           conan profile detect --force
 
+      # Split into restore/save on purpose. A single actions/cache entry only
+      # saves in its post-step, and post-steps are skipped when the job fails -
+      # so every failed attempt rebuilt the whole dependency graph (Boost,
+      # BoringSSL, protobuf, re2, brotli, libidn2, abseil) from scratch, which
+      # measured at 13m21s of the ~15m run. Saving with if: always() makes every
+      # later iteration reuse the cache instead.
       - name: Restore Conan package cache
-        id: cache
-        uses: actions/cache@v6
+        id: cache-conan
+        uses: actions/cache/restore@v6
         with:
           path: ~/.conan2/p
           key: fptn-conan-ndk${{ env.NDK_VERSION }}-${{ github.event.inputs.fptn_tag || '0.4.6' }}-armv8-v3
@@ -212,6 +218,16 @@ jobs:
             --build=missing \
             -c tools.build:jobs="$(nproc)" 2>&1 | tail -80
 
+      - name: Save Conan package cache
+        # Runs even on failure so a broken toolchain step never costs another
+        # 13-minute dependency build on the next attempt.
+        if: always() && steps.cache-conan.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.conan2/p
+          key: fptn-conan-ndk${{ env.NDK_VERSION }}-${{ github.event.inputs.fptn_tag || '0.4.6' }}-armv8-v3
+
       - name: "Configure (pass 1: fetch third-party sources)"
         shell: bash
         working-directory: /tmp/fptn/build-android
@@ -301,8 +317,32 @@ jobs:
         shell: bash
         working-directory: /tmp/fptn/build-android
         run: |
-          set -euo pipefail
-          cmake --build . --target fptn-client-cli -j"$(nproc)" 2>&1 | tail -120
+          set -uo pipefail
+          # Keep the whole log instead of `tail -120`: the CMake progress
+          # percentage is what tells us how far a failed attempt got, and tailing
+          # throws exactly that away.
+          cmake --build . --target fptn-client-cli -j"$(nproc)" 2>&1 | tee /tmp/fptn-build.log
+          rc=${PIPESTATUS[0]}
+          # Highest "[ NN%]" CMake reported, i.e. how much of the client actually
+          # compiled before the failure. Reported as an annotation so it is
+          # visible on the run page without opening the log.
+          PCT="$(grep -oE '^\[ *[0-9]+%\]' /tmp/fptn-build.log \
+                   | tr -d '[]% ' | sort -n | tail -1 || true)"
+          echo "----- last 120 lines of the build log -----"
+          tail -120 /tmp/fptn-build.log
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=FPTN build progress::Build reached ${PCT:-0}% before failing (exit $rc)"
+            {
+              echo "## FPTN build failed at ${PCT:-0}%"
+              echo
+              echo '```'
+              grep -nE "error:|Error [0-9]|FAILED" /tmp/fptn-build.log | tail -25
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Build completed at ${PCT:-100}%"
+          fi
+          exit "$rc"
 
       - name: Verify and stage the binary
         shell: bash
