@@ -664,5 +664,6 @@
     <string name="oc_lab_flavor">Тип сервера</string>
     <string name="oc_lab_auth_group">Группа аутентификации</string>
     <string name="fptn_lab_token">Токен доступа</string>
-    <string name="fptn_lab_token_hint">Токен доступа FPTN от провайдера</string>
+    <string name="fptn_lab_token_hint">Токен доступа FPTN (JWT) от провайдера. Он уже содержит список серверов и ваши учётные данные, поэтому логин/пароль не нужны.</string>
+    <string name="fptn_lab_sni_hint">Домен для маскировки TLS-рукопожатия (SNI spoofing). Пусто — значение по умолчанию клиента.</string>
 </resources>

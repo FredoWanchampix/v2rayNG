@@ -661,5 +661,6 @@
     <string name="oc_lab_flavor">Server flavor</string>
     <string name="oc_lab_auth_group">Auth group</string>
     <string name="fptn_lab_token">Access token</string>
-    <string name="fptn_lab_token_hint">FPTN access token from your provider</string>
+    <string name="fptn_lab_token_hint">FPTN access token (JWT) from your provider. It already contains the server list and your credentials, so no username/password is needed.</string>
+    <string name="fptn_lab_sni_hint">Domain used to disguise the TLS handshake (SNI spoofing). Empty uses the client default.</string>
 </resources>
