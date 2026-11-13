@@ -58,6 +58,9 @@ object OpenconnectFmt : FmtBase() {
         val userInfo = Utils.encodeURIComponent(config.username.orEmpty()) + ":" +
                 Utils.encodeURIComponent(config.password.orEmpty())
         val query = if (params.isEmpty()) "" else "?" + params.joinToString("&")
-        return "${AppConfig.ANYCONNECT}$userInfo@${config.server}:${config.serverPort}$query#${Utils.encodeURIComponent(config.remarks)}"
+        // Body only: shareConfig prepends `EConfigType.OPENCONNECT.protocolScheme`
+        // (AppConfig.OPENCONNECT). Note the parser accepts both openconnect:// and
+        // anyconnect:// links, so a round trip keeps working.
+        return "$userInfo@${config.server}:${config.serverPort}$query#${Utils.encodeURIComponent(config.remarks)}"
     }
 }

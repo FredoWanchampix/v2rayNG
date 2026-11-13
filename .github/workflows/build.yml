@@ -291,21 +291,32 @@ jobs:
             echo "::warning::APP_KEYSTORE_* secrets are not set - building a debug-signed APK. Add them to get a release build."
           fi
 
-      - name: Run unit tests (non-blocking)
+      - name: Run unit tests
         id: tests
-        continue-on-error: true
         working-directory: V2rayNG
         shell: bash
         run: |
           set -uo pipefail
+          # Blocking on purpose. This step used to be `continue-on-error: true`
+          # and ended with an unconditional `exit 0`, so a failing test suite
+          # could never reach the job: the run stayed green and the release was
+          # published anyway. That is the same class of bug as the old
+          # best-effort FPTN step, which shipped releases with no fptn-client
+          # inside while reporting success. A green run must mean a green build.
+          #
+          # /tmp/tests.log is kept because the "Report Gradle failure as
+          # annotations" step parses it and surfaces the failing assertions as
+          # annotations on the run page.
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           chmod +x gradlew
           ./gradlew :app:testPlaystoreDebugUnitTest --no-daemon --stacktrace 2>&1 | tee /tmp/tests.log
           rc=${PIPESTATUS[0]}
           if [ "$rc" -ne 0 ]; then
-            echo "::warning::Unit tests failed (exit $rc) - packaging continues."
+            echo "::error title=Unit tests failed::Gradle exited $rc. See the test report and the annotations below."
+            find app/build/reports/tests -name '*.html' 2>/dev/null | head -5
+            grep -nE "^e: |FAILED|Test.*failed" /tmp/tests.log | head -40 || true
           fi
-          exit 0
+          exit "$rc"
 
       - name: Build APK
         id: buildapk

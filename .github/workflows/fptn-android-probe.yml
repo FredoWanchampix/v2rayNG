@@ -218,6 +218,11 @@ jobs:
           # std::aligned_alloc, which libc++ only declares for NDK API >= 28.
           # Dropping the library removes those TUs entirely and shortens the
           # build; the API level below is raised as a second line of defence.
+          # `|| rc=$?` is required here: under `set -e` a failing conan would
+          # otherwise abort the script before the log is printed, which is exactly
+          # the "failure hidden behind a green-looking step" pattern this workflow
+          # exists to remove.
+          rc=0
           conan install . \
             --output-folder=build-android \
             --profile:host=android --profile:build=default \
@@ -226,7 +231,15 @@ jobs:
             -o build_only_fptn_lib=False \
             -o 'boost/*:without_cobalt=True' \
             --build=missing \
-            -c tools.build:jobs="$(nproc)" 2>&1 | tail -80
+            -c tools.build:jobs="$(nproc)" > /tmp/conan.log 2>&1 || rc=$?
+          # Keep the full log but print a bounded slice: `tail -80` alone used to
+          # hide the first error line when a package failed deep in the graph.
+          tail -120 /tmp/conan.log
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=Conan install failed (exit $rc)::first errors below"
+            grep -nE "ERROR|error:|Could not|failed" /tmp/conan.log | head -30 || true
+          fi
+          exit "$rc"
 
       - name: Save Conan package cache
         # Runs even on failure so a broken toolchain step never costs another

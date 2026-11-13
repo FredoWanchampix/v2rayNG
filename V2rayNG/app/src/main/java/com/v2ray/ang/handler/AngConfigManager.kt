@@ -182,10 +182,18 @@ object AngConfigManager {
 
             // Custom profiles export as their raw JSON so a later import
             // restores them losslessly; internal groups have nothing to share.
-            if (config.configType == EConfigType.CUSTOM) {
+            if (config.configType == EConfigType.CUSTOM ||
+                config.configType == EConfigType.CUSTOM_OUTBOUND
+            ) {
                 return MmkvManager.decodeServerRaw(guid).orEmpty()
             }
 
+            // NOTE on the contract below: every `toUri` must return the *body*
+            // only, because this function prepends `protocolScheme` itself. The
+            // fork-only formats originally returned a full link including their
+            // own scheme, which produced a doubled prefix such as
+            // `fptn://fptn://user:pass@host:port`. Those formats are normalised
+            // to return the body only.
             val uriBody = when (config.configType) {
                 EConfigType.VMESS -> VmessFmt.toUri(config)
                 EConfigType.SHADOWSOCKS -> ShadowsocksFmt.toUri(config)
@@ -195,6 +203,16 @@ object AngConfigManager {
                 EConfigType.WIREGUARD -> WireguardFmt.toUri(config)
                 EConfigType.HYSTERIA2 -> Hysteria2Fmt.toUri(config)
                 EConfigType.MASQUE -> MasqueFmt.toUri(config)
+                // Fork-only protocols. Without these branches every profile of
+                // these types hit `else -> return ""`, so share-to-clipboard
+                // returned -1, share-to-QR returned null and bulk export
+                // silently skipped them - even though each format implements
+                // toUri and the parser map already imports them.
+                EConfigType.AMNEZIAWG -> AmneziaFmt.toUri(config)
+                EConfigType.NAIVE -> NaiveFmt.toUri(config)
+                EConfigType.OPENCONNECT -> OpenconnectFmt.toUri(config)
+                EConfigType.FPTN -> FptnFmt.toUri(config)
+                EConfigType.MIMIC -> MimicFmt.toUri(config)
                 else -> return ""
             }
             return config.configType.protocolScheme + uriBody

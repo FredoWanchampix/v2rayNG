@@ -37,6 +37,8 @@ object NaiveFmt : FmtBase() {
         val userInfo = Utils.encodeURIComponent(config.username.orEmpty()) + ":" +
                 Utils.encodeURIComponent(config.password.orEmpty())
         val query = dicQuery.toList().joinToString("&") { "${it.first}=${Utils.encodeURIComponent(it.second)}" }
-        return "${AppConfig.NAIVE}$userInfo@${config.server}:${config.serverPort}?$query#${Utils.encodeURIComponent(config.remarks)}"
+        // Body only: shareConfig prepends the scheme. Emitting AppConfig.NAIVE
+        // here would double the prefix to `naive://naive://`.
+        return "$userInfo@${config.server}:${config.serverPort}?$query#${Utils.encodeURIComponent(config.remarks)}"
     }
 }

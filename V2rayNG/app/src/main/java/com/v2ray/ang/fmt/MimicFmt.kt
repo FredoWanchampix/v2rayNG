@@ -37,7 +37,9 @@ object MimicFmt : FmtBase() {
     fun toUri(config: ProfileItem): String {
         val domains = config.mimicDomains?.takeIf { it.isNotBlank() }
             ?.let { "?domains=${Utils.encodeURIComponent(it)}" } ?: ""
-        return "${AppConfig.MIMIC}${Utils.encodeURIComponent(config.password.orEmpty())}" +
+        // Body only: shareConfig prepends AppConfig.MIMIC, which would otherwise
+        // give `mimic://mimic://uuid@host:port`.
+        return "${Utils.encodeURIComponent(config.password.orEmpty())}" +
                 "@${config.server}:${config.serverPort}$domains#${Utils.encodeURIComponent(config.remarks)}"
     }
 }

@@ -62,6 +62,9 @@ object FptnFmt : FmtBase() {
                 ?.let { add("sni=${Utils.encodeURIComponent(it)}") }
         }
         val query = if (params.isEmpty()) "" else "?" + params.joinToString("&")
-        return "${AppConfig.FPTN}$userInfo@${config.server}:${config.serverPort}$query#${Utils.encodeURIComponent(config.remarks)}"
+        // Returns the body only: AngConfigManager.shareConfig prepends
+        // `protocolScheme` itself, so emitting AppConfig.FPTN here would produce
+        // a doubled `fptn://fptn://` prefix. Matches the WireguardFmt contract.
+        return "$userInfo@${config.server}:${config.serverPort}$query#${Utils.encodeURIComponent(config.remarks)}"
     }
 }
