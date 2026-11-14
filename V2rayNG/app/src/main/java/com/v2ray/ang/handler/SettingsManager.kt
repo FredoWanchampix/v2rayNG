@@ -343,6 +343,51 @@ object SettingsManager {
         return null
     }
 
+    /**
+     * Порт SOCKS, на котором ядро РЕАЛЬНО слушает прямо сейчас.
+     *
+     * Кросс-процессный источник правды: при включённом «динамическом порте»
+     * SettingsManager.getSocksPort() опирается на переменную runtimeSocksPort,
+     * которая живёт ВНУТРИ процесса. Демон (:daemon) генерирует свой случайный
+     * порт и записывает его в runtime-конфиг туннеля, а UI-процесс (:main) и
+     * :tasks сгенерировали бы ДРУГОЙ случайный порт - и проба loopback шла бы
+     * не туда. Поэтому порт, как и креды, читаем из файла, который записал
+     * реально работающий демон: hev-socks5-tunnel.yaml или sys_cache/tun2socks.yml.
+     *
+     * @return порт из runtime-конфига, или null, если конфиг недоступен/не несёт порт.
+     */
+    fun readRuntimeSocksPort(): Int? {
+        val files = listOf(
+            File(AngApplication.application.filesDir, "hev-socks5-tunnel.yaml"),
+            File(AngApplication.application.filesDir, "${AppConfig.ROOT_RUNTIME_DIR}/tun2socks.yml"),
+        )
+        for (file in files) {
+            val text = try {
+                if (!file.isFile) continue else file.readText()
+            } catch (e: Exception) {
+                LogUtil.w(AppConfig.TAG, "Cannot read proxy runtime config for port: ${e.message}")
+                continue
+            }
+            var inSocks5 = false
+            for (line in text.lineSequence()) {
+                val trimmed = line.trim()
+                if (trimmed == "socks5:") {
+                    inSocks5 = true
+                    continue
+                }
+                if (!inSocks5) continue
+                // "  port: 10808" -> 10808; любой другой ключ верхнего уровня завершает блок
+                if (trimmed.startsWith("port:")) {
+                    return Utils.parseInt(
+                        trimmed.removePrefix("port:").trim().removeSurrounding("'"),
+                        0
+                    ).takeIf { it > 0 }
+                }
+            }
+        }
+        return null
+    }
+
     private fun unquoteYamlScalar(value: String): String =
         if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
             value.substring(1, value.length - 1).replace("''", "'")

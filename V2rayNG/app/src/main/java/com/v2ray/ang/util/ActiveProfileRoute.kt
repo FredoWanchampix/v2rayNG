@@ -63,6 +63,12 @@ import java.io.File
  * up, is ground truth that a usable in-app proxy exists, so it wins; otherwise a
  * live daemon without a listener means "profile on but cannot be honoured" and a
  * dead daemon means "nothing running".
+ *
+ * Both signals must be read CROSS-PROCESS. The port comes from [resolveHttpPort]
+ * (value published by the daemon, or the tunnel runtime config), NOT from
+ * SettingsManager.getHttpPort(): with a dynamic SOCKS port that getter derives the
+ * port from a per-process variable, so the UI process would probe a port nobody
+ * listens on and wrongly conclude "no active profile".
  */
 object ActiveProfileRoute {
 
@@ -132,7 +138,7 @@ object ActiveProfileRoute {
         // Two cross-process signals, then one pure decision. See decideMode() and the
         // run-mode matrix in the class doc for why the port probe (not the native core
         // flag) is authoritative from the UI/:tasks processes.
-        val httpPort = SettingsManager.getHttpPort()
+        val httpPort = resolveHttpPort()
         val portListening = httpPort > 0 && HttpUtil.isLocalProxyAvailable(httpPort)
         val coreAlive = isCoreProcessAlive()
 
@@ -160,19 +166,94 @@ object ActiveProfileRoute {
     }
 
     /**
+     * HTTP-порт loopback inbound, на котором ядро РЕАЛЬНО слушает.
+     *
+     * Порядок источников правды (все кросс-процессные):
+     *  1. значение, опубликованное демоном в MMKV при старте ядра;
+     *  2. порт из runtime-конфига туннеля (hev-socks5-tunnel.yaml / tun2socks.yml);
+     *  3. SettingsManager.getHttpPort() как последний резерв.
+     *
+     * Почему нельзя просто звать SettingsManager.getHttpPort(): при включённом
+     * «динамическом порте» он опирается на переменную runtimeSocksPort, которая
+     * живёт внутри процесса. Демон сгенерировал один случайный порт, а UI-процесс
+     * (:main) и :tasks сгенерировали бы ДРУГОЙ - и TCP-проба уходила бы не туда,
+     * давая ложное «профиль выключен» ровно при работающем прокси.
+     */
+    internal fun resolveHttpPort(): Int {
+        // Порядок важен и ленив: SettingsManager.getHttpPort() вызывается только
+        // как последний резерв, потому что при включённом динамическом порте он
+        // ГЕНЕРИРУЕТ случайный порт и кэширует его в переменной этого процесса -
+        // бессмысленный побочный эффект, если у нас уже есть достоверный порт.
+        val published = MmkvManager.decodeSettingsInt(AppConfig.PREF_CORE_HTTP_PORT, 0)
+        if (published > 0) return published
+
+        val runtime = SettingsManager.readRuntimeSocksPort()
+        if (runtime != null && runtime > 0) return runtime + 1
+
+        return pickHttpPort(0, null, SettingsManager.getHttpPort())
+    }
+
+    /**
+     * Чистое правило выбора порта, покрытое unit-тестом.
+     *
+     * @param publishedHttpPort порт, который демон опубликовал в MMKV при старте
+     *   ядра (0 - не опубликован).
+     * @param runtimeSocksPort SOCKS-порт из runtime-конфига туннеля, null если
+     *   конфиг недоступен. HTTP inbound всегда на socks+1.
+     * @param settingsHttpPort значение из настроек - последний резерв. При
+     *   включённом динамическом порте оно НЕДОСТОВЕРНО в чужом процессе.
+     */
+    internal fun pickHttpPort(
+        publishedHttpPort: Int,
+        runtimeSocksPort: Int?,
+        settingsHttpPort: Int,
+    ): Int {
+        if (publishedHttpPort > 0) return publishedHttpPort
+        if (runtimeSocksPort != null && runtimeSocksPort > 0) return runtimeSocksPort + 1
+        return settingsHttpPort
+    }
+
+    /**
      * True when the core/FPTN daemon process is running, evaluated correctly from
      * ANY process. Inside :daemon the native flag is authoritative; from the UI and
      * :tasks processes we fall back to the PID the daemon published to MMKV and
      * check that the process is still alive.
      */
     private fun isCoreProcessAlive(): Boolean {
-        // Same process as the core daemon: the native state is the truth here.
         val published = MmkvManager.decodeSettingsInt(AppConfig.PREF_CORE_DAEMON_PID, 0)
-        if (published > 0 && published == Process.myPid()) {
+        if (published <= 0) return false
+
+        // Same process as the core daemon: the native state is the truth here.
+        if (published == Process.myPid()) {
             return runCatching { CoreServiceManager.isRunning() }.getOrDefault(false)
         }
-        // Different process: trust the published PID only while it is alive.
-        return published > 0 && File("/proc/$published").exists()
+
+        // Another process. "/proc/<pid> exists" alone is not enough: after a daemon
+        // crash the PID can be recycled by an unrelated process, which would make us
+        // report a profile that is gone (and then refuse the fetch forever). Verify
+        // the process really is ours by comparing its cmdline.
+        return isOurProcess(published)
+    }
+
+    /**
+     * True when the given PID belongs to this application. Reads /proc/<pid>/cmdline,
+     * which for Android holds the package/process name (e.g. "com.v2ray.ang:daemon").
+     * Falls back to a mere existence check only if cmdline cannot be read, so a
+     * hardened/unreadable /proc never turns a running profile into "none".
+     */
+    private fun isOurProcess(pid: Int): Boolean {
+        val dir = File("/proc/$pid")
+        if (!dir.exists()) return false
+        val cmdline = try {
+            // /proc/<pid>/cmdline завершается NUL-байтами; Kotlin trim() их убирает,
+            // так как '\u0000' входит в набор пробельных символов.
+            File(dir, "cmdline").readText().trim()
+        } catch (e: Exception) {
+            null
+        }
+        if (cmdline.isNullOrEmpty()) return true // unreadable: do not lie about "none"
+        val pkg = AppConfig.ANG_PACKAGE
+        return cmdline == pkg || cmdline.startsWith("$pkg:")
     }
 
     /** Human-readable description for logs and user-facing errors. */

@@ -89,6 +89,14 @@ object AppConfig {
      * поэтому из UI он всегда false — этот ключ закрывает именно эту дыру.
      */
     const val PREF_CORE_DAEMON_PID = "pref_core_daemon_pid"
+    /**
+     * HTTP-порт loopback inbound, на котором ядро РЕАЛЬНО слушает.
+     * Публикуется демоном при старте. Нужен потому, что при включённом
+     * «динамическом порте» SettingsManager.getSocksPort() опирается на
+     * переменную runtimeSocksPort внутри процесса: UI-процесс сгенерировал бы
+     * другой случайный порт, чем демон, и проба loopback шла бы не туда.
+     */
+    const val PREF_CORE_HTTP_PORT = "pref_core_http_port"
     const val PREF_GEO_FILES_SOURCES = "pref_geo_files_sources"
     const val PREF_USE_HEV_TUNNEL = "pref_use_hev_tunnel_v2"
     const val PREF_HEV_TUNNEL_LOGLEVEL = "pref_hev_tunnel_loglevel"

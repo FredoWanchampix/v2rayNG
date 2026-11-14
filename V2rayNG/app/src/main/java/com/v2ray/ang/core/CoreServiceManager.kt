@@ -160,6 +160,9 @@ object CoreServiceManager {
                 error("fptn-client failed to start; see engines/fptn-client.log")
             }
             MmkvManager.encodeSettings(AppConfig.PREF_CORE_DAEMON_PID, Process.myPid())
+            // FPTN не поднимает Xray HTTP inbound, поэтому порт сбрасываем:
+            // это честно отражает, что локального прокси нет.
+            MmkvManager.encodeSettings(AppConfig.PREF_CORE_HTTP_PORT, 0)
             NotificationManager.showNotification(currentConfig)
             return
         }
@@ -179,10 +182,13 @@ object CoreServiceManager {
             error("Core failed to start")
         }
 
-        // Publish the daemon PID so OTHER processes (UI :main, :tasks) can tell
-        // that a profile is really running: CoreServiceManager.isRunning() reads
-        // native state that exists only inside this :daemon process.
+        // Publish the daemon PID and the REAL loopback HTTP port so OTHER processes
+        // (UI :main, :tasks) can tell that a profile is running AND reach its proxy:
+        // CoreServiceManager.isRunning() reads native state that exists only inside
+        // this :daemon process, and with a dynamic SOCKS port each process would
+        // otherwise generate its OWN random port and probe the wrong one.
         MmkvManager.encodeSettings(AppConfig.PREF_CORE_DAEMON_PID, Process.myPid())
+        MmkvManager.encodeSettings(AppConfig.PREF_CORE_HTTP_PORT, SettingsManager.getHttpPort())
 
         if (browserDialer != null) {
             browserDialer!!.stop()
@@ -216,6 +222,7 @@ object CoreServiceManager {
      */
     fun stopCoreLoop(): Boolean {
         MmkvManager.encodeSettings(AppConfig.PREF_CORE_DAEMON_PID, 0)
+        MmkvManager.encodeSettings(AppConfig.PREF_CORE_HTTP_PORT, 0)
         SidecarEngineManager.stopAll()
         getService()?.let { FptnRootRunner.stop(it) }
         connectionTestScope.coroutineContext.cancelChildren()
