@@ -1,0 +1,104 @@
+package com.v2ray.ang.ui.checkupdate
+
+import android.app.Application
+import com.v2ray.ang.AppConfig
+import com.v2ray.ang.R
+import com.v2ray.ang.dto.CheckUpdateResult
+import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.UpdateCheckerManager
+import com.v2ray.ang.ui.base.BaseViewModel
+import com.v2ray.ang.util.ActiveProfileRoute
+import com.v2ray.ang.util.LogUtil
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+class CheckUpdateViewModel(application: Application) : BaseViewModel(application) {
+
+    private val _checkPreRelease = MutableStateFlow(
+        MmkvManager.decodeSettingsBool(AppConfig.PREF_CHECK_UPDATE_PRE_RELEASE, false)
+    )
+    val checkPreRelease: StateFlow<Boolean> = _checkPreRelease.asStateFlow()
+
+    private val _updateViaActiveProxy = MutableStateFlow(
+        MmkvManager.decodeSettingsBool(AppConfig.PREF_CHECK_UPDATE_VIA_ACTIVE_PROXY, false)
+    )
+    val updateViaActiveProxy: StateFlow<Boolean> = _updateViaActiveProxy.asStateFlow()
+
+    private val _updateResult = MutableStateFlow<CheckUpdateResult?>(null)
+    val updateResult: StateFlow<CheckUpdateResult?> = _updateResult.asStateFlow()
+
+    private val _showUpdateDialog = MutableStateFlow(false)
+    val showUpdateDialog: StateFlow<Boolean> = _showUpdateDialog.asStateFlow()
+
+    fun toggleCheckPreRelease(enabled: Boolean) {
+        _checkPreRelease.value = enabled
+        MmkvManager.encodeSettings(AppConfig.PREF_CHECK_UPDATE_PRE_RELEASE, enabled)
+    }
+
+    fun toggleUpdateViaActiveProxy(enabled: Boolean) {
+        _updateViaActiveProxy.value = enabled
+        MmkvManager.encodeSettings(AppConfig.PREF_CHECK_UPDATE_VIA_ACTIVE_PROXY, enabled)
+    }
+
+    fun checkForUpdates() {
+        launchLoading {
+            val viaActiveProfile = _updateViaActiveProxy.value
+
+            // Resolve the route the same way the manager will, so the user gets a
+            // precise message instead of a silent "already up to date". Probing the
+            // HTTP port alone was wrong: in VPN-tun and root modes that inbound may
+            // not exist while the profile is active and already carrying the app's
+            // traffic.
+            val route = ActiveProfileRoute.resolve()
+            ActiveProfileRoute.log("Update check requested", route)
+
+            if (viaActiveProfile) {
+                when (route.mode) {
+                    ActiveProfileRoute.Mode.NONE -> {
+                        toast(R.string.toast_requires_active_proxy)
+                        return@launchLoading
+                    }
+                    ActiveProfileRoute.Mode.PROFILE_WITHOUT_LOCAL_PROXY -> {
+                        // A profile IS running, but there is no loopback HTTP inbound
+                        // to force this request through. Tell the user exactly that
+                        // instead of a generic failure.
+                        toast(R.string.toast_requires_active_proxy_no_local_proxy)
+                        return@launchLoading
+                    }
+                    ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY -> Unit
+                }
+            }
+            if (!viaActiveProfile && route.mode == ActiveProfileRoute.Mode.NONE) {
+                // Nothing is running: a direct request is the only option, which is
+                // exactly what the switch-off case means.
+                LogUtil.i(AppConfig.TAG, "Update check: no active profile, fetching directly")
+            }
+
+            toast(R.string.update_checking_for_update)
+            try {
+                val result = UpdateCheckerManager.checkForUpdate(
+                    includePreRelease = _checkPreRelease.value,
+                    viaActiveProfile = viaActiveProfile,
+                )
+                if (result.hasUpdate) {
+                    _updateResult.value = result
+                    _showUpdateDialog.value = true
+                } else {
+                    toastSuccess(R.string.update_already_latest_version)
+                }
+            } catch (e: UpdateCheckerManager.NoActiveProfileException) {
+                // Raised when the route could not honour "via active profile".
+                LogUtil.w(AppConfig.TAG, "Update check refused: ${e.message}")
+                toast(e.message ?: getString(R.string.toast_requires_active_proxy))
+            } catch (e: Exception) {
+                LogUtil.e(AppConfig.TAG, "Failed to check for updates", e)
+                toast("Error: ${e.message}")
+            }
+        }
+    }
+
+    fun dismissUpdateDialog() {
+        _showUpdateDialog.value = false
+    }
+}

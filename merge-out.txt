@@ -1,0 +1,34 @@
+Auto-merging .github/workflows/build.yml
+CONFLICT (content): Merge conflict in .github/workflows/build.yml
+Auto-merging V2rayNG/app/build.gradle.kts
+Auto-merging V2rayNG/app/src/main/AndroidManifest.xml
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/AppConfig.kt
+CONFLICT (content): Merge conflict in V2rayNG/app/src/main/java/com/v2ray/ang/AppConfig.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/core/CoreConfigManager.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/core/CoreOutboundBuilder.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/core/CoreServiceManager.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/dto/entities/ProfileItem.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/enums/EConfigType.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/handler/AngConfigManager.kt
+CONFLICT (content): Merge conflict in V2rayNG/app/src/main/java/com/v2ray/ang/handler/AngConfigManager.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/handler/MmkvManager.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/handler/SettingsManager.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainActivity.kt
+CONFLICT (content): Merge conflict in V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainActivity.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainBottomBar.kt
+CONFLICT (content): Merge conflict in V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainBottomBar.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainImportMenu.kt
+CONFLICT (content): Merge conflict in V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainImportMenu.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainScreen.kt
+CONFLICT (content): Merge conflict in V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainScreen.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainServerPager.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt
+CONFLICT (content): Merge conflict in V2rayNG/app/src/main/java/com/v2ray/ang/ui/main/MainViewModel.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/ServerHysteria2Activity.kt
+CONFLICT (content): Merge conflict in V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/ServerHysteria2Activity.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/ui/server/ServerUiState.kt
+Auto-merging V2rayNG/app/src/main/java/com/v2ray/ang/ui/subscription/SubEditActivity.kt
+CONFLICT (content): Merge conflict in V2rayNG/app/src/main/java/com/v2ray/ang/ui/subscription/SubEditActivity.kt
+Auto-merging V2rayNG/app/src/main/res/values-ru/strings.xml
+Auto-merging V2rayNG/app/src/main/res/values/strings.xml
+Automatic merge failed; fix conflicts and then commit the result.

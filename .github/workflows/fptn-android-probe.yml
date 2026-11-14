@@ -1,0 +1,498 @@
+name: FPTN Android client build
+
+# Reusable workflow that cross-compiles the real FPTN CLI client for Android
+# arm64. Kept separate from the release build so toolchain problems can be
+# iterated on in minutes instead of burning a full APK build each time.
+#
+# Why Conan (and not a bare NDK cmake invocation):
+#   The previous attempt `cmake -DCMAKE_TOOLCHAIN_FILE=android.toolchain.cmake
+#   -DFPTN_BUILD_CLIENT=ON` failed at configure time with
+#   "Could NOT find GTest (missing: GTEST_LIBRARY ...)" raised from
+#   build/_deps/camouflagetls-src/tests/CMakeLists.txt. FPTN has no such CMake
+#   options at all (the real ones are FPTN_BUILD_ONLY_FPTN_LIB,
+#   FPTN_BUILD_WITH_GUI_CLIENT, FPTN_OPENWRT, FPTN_WITH_MIMALLOC, FPTN_VERSION)
+#   and none of its dependencies (OpenSSL/BoringSSL, Boost, protobuf, re2,
+#   brotli, libidn2, cpp-httplib, abseil, YaFF, spdlog, fmt, argparse,
+#   nlohmann_json, gtest) are available to a plain toolchain file.
+#   FPTN's own conanfile.py declares that whole graph, including
+#   `test_requires("gtest/...")` and a local BoringSSL recipe, so Conan is the
+#   only mechanism that resolves it for Android - the same one the official
+#   FptnClient-Android project uses.
+#
+# Deviations from the upstream desktop recipe, all deliberate:
+#   1. libcxx=c++_static so the binary does not need libc++_shared.so at
+#      runtime: it is shipped in assets/ and executed directly, there is no
+#      APK lib path for the dynamic loader to find.
+#   2. src/fptn-server and src/fptn-passwd are not configured, and the
+#      prometheus-cpp requirement they alone need is dropped from the recipe.
+#      Only fptn-client-cli is shipped; this saves a large part of the build.
+#   3. -Werror / CMAKE_COMPILE_WARNING_AS_ERROR are relaxed in fetched
+#      third-party sources: they are not our code and a different clang patch
+#      level must not fail the Android build.
+
+on:
+  workflow_dispatch:
+    inputs:
+      fptn_tag:
+        description: "FPTN git tag to build"
+        required: false
+        default: "0.4.6"
+        type: string
+  workflow_call:
+    inputs:
+      fptn_tag:
+        description: "FPTN git tag to build"
+        required: false
+        default: "0.4.6"
+        type: string
+    outputs:
+      sha256:
+        description: "SHA256 of the produced fptn-client binary"
+        value: ${{ jobs.build-fptn-android.outputs.sha256 }}
+      size:
+        description: "Size in bytes of the stripped fptn-client binary"
+        value: ${{ jobs.build-fptn-android.outputs.size }}
+      artifact_id:
+        description: "Actions artifact id of the fptn-client-arm64-v8a artifact"
+        value: ${{ jobs.build-fptn-android.outputs.artifact_id }}
+
+permissions:
+  contents: read
+
+# No `concurrency` group here on purpose: this workflow is called from both
+# build.yml and build-upstream-master.yml, and a shared group would let one
+# caller cancel the other's FPTN build. Callers serialise themselves.
+
+env:
+  NDK_VERSION: "30.0.16248370"
+  # 28, not the app's minSdk 24: boost.asio (boost/asio/detail/memory.hpp) calls
+  # std::aligned_alloc, which the NDK only declares for API >= 28
+  # (__INTRODUCED_IN(28)), and boost 1.90's cobalt/asio TU fail to compile below
+  # that. FPTN already requires root mode, so requiring Android 9+ for this one
+  # engine is an acceptable trade; the app reports it when the engine is absent.
+  API_LEVEL: "28"
+
+jobs:
+  build-fptn-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    outputs:
+      sha256: ${{ steps.stage.outputs.sha256 }}
+      size: ${{ steps.stage.outputs.size }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+
+    steps:
+      - name: Setup Android SDK cmdline-tools
+        uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: "14742923"
+          packages: "platform-tools"
+
+      - name: Install Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            --channel=0 --install "ndk;${NDK_VERSION}"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Conan
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install --quiet "conan>=2.9,<3"
+          conan --version
+          conan profile detect --force
+
+      # Split into restore/save on purpose. A single actions/cache entry only
+      # saves in its post-step, and post-steps are skipped when the job fails -
+      # so every failed attempt rebuilt the whole dependency graph (Boost,
+      # BoringSSL, protobuf, re2, brotli, libidn2, abseil) from scratch, which
+      # measured at 13m21s of the ~15m run. Saving with if: always() makes every
+      # later iteration reuse the cache instead.
+      - name: Restore Conan package cache
+        id: cache-conan
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.conan2/p
+          key: fptn-conan-ndk${{ env.NDK_VERSION }}-${{ inputs.fptn_tag || github.event.inputs.fptn_tag || '0.4.6' }}-armv8-v3
+          restore-keys: |
+            fptn-conan-ndk${{ env.NDK_VERSION }}-
+
+      - name: Write the Android host profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK_BIN="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CC="$NDK_BIN/aarch64-linux-android${API_LEVEL}-clang"
+          [ -x "$CC" ] || { echo "::error::NDK clang not found at $CC"; exit 1; }
+          CC_VER="$("$CC" -dumpversion | cut -d. -f1)"
+          echo "NDK clang major version: $CC_VER"
+          echo "CC_VER=$CC_VER" >> "$GITHUB_ENV"
+          mkdir -p ~/.conan2/profiles
+          {
+            echo "include(default)"
+            echo
+            echo "[settings]"
+            echo "os=Android"
+            echo "os.api_level=${API_LEVEL}"
+            echo "arch=armv8"
+            echo "compiler=clang"
+            echo "compiler.version=${CC_VER}"
+            echo "compiler.cppstd=20"
+            echo "compiler.libcxx=c++_static"
+            echo "build_type=Release"
+            echo
+            echo "[conf]"
+            echo "tools.android:ndk_path=${NDK_HOME}"
+            echo "tools.build:compiler_executables={'c': '${NDK_BIN}/aarch64-linux-android${API_LEVEL}-clang', 'cpp': '${NDK_BIN}/aarch64-linux-android${API_LEVEL}-clang++', 'ar': '${NDK_BIN}/llvm-ar', 'ranlib': '${NDK_BIN}/llvm-ranlib', 'strip': '${NDK_BIN}/llvm-strip'}"
+          } > ~/.conan2/profiles/android
+          echo "----- host profile -----"
+          cat ~/.conan2/profiles/android
+
+      - name: Clone and prepare FPTN
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.fptn_tag || github.event.inputs.fptn_tag || '0.4.6' }}"
+          echo "FPTN_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "FPTN_VERSION=$TAG" >> "$GITHUB_ENV"
+          rm -rf /tmp/fptn
+          git clone --depth 1 --branch "$TAG" https://github.com/fptn-project/fptn /tmp/fptn
+          cd /tmp/fptn
+          # Only fptn-client-cli is shipped. Commenting out the server/passwd
+          # subdirectories is not enough: the top-level install() rules still
+          # reference those targets and CMake fails with
+          # `install TARGETS given target "fptn-server" which does not exist`.
+          # Drop the prometheus-cpp requirement as well - only the server uses it.
+          sed -i -E 's|^([[:space:]]*)self\.requires\("prometheus-cpp/[0-9.]+"\)|\1pass  # server-only dep, not needed for the CLI|' conanfile.py
+          sed -i -E 's|^([[:space:]]*)add_subdirectory\(src/fptn-server\)|\1# add_subdirectory(src/fptn-server)  # not built for Android|' CMakeLists.txt
+          sed -i -E 's|^([[:space:]]*)add_subdirectory\(src/fptn-passwd\)|\1# add_subdirectory(src/fptn-passwd)  # not built for Android|' CMakeLists.txt
+          sed -i -E 's|^([[:space:]]*)install\(TARGETS fptn-server .*\)|\1# install() removed: fptn-server is not built for Android|' CMakeLists.txt
+          sed -i -E 's|^([[:space:]]*)install\(TARGETS fptn-passwd .*\)|\1# install() removed: fptn-passwd is not built for Android|' CMakeLists.txt
+          # The top-level `add_subdirectory(tests)` pulls tests/server, which does
+          # find_package(prometheus-cpp REQUIRED). That package was dropped above
+          # together with the server, so Configure pass 2 failed with
+          # "Could not find a package configuration file provided by prometheus-cpp".
+          # Tests are not needed to ship the CLI.
+          sed -i -E 's|^([[:space:]]*)add_subdirectory\(tests\)|\1# add_subdirectory(tests)  # server tests need prometheus-cpp, not built for Android|' CMakeLists.txt
+          sed -i -E 's|^([[:space:]]*)enable_testing\(\)|\1# enable_testing()  # disabled with tests/ for the Android build|' CMakeLists.txt
+          # Do not treat warnings as errors in our own translation units either:
+          # the NDK clang patch level differs from the desktop one.
+          sed -i 's|^set(CMAKE_COMPILE_WARNING_AS_ERROR ON).*|set(CMAKE_COMPILE_WARNING_AS_ERROR OFF)|' CMakeLists.txt
+          sed -i 's|add_compile_options(-Wall -Werror -pedantic)|add_compile_options(-Wall -pedantic)|' CMakeLists.txt
+          # FPTN turns clang-tidy into a build gate: it auto-detects the
+          # clang-tidy binary and .clang-tidy sets `WarningsAsErrors: "*"`, so any
+          # lint finding aborts compilation. With the NDK clang the build reached
+          # 91% and died on
+          #   fptn-client-cli.cpp:41:5: error: an exception may be thrown in
+          #   function 'main' [bugprone-exception-escape,-warnings-as-errors]
+          # Linting is the upstream CI's concern, not ours: we only need the
+          # binary, so disable the tidy hook (passing -DCMAKE_CXX_CLANG_TIDY= is
+          # not enough, the CMakeLists does a plain set() that shadows it).
+          sed -i -E 's|^if \(CLANG_TIDY_EXE\)|if (FALSE)  # clang-tidy disabled for the Android cross build|' CMakeLists.txt
+          # Belt and braces: neutralise WarningsAsErrors in the tidy config too.
+          sed -i -E 's|^WarningsAsErrors:.*|WarningsAsErrors: ""|' .clang-tidy 2>/dev/null || true
+          echo "----- patches applied -----"
+          echo "clang-tidy hook (expect 'if (FALSE)'):"
+          grep -nE "^if \(CLANG_TIDY_EXE\)|^if \(FALSE\)" CMakeLists.txt
+          echo "Boost::process references left (expect none):"
+          grep -rn 'Boost::process' src CMakeLists.txt 2>/dev/null || echo "  none"
+          grep -nE "prometheus-cpp|add_subdirectory\((src/fptn-|tests)|enable_testing|install\(TARGETS|CMAKE_COMPILE_WARNING_AS_ERROR|-Werror" CMakeLists.txt conanfile.py | head -30
+
+      - name: Conan install for Android arm64
+        shell: bash
+        working-directory: /tmp/fptn
+        run: |
+          set -euo pipefail
+          export FPTN_VERSION="${FPTN_VERSION}"
+          # boost.cobalt is new in Boost 1.86+ and FPTN does not use it, yet its
+          # translation units fail on Android: boost/asio/detail/memory.hpp calls
+          # std::aligned_alloc, which libc++ only declares for NDK API >= 28.
+          # Dropping the library removes those TUs entirely and shortens the
+          # build; the API level below is raised as a second line of defence.
+          # `|| rc=$?` is required here: under `set -e` a failing conan would
+          # otherwise abort the script before the log is printed, which is exactly
+          # the "failure hidden behind a green-looking step" pattern this workflow
+          # exists to remove.
+          rc=0
+          conan install . \
+            --output-folder=build-android \
+            --profile:host=android --profile:build=default \
+            -s build_type=Release \
+            -o with_gui_client=False \
+            -o build_only_fptn_lib=False \
+            -o 'boost/*:without_cobalt=True' \
+            --build=missing \
+            -c tools.build:jobs="$(nproc)" > /tmp/conan.log 2>&1 || rc=$?
+          # Keep the full log but print a bounded slice: `tail -80` alone used to
+          # hide the first error line when a package failed deep in the graph.
+          tail -120 /tmp/conan.log
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=Conan install failed (exit $rc)::first errors below"
+            grep -nE "ERROR|error:|Could not|failed" /tmp/conan.log | head -30 || true
+          fi
+          exit "$rc"
+
+      - name: Save Conan package cache
+        # Runs even on failure so a broken toolchain step never costs another
+        # 13-minute dependency build on the next attempt.
+        if: always() && steps.cache-conan.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.conan2/p
+          key: fptn-conan-ndk${{ env.NDK_VERSION }}-${{ inputs.fptn_tag || github.event.inputs.fptn_tag || '0.4.6' }}-armv8-v3
+
+      - name: Resolve Boost.Process for Android
+        shell: bash
+        working-directory: /tmp/fptn
+        run: |
+          set -euo pipefail
+          # Boost.Process v2 (Boost 1.90) is NOT header-only. error.hpp declares
+          #   extern BOOST_PROCESS_V2_DECL const error_category& get_utf8_category();
+          #   extern BOOST_PROCESS_V2_DECL const error_category& get_exit_code_category();
+          # and shell.hpp declares get_shell_category(). With a static build
+          # BOOST_PROCESS_V2_DECL expands to nothing, so those definitions have to
+          # come from a compiled translation unit.
+          #
+          # The conan-center boost recipe only disables process for iOS and for
+          # MSVC 1.86, but for Android it still does not emit libboost_process.a
+          # (verified: 17 boost archives are built, process is not among them),
+          # which is also why CMakeDeps declares no Boost::process target. The
+          # sources ARE in the cache under libs/process/src.
+          #
+          # Earlier attempts and why they were wrong:
+          #   - deleting the Boost::process link line only moved the failure to
+          #     the linker (undefined symbol: get_utf8_category and friends);
+          #   - looking for libboost_process*.a finds nothing for this recipe.
+          # So compile the POSIX subset listed in boostorg/process build/Jamfile
+          # straight into fptn-client-cli. The Windows-only sources are excluded;
+          # on Android they would not compile at all.
+          BP_SRC="$(find "$HOME/.conan2" -type d -path '*/libs/process/src' 2>/dev/null | head -1 || true)"
+          if [ -z "$BP_SRC" ] || [ ! -d "$BP_SRC" ]; then
+            echo "::error::Boost.Process sources not found in the Conan cache"
+            find "$HOME/.conan2" -maxdepth 5 -type d -name 'process' 2>/dev/null | head
+            exit 1
+          fi
+          echo "Boost.Process sources: $BP_SRC"
+
+          # POSIX subset from build/Jamfile (windows/*, *_win.cpp, *_windows.cpp dropped).
+          BP_SOURCES=(
+            detail/environment_posix.cpp
+            detail/last_error.cpp
+            detail/throw_error.cpp
+            detail/utf8.cpp
+            ext/cmd.cpp
+            ext/cwd.cpp
+            ext/env.cpp
+            ext/exe.cpp
+            ext/proc_info.cpp
+            posix/close_handles.cpp
+            environment.cpp
+            error.cpp
+            pid.cpp
+            shell.cpp
+          )
+          missing=0
+          for rel in "${BP_SOURCES[@]}"; do
+            [ -f "$BP_SRC/$rel" ] || { echo "::error::missing $BP_SRC/$rel"; missing=1; }
+          done
+          [ "$missing" -eq 0 ] || { echo "::error::Boost.Process source list is stale"; exit 1; }
+
+          # Drop the missing Boost::process link reference and append our sources.
+          find src -name CMakeLists.txt -print0 \
+            | xargs -0 -r sed -i -E '/^[[:space:]]*Boost::process[[:space:]]*$/d'
+          {
+            echo ''
+            echo '# ---- Android: compile Boost.Process v2 into the CLI ----'
+            echo '# Injected by the v2rayNG fork Android build. The Conan boost recipe'
+            echo '# ships no libboost_process.a for Android, but it does keep the sources.'
+            echo 'target_sources(fptn-client-cli PRIVATE'
+            for rel in "${BP_SOURCES[@]}"; do
+              echo "  \"$BP_SRC/$rel\""
+            done
+            echo ')'
+            echo 'target_compile_definitions(fptn-client-cli PRIVATE BOOST_PROCESS_SOURCE=1)'
+          } >> src/fptn-client/CMakeLists.txt
+
+          echo "----- tail of src/fptn-client/CMakeLists.txt -----"
+          tail -25 src/fptn-client/CMakeLists.txt
+          echo "----- Boost::process references left (expect none) -----"
+          grep -rn 'Boost::process' src CMakeLists.txt 2>/dev/null || echo "  none"
+
+      - name: "Configure (pass 1: fetch third-party sources)"
+        shell: bash
+        working-directory: /tmp/fptn/build-android
+        run: |
+          set -uo pipefail
+          export FPTN_VERSION="${FPTN_VERSION}"
+          # This pass is expected to fail: FPTN pulls libtuntap through
+          # FetchContent and libtuntap does not know Android, so it dies with
+          # "Your operating system is not supported yet". Its purpose is to
+          # download _deps/* so the next step can patch them.
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFPTN_VERSION="${FPTN_VERSION}" \
+            -DFPTN_BUILD_WITH_GUI_CLIENT=OFF \
+            -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF \
+            -DBUILD_TESTING=OFF || echo "expected failure in pass 1"
+          [ -d _deps/libtuntap-src ] || {
+            echo "::error::libtuntap sources were not fetched"; exit 1; }
+
+      - name: Patch libtuntap for Android
+        shell: bash
+        working-directory: /tmp/fptn/build-android
+        run: |
+          set -euo pipefail
+          LT=_deps/libtuntap-src
+          [ -d "$LT" ] || { echo "::error::libtuntap sources missing"; exit 1; }
+          # libtuntap does `set(${CMAKE_SYSTEM_NAME} True)` and then picks its
+          # platform sources with if(Linux)/elseif(OpenBSD)/... On Android
+          # CMAKE_SYSTEM_NAME is "Android", nothing matches and it dies with
+          # "Your operating system is not supported yet". Android is Linux for
+          # everything libtuntap needs (/dev/net/tun + TUNSETIFF), so tell it so.
+          #
+          # Its CMakeLists has `include(CMakeLists.txt.local OPTIONAL)` right
+          # before that line, which is the intended hook for exactly this - so
+          # the upstream file is left untouched.
+          printf '%s\n' \
+            '# Injected by the v2rayNG fork Android build.' \
+            '# libtuntap has no Android branch; Android is Linux for TUN purposes.' \
+            'set(Linux True)' \
+            'add_definitions(-DLinux)' \
+            > "$LT/CMakeLists.txt.local"
+          echo "----- CMakeLists.txt.local -----"
+          cat "$LT/CMakeLists.txt.local"
+          # The Unix branch adds the host /usr/include and /usr/local/include to
+          # the include path. In a cross build those are glibc headers that would
+          # shadow the NDK sysroot, and the target is PUBLIC so they leak into
+          # every FPTN translation unit. Drop those two lines.
+          sed -i -e '\#^[[:space:]]*/usr/include/[[:space:]]*$#d' \
+                 -e '\#^[[:space:]]*/usr/local/include/[[:space:]]*$#d' \
+            "$LT/CMakeLists.txt"
+          echo "----- host include dirs removed? (expect no output) -----"
+          grep -n "/usr/include\|/usr/local/include" "$LT/CMakeLists.txt" || echo "none left"
+          # libtuntap defines `struct in6_ifreq` itself, but the NDK sysroot
+          # already declares an identical one in <linux/ipv6.h> (same members:
+          # ifr6_addr / ifr6_prefixlen / ifr6_ifindex), so compiling
+          # tuntap-unix-linux.c fails with "redefinition of 'in6_ifreq'". Drop
+          # libtuntap's copy; the kernel header's definition is ABI-identical and
+          # tuntap_sys_set_ipv6() keeps working unchanged.
+          sed -i '/^struct in6_ifreq {$/,/^};$/d' "$LT/tuntap-unix-linux.c"
+          echo "----- in6_ifreq still defined in libtuntap? (expect none) -----"
+          grep -n "struct in6_ifreq {" "$LT/tuntap-unix-linux.c" || echo "  removed"
+          grep -n "struct in6_ifreq ifrv6" "$LT/tuntap-unix-linux.c" || true
+          # Third-party sources fetched during pass 1 are not ours. camouflagetls
+          # and others build with -Wall -Werror, and a different clang patch
+          # level in the NDK must not be able to fail the Android build.
+          find _deps -maxdepth 3 -name CMakeLists.txt -print0 2>/dev/null \
+            | xargs -0 -r sed -i -E 's/-Werror//g; s/set\(CMAKE_COMPILE_WARNING_AS_ERROR ON\)/set(CMAKE_COMPILE_WARNING_AS_ERROR OFF)/g' || true
+          echo "----- -Werror stripped from fetched deps -----"
+
+      - name: Configure (pass 2)
+        shell: bash
+        working-directory: /tmp/fptn/build-android
+        run: |
+          set -euo pipefail
+          export FPTN_VERSION="${FPTN_VERSION}"
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFPTN_VERSION="${FPTN_VERSION}" \
+            -DFPTN_BUILD_WITH_GUI_CLIENT=OFF \
+            -DCMAKE_COMPILE_WARNING_AS_ERROR=OFF \
+            -DBUILD_TESTING=OFF \
+            -DFETCHCONTENT_FULLY_DISCONNECTED=ON
+
+      - name: Build fptn-client-cli
+        shell: bash
+        working-directory: /tmp/fptn/build-android
+        run: |
+          set -uo pipefail
+          # Keep the whole log instead of `tail -120`: the CMake progress
+          # percentage is what tells us how far a failed attempt got, and tailing
+          # throws exactly that away.
+          cmake --build . --target fptn-client-cli -j"$(nproc)" 2>&1 | tee /tmp/fptn-build.log
+          rc=${PIPESTATUS[0]}
+          # Highest "[ NN%]" CMake reported, i.e. how much of the client actually
+          # compiled before the failure. Reported as an annotation so it is
+          # visible on the run page without opening the log.
+          PCT="$(grep -oE '^\[ *[0-9]+%\]' /tmp/fptn-build.log \
+                   | tr -d '[]% ' | sort -n | tail -1 || true)"
+          echo "----- last 120 lines of the build log -----"
+          tail -120 /tmp/fptn-build.log
+          if [ "$rc" -ne 0 ]; then
+            echo "::error title=FPTN build progress::Build reached ${PCT:-0}% before failing (exit $rc)"
+            {
+              echo "## FPTN build failed at ${PCT:-0}%"
+              echo
+              echo '```'
+              grep -nE "error:|Error [0-9]|FAILED" /tmp/fptn-build.log | tail -25
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Build completed at ${PCT:-100}%"
+          fi
+          exit "$rc"
+
+      - name: Verify and stage the binary
+        id: stage
+        shell: bash
+        working-directory: /tmp/fptn
+        run: |
+          set -euo pipefail
+          BIN="$(find build-android -type f -perm -u+x -name 'fptn-client*' ! -name '*.o' | head -1)"
+          if [ -z "$BIN" ]; then
+            echo "::error::fptn-client binary was not produced"
+            find build-android -maxdepth 5 -type f -name '*fptn*' | head -40
+            exit 1
+          fi
+          STRIP="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          echo "Built: $BIN"; file "$BIN"; ls -la "$BIN"
+          file "$BIN" | grep -qi "ELF" || { echo "::error::not an ELF"; exit 1; }
+          file "$BIN" | grep -qiE "ARM aarch64|arm64" || { echo "::error::not arm64"; exit 1; }
+          # It must be a bionic (Android) binary, not a glibc/musl host one.
+          READELF="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          "$READELF" -d "$BIN" | head -40
+          if "$READELF" -d "$BIN" | grep -q "libc\+\+_shared\.so"; then
+            echo "::error::binary links libc++_shared.so; profile must use c++_static"
+            exit 1
+          fi
+          "$STRIP" "$BIN" || true
+          mkdir -p "$GITHUB_WORKSPACE/fptn-out"
+          install -m 0755 "$BIN" "$GITHUB_WORKSPACE/fptn-out/fptn-client"
+          ls -la "$GITHUB_WORKSPACE/fptn-out/"
+          sha256sum "$GITHUB_WORKSPACE/fptn-out/fptn-client" | tee "$GITHUB_WORKSPACE/fptn-out/SHA256SUMS.txt"
+          echo "sha256=$(sha256sum "$GITHUB_WORKSPACE/fptn-out/fptn-client" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "size=$(stat -c%s "$GITHUB_WORKSPACE/fptn-out/fptn-client")" >> "$GITHUB_OUTPUT"
+          {
+            echo "## FPTN Android probe"
+            echo
+            echo "- FPTN tag: \`${FPTN_TAG}\`"
+            echo "- NDK: \`${NDK_VERSION}\`, API level ${API_LEVEL}, arch armv8, libcxx c++_static"
+            echo
+            echo '```'
+            file "$GITHUB_WORKSPACE/fptn-out/fptn-client"
+            ls -la "$GITHUB_WORKSPACE/fptn-out/fptn-client"
+            cat "$GITHUB_WORKSPACE/fptn-out/SHA256SUMS.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload fptn-client artifact
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: fptn-client-arm64-v8a
+          path: |
+            fptn-out/fptn-client
+            fptn-out/SHA256SUMS.txt
+          if-no-files-found: error
