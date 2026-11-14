@@ -12,11 +12,11 @@ name: Sync upstream and build v2rayNG
 #   4. Перед публикацией в master создаётся резервная ветка прежнего master.
 #   5. Добавлен шаг эквивалентности: все файлы, которые тронул только upstream,
 #      обязаны остаться байт-в-байт как в upstream, иначе сборка падает.
-#   6. Есть schedule (раз в сутки) - форк больше не отстаёт молча.
+#   6. Только явный ручной запуск: cron и push не меняют код без оператора.
 
 on:
-  schedule:
-    - cron: "17 3 * * *"
+  # Только явное действие владельца/оператора. Никаких cron- и push-сборок:
+  # автоматический merge способен затронуть уникальные функции форка.
   workflow_dispatch:
     inputs:
       publish:
@@ -24,9 +24,6 @@ on:
         required: false
         type: boolean
         default: true
-  push:
-    branches:
-      - ci-master-build
 
 # Scope: merge upstream, verify the merge builds (including the FPTN engine
 # gate), and publish the merged SOURCE to master. It does not publish releases.
