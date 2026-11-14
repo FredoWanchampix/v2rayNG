@@ -1,3 +1,4 @@
+import java.io.File
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -39,6 +40,33 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Релизная подпись ключом владельца. Значения берутся из переменных
+    // окружения CI (KEYSTORE_FILE, APP_KEYSTORE_*), которые GitHub Actions
+    // подставляет из repository secrets; в репозиторий keystore не попадает.
+    // Если KEYSTORE_FILE не задан (проверочная сборка без секретов), конфиг
+    // остаётся пустым и не используется: release-вариант тогда не собирается.
+    signingConfigs {
+        create("ownerRelease") {
+            val storePath = System.getenv("KEYSTORE_FILE")
+            if (!storePath.isNullOrBlank()) {
+                storeFile = File(storePath)
+                storePassword = System.getenv("APP_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("APP_KEYSTORE_ALIAS")
+                keyPassword = System.getenv("APP_KEY_PASSWORD")
+            }
+            // Владелец требует все четыре схемы подписи APK:
+            //   v1 (JAR)  — совместимость со старыми устройствами/установщиками;
+            //   v2/v3     — схемы подписи всего APK (Android 7+/9+);
+            //   v4        — инкрементальная установка через ADB (файл .idsig).
+            // По умолчанию AGP при minSdk 24 отключает v1 и не включает v3/v4,
+            // поэтому задаём их явно.
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -46,6 +74,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Подпись применяется только когда keystore реально передан из CI.
+            val storePath = System.getenv("KEYSTORE_FILE")
+            if (!storePath.isNullOrBlank()) {
+                signingConfig = signingConfigs.getByName("ownerRelease")
+            }
         }
     }
 

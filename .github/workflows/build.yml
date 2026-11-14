@@ -124,17 +124,19 @@ jobs:
             exit 0
           fi
 
-          # A prerelease must be strictly NEWER than the stable version users have,
-          # otherwise compareVersions() in the app sees equality and never offers it
-          # - the switch would look dead again. With version_bump=none on the
-          # prerelease channel, bump the patch level automatically.
+          # Версия и номер сборки меняются ТОЛЬКО по явной команде владельца.
+          # Владелец ведёт нумерацию по апстриму 2dust и сам решает, когда её
+          # поднять. Автоматический bump patch-уровня для беты УБРАН: он молча
+          # поднимал versionName/versionCode выше апстрима. Теперь:
+          #   version_bump=none  -> версия берётся как есть из build.gradle.kts;
+          #   version_bump=patch/minor/major -> явный выбор владельца при запуске.
           EFFECTIVE_BUMP="$BUMP"
-          if [ "$CHANNEL" = "prerelease" ] && [ -z "$EXPLICIT_TAG" ] && [ "$BUMP" = "none" ]; then
-            EFFECTIVE_BUMP="patch"
-            echo "::warning::prerelease channel with version_bump=none: bumping the patch level so the beta is newer than the installed stable build."
-          fi
           NEW_VER="$(bump_version "$CUR_VER" "$EFFECTIVE_BUMP")"
-          NEW_CODE=$((CUR_CODE + 1))
+          if [ "$EFFECTIVE_BUMP" = "none" ]; then
+            NEW_CODE="$CUR_CODE"
+          else
+            NEW_CODE=$((CUR_CODE + 1))
+          fi
 
           if [ -n "$EXPLICIT_TAG" ]; then
             TAG="$EXPLICIT_TAG"
@@ -171,19 +173,19 @@ jobs:
             exit 1
           fi
 
-          # Persist the version so the APK reports the tag it belongs to.
-          sed -i -E "s/^([[:space:]]*versionCode[[:space:]]*=[[:space:]]*)[0-9]+/\1${NEW_CODE}/" "$GRADLE"
-          sed -i -E "s/^([[:space:]]*versionName[[:space:]]*=[[:space:]]*)\"[^\"]*\"/\1\"${NEW_VER}\"/" "$GRADLE"
+          # Версию в build.gradle.kts правим ТОЛЬКО при явном bump, выбранном
+          # владельцем в этом запуске. При version_bump=none файл не трогаем:
+          # APK получает ровно ту версию, что зафиксировал владелец в master.
+          if [ "$EFFECTIVE_BUMP" != "none" ]; then
+            sed -i -E "s/^([[:space:]]*versionCode[[:space:]]*=[[:space:]]*)[0-9]+/\1${NEW_CODE}/" "$GRADLE"
+            sed -i -E "s/^([[:space:]]*versionName[[:space:]]*=[[:space:]]*)\"[^\"]*\"/\1\"${NEW_VER}\"/" "$GRADLE"
+          fi
           grep -nE "^[[:space:]]*version(Code|Name)" "$GRADLE" | head
 
-          # After a STABLE release the development cycle moves on: master becomes
-          # the next patch, so subsequent betas are newer than what users have.
+          # Авто-продвижение master на следующий patch после stable УБРАНО:
+          # владелец сам управляет версией. bump_after_release всегда false.
           BUMP_AFTER="false"
           NEXT_VER="$NEW_VER"
-          if [ "$PRE" = "false" ] && [ "$BUMP" = "none" ]; then
-            BUMP_AFTER="true"
-            NEXT_VER="$(bump_version "$NEW_VER" patch)"
-          fi
 
           {
             echo "release_tag=$TAG"
@@ -517,11 +519,12 @@ jobs:
           chmod +x gradlew
 
           if [ "$IS_RELEASE" = "true" ]; then
+            # Подпись выполняется через signingConfig "ownerRelease" в
+            # build.gradle.kts, который читает те же переменные окружения
+            # (KEYSTORE_FILE, APP_KEYSTORE_*). Именно signingConfig включает
+            # ВСЕ четыре схемы v1/v2/v3/v4; механизм android.injected.signing.*
+            # их не активирует, поэтому injected-свойства больше не передаём.
             ./gradlew :app:assemblePlaystoreRelease --no-daemon --stacktrace \
-              "-Pandroid.injected.signing.store.file=$KEYSTORE_FILE" \
-              "-Pandroid.injected.signing.store.password=$APP_KEYSTORE_PASSWORD" \
-              "-Pandroid.injected.signing.key.alias=$APP_KEYSTORE_ALIAS" \
-              "-Pandroid.injected.signing.key.password=$APP_KEY_PASSWORD" \
               2>&1 | tee /tmp/build.log
           else
             ./gradlew :app:assemblePlaystoreDebug --no-daemon --stacktrace 2>&1 | tee /tmp/build.log
@@ -574,6 +577,9 @@ jobs:
             exit 1
           fi
           cp "${APKS[@]}" release-assets/
+          # v4-подпись — отдельный sidecar-файл <apk>.idsig рядом с APK.
+          # Собираем его, чтобы v4 была не только включена, но и доказуема.
+          find "$APK_DIR" -maxdepth 1 -type f -name '*.idsig' -exec cp {} release-assets/ \; 2>/dev/null || true
           ( cd release-assets && sha256sum ./*.apk > SHA256SUMS.txt )
           VERSION_NAME="$(sed -n 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
             V2rayNG/app/build.gradle.kts | head -n 1)"

@@ -81,6 +81,14 @@ object AppConfig {
     const val PREF_IS_BOOTED = "pref_is_booted"
     const val PREF_CHECK_UPDATE_PRE_RELEASE = "pref_check_update_pre_release"
     const val PREF_CHECK_UPDATE_VIA_ACTIVE_PROXY = "pref_check_update_via_active_proxy"
+    /**
+     * PID процесса :daemon, в котором реально работает ядро (или fptn-client).
+     * Пишется из :daemon при старте/остановке и читается из ЛЮБОГО процесса
+     * (UI :main, :tasks) как кросс-процессный признак «профиль запущен».
+     * Нативный CoreServiceManager.isRunning() существует только внутри :daemon,
+     * поэтому из UI он всегда false — этот ключ закрывает именно эту дыру.
+     */
+    const val PREF_CORE_DAEMON_PID = "pref_core_daemon_pid"
     const val PREF_GEO_FILES_SOURCES = "pref_geo_files_sources"
     const val PREF_USE_HEV_TUNNEL = "pref_use_hev_tunnel_v2"
     const val PREF_HEV_TUNNEL_LOGLEVEL = "pref_hev_tunnel_loglevel"

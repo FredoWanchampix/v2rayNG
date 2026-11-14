@@ -1,8 +1,11 @@
 package com.v2ray.ang.util
 
+import android.os.Process
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.core.CoreServiceManager
+import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
+import java.io.File
 
 /**
  * Resolves how an in-app HTTP fetch (subscription update, update check) must be
@@ -86,19 +89,21 @@ object ActiveProfileRoute {
      * stale pair makes the proxy answer HTTP 407.
      */
     fun resolve(): Route {
-        val running = runCatching { CoreServiceManager.isRunning() }.getOrDefault(false)
-
-        // Not running wins over "something answered the TCP probe". A listener
-        // left behind by a previous core run (or another app on the same port)
-        // still accepts a connect, and routing through it would send the request
-        // into a dead proxy. The state of the core is the authoritative signal.
-        if (!running) {
-            return Route(mode = Mode.NONE)
-        }
-
+        // The loopback HTTP inbound is the ONLY in-app path that can carry a
+        // request through the profile: the app exempts itself from its own tunnel
+        // (addDisallowedApplication / --uid-owner RETURN), so a direct socket
+        // would bypass the profile. Probe it FIRST: it is a cross-process check
+        // (a TCP connect), so it works from the UI (:main) and :tasks processes.
+        //
+        // CRITICAL regression fix: CoreServiceManager.isRunning() reads the NATIVE
+        // core state, which exists only inside the :daemon process. Called from the
+        // UI process it is ALWAYS false, so making it the primary gate reported
+        // "no active profile" even while the proxy was up and serving - exactly the
+        // bug that broke subscription updates, update checks and geo downloads "via
+        // the active profile". It is used only to DISTINGUISH the two failure modes
+        // below, never to veto a working listener.
         val httpPort = SettingsManager.getHttpPort()
-        val httpUp = httpPort > 0 && HttpUtil.isLocalProxyAvailable(httpPort)
-        if (httpUp) {
+        if (httpPort > 0 && HttpUtil.isLocalProxyAvailable(httpPort)) {
             val liveCreds = SettingsManager.readLocalProxyCredentials()
             return Route(
                 mode = Mode.LOCAL_HTTP_PROXY,
@@ -110,7 +115,32 @@ object ActiveProfileRoute {
             )
         }
 
-        return Route(mode = Mode.PROFILE_WITHOUT_LOCAL_PROXY, profileRunning = true)
+        // No listener. A profile can still be active (plain VPN-tun with the local
+        // proxy switch off, or an FPTN profile that runs fptn-client with its own
+        // TUN and no HTTP inbound). Determine that with a CROSS-PROCESS signal: the
+        // :daemon process publishes its PID to MMKV, so any process can tell whether
+        // the core/FPTN daemon is alive without touching native state.
+        if (isCoreProcessAlive()) {
+            return Route(mode = Mode.PROFILE_WITHOUT_LOCAL_PROXY, profileRunning = true)
+        }
+
+        return Route(mode = Mode.NONE)
+    }
+
+    /**
+     * True when the core/FPTN daemon process is running, evaluated correctly from
+     * ANY process. Inside :daemon the native flag is authoritative; from the UI and
+     * :tasks processes we fall back to the PID the daemon published to MMKV and
+     * check that the process is still alive.
+     */
+    private fun isCoreProcessAlive(): Boolean {
+        // Same process as the core daemon: the native state is the truth here.
+        val published = MmkvManager.decodeSettingsInt(AppConfig.PREF_CORE_DAEMON_PID, 0)
+        if (published > 0 && published == Process.myPid()) {
+            return runCatching { CoreServiceManager.isRunning() }.getOrDefault(false)
+        }
+        // Different process: trust the published PID only while it is alive.
+        return published > 0 && File("/proc/$published").exists()
     }
 
     /** Human-readable description for logs and user-facing errors. */

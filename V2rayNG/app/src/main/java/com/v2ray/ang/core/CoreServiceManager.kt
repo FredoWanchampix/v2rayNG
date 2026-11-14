@@ -9,6 +9,7 @@ import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.Process
 import android.system.OsConstants
 import androidx.core.content.ContextCompat
 import com.v2ray.ang.AppConfig
@@ -158,6 +159,7 @@ object CoreServiceManager {
             if (!FptnRootRunner.start(service, config)) {
                 error("fptn-client failed to start; see engines/fptn-client.log")
             }
+            MmkvManager.encodeSettings(AppConfig.PREF_CORE_DAEMON_PID, Process.myPid())
             NotificationManager.showNotification(currentConfig)
             return
         }
@@ -176,6 +178,11 @@ object CoreServiceManager {
         if (!isRunning()) {
             error("Core failed to start")
         }
+
+        // Publish the daemon PID so OTHER processes (UI :main, :tasks) can tell
+        // that a profile is really running: CoreServiceManager.isRunning() reads
+        // native state that exists only inside this :daemon process.
+        MmkvManager.encodeSettings(AppConfig.PREF_CORE_DAEMON_PID, Process.myPid())
 
         if (browserDialer != null) {
             browserDialer!!.stop()
@@ -208,6 +215,7 @@ object CoreServiceManager {
      * @return True if the core was stopped successfully, false otherwise.
      */
     fun stopCoreLoop(): Boolean {
+        MmkvManager.encodeSettings(AppConfig.PREF_CORE_DAEMON_PID, 0)
         SidecarEngineManager.stopAll()
         getService()?.let { FptnRootRunner.stop(it) }
         connectionTestScope.coroutineContext.cancelChildren()
