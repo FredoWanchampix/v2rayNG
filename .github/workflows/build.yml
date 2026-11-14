@@ -560,6 +560,56 @@ jobs:
           done < /tmp/err.txt
           echo "Emitted $n annotation lines from the Gradle logs."
 
+      - name: Verify APK signing schemes (v1/v2/v3/v4)
+        if: steps.signing.outputs.release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Авторитетная проверка подписи официальным apksigner из build-tools.
+          # apksigner сам находит парный .idsig и проверяет схему v4. Печатаем
+          # ТОЛЬКО булевы флаги схем и итог "Verifies"; НИКОГДА не печатаем DN
+          # сертификата, отпечатки или --print-certs, чтобы ключевой материал
+          # не попал в логи. Владелец требует все четыре схемы: v1+v2+v3+v4.
+          APKSIGNER="$ANDROID_HOME/build-tools/37.0.0/apksigner"
+          [ -x "$APKSIGNER" ] || { echo "::error::apksigner не найден: $APKSIGNER"; exit 1; }
+          APK_DIR="V2rayNG/app/build/outputs/apk/playstore/release"
+          mapfile -t APKS < <(find "$APK_DIR" -maxdepth 1 -type f -name '*.apk' | sort)
+          [ "${#APKS[@]}" -gt 0 ] || { echo "::error::нет APK для проверки"; exit 1; }
+          {
+            echo "## Проверка подписи (apksigner)"
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          fail=0
+          for apk in "${APKS[@]}"; do
+            base="$(basename "$apk")"
+            # -v печатает строки "Verifies" и "Verified using vN scheme: ...".
+            # grep оставляет только их, отсекая любые сведения о сертификате.
+            out="$("$APKSIGNER" verify --verbose "$apk" 2>&1 \
+              | grep -E "^(Verifies|Verified using v[1-4] scheme|Number of signers)" || true)"
+            echo "$base:"
+            echo "$out" | sed 's/^/  /'
+            { echo "$base:"; echo "$out" | sed 's/^/  /'; } >> "$GITHUB_STEP_SUMMARY"
+            # Все четыре схемы обязаны быть true.
+            for v in v1 v2 v3 v4; do
+              if echo "$out" | grep -q "Verified using $v scheme.*: true"; then :; else
+                echo "::error::$base: схема $v НЕ подтверждена apksigner"; fail=1
+              fi
+            done
+            # v4 - парный sidecar-файл .idsig должен лежать рядом с APK.
+            if [ -f "$apk.idsig" ]; then
+              echo "  v4 .idsig: присутствует ($(stat -c%s "$apk.idsig") байт)" | tee -a "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error::$base: отсутствует v4-файл .idsig"; fail=1
+            fi
+          done
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Проверка подписи провалена: требуются схемы v1+v2+v3+v4."
+            exit 1
+          fi
+          echo "Все APK подписаны схемами v1+v2+v3+v4 и проходят apksigner verify."
+
       - name: Collect APKs
         id: collect
         shell: bash
