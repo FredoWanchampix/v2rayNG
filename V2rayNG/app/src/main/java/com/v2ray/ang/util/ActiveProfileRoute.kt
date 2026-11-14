@@ -41,12 +41,28 @@ import java.io.File
  * opposite of "update only via the active profile". The only correct in-app route
  * is the loopback HTTP proxy, which forwards into the core.
  *
- * So the decision is three-way, and the core's own state is checked FIRST:
- *  - nothing running                  -> "no active profile" (a leftover
- *                                        listener must not be trusted);
- *  - listener up                      -> go through it (works in every mode);
- *  - profile running, no listener     -> cannot honour the request; report it
- *                                        instead of silently falling back.
+ * Run-mode matrix (what CoreConfigManager.configureInbounds actually builds)
+ * -----------------------------------------------------------------------
+ *  - VPN + hev-tun ............ HTTP inbound FORCED on  -> proxy reachable
+ *  - VPN + hev-tun + per-app ... HTTP inbound FORCED on  -> proxy reachable
+ *      (bypass OR allow-only: in BOTH the app exempts itself from its own
+ *       tunnel, so a direct socket would bypass the profile either way)
+ *  - Root mode ................ HTTP inbound FORCED on  -> proxy reachable
+ *  - Root + LAN sharing ....... HTTP inbound FORCED on  -> proxy reachable
+ *  - Proxy-only ............... HTTP inbound on by default (PREF_ENABLE_LOCAL_PROXY)
+ *  - Plain VPN-tun, proxy ON .. HTTP inbound on         -> proxy reachable
+ *  - Plain VPN-tun, proxy OFF . NO HTTP inbound, profile alive -> must REFUSE
+ *  - FPTN (root) .............. NO Xray inbound at all, fptn owns the TUN -> REFUSE
+ *  - Nothing running .......... NO inbound, daemon dead -> "no active profile"
+ *
+ * So the decision reduces to two cross-process signals:
+ *  1. is the loopback HTTP inbound listening right now?  (a TCP probe: works
+ *     from the UI :main and :tasks processes, unlike the native core flag)
+ *  2. is the core/FPTN daemon process alive?             (PID published to MMKV)
+ * and the pure mapping [decideMode] turns them into the Mode. The listener, when
+ * up, is ground truth that a usable in-app proxy exists, so it wins; otherwise a
+ * live daemon without a listener means "profile on but cannot be honoured" and a
+ * dead daemon means "nothing running".
  */
 object ActiveProfileRoute {
 
@@ -79,6 +95,30 @@ object ActiveProfileRoute {
     )
 
     /**
+     * Pure mapping from the two cross-process signals to a [Mode]. Extracted so the
+     * whole run-mode matrix can be unit-tested without Android, sockets or MMKV.
+     *
+     * @param portListening the loopback HTTP inbound accepted a TCP connect now.
+     * @param coreAlive the core/FPTN daemon process is alive (native flag inside
+     *   :daemon, published PID elsewhere).
+     */
+    internal fun decideMode(portListening: Boolean, coreAlive: Boolean): Mode = when {
+        // A live loopback listener is the one in-app path that carries the request
+        // through the profile in EVERY mode that builds an HTTP inbound (hev-tun,
+        // root, root+LAN, proxy-only, VPN-tun with the local proxy on). It is ground
+        // truth, so it wins over the daemon-liveness signal.
+        portListening -> Mode.LOCAL_HTTP_PROXY
+        // Profile is up but there is no HTTP inbound to force the request through
+        // (plain VPN-tun with the local proxy off, or FPTN which owns its own TUN).
+        // Callers must REFUSE here: the app exempts itself from its own tunnel, so a
+        // direct fetch would bypass the profile - the opposite of what was asked.
+        coreAlive -> Mode.PROFILE_WITHOUT_LOCAL_PROXY
+        // Nothing is running; a leftover listener (if any) is not trusted because the
+        // daemon that owned it is gone.
+        else -> Mode.NONE
+    }
+
+    /**
      * Determines the route to use right now.
      *
      * Credentials are read from the runtime tunnel config first
@@ -89,42 +129,34 @@ object ActiveProfileRoute {
      * stale pair makes the proxy answer HTTP 407.
      */
     fun resolve(): Route {
-        // The loopback HTTP inbound is the ONLY in-app path that can carry a
-        // request through the profile: the app exempts itself from its own tunnel
-        // (addDisallowedApplication / --uid-owner RETURN), so a direct socket
-        // would bypass the profile. Probe it FIRST: it is a cross-process check
-        // (a TCP connect), so it works from the UI (:main) and :tasks processes.
-        //
-        // CRITICAL regression fix: CoreServiceManager.isRunning() reads the NATIVE
-        // core state, which exists only inside the :daemon process. Called from the
-        // UI process it is ALWAYS false, so making it the primary gate reported
-        // "no active profile" even while the proxy was up and serving - exactly the
-        // bug that broke subscription updates, update checks and geo downloads "via
-        // the active profile". It is used only to DISTINGUISH the two failure modes
-        // below, never to veto a working listener.
+        // Two cross-process signals, then one pure decision. See decideMode() and the
+        // run-mode matrix in the class doc for why the port probe (not the native core
+        // flag) is authoritative from the UI/:tasks processes.
         val httpPort = SettingsManager.getHttpPort()
-        if (httpPort > 0 && HttpUtil.isLocalProxyAvailable(httpPort)) {
-            val liveCreds = SettingsManager.readLocalProxyCredentials()
-            return Route(
-                mode = Mode.LOCAL_HTTP_PROXY,
-                httpPort = httpPort,
-                proxyUsername = liveCreds?.first ?: SettingsManager.getSocksUsername(),
-                proxyPassword = liveCreds?.second ?: SettingsManager.getSocksPassword(),
-                profileRunning = true,
-                routedViaProfile = true,
-            )
-        }
+        val portListening = httpPort > 0 && HttpUtil.isLocalProxyAvailable(httpPort)
+        val coreAlive = isCoreProcessAlive()
 
-        // No listener. A profile can still be active (plain VPN-tun with the local
-        // proxy switch off, or an FPTN profile that runs fptn-client with its own
-        // TUN and no HTTP inbound). Determine that with a CROSS-PROCESS signal: the
-        // :daemon process publishes its PID to MMKV, so any process can tell whether
-        // the core/FPTN daemon is alive without touching native state.
-        if (isCoreProcessAlive()) {
-            return Route(mode = Mode.PROFILE_WITHOUT_LOCAL_PROXY, profileRunning = true)
+        return when (val mode = decideMode(portListening, coreAlive)) {
+            Mode.LOCAL_HTTP_PROXY -> {
+                // Credentials are read from the runtime tunnel config first
+                // (hev-socks5-tunnel.yaml / sys_cache/tun2socks.yml) and only then from
+                // the persisted settings: the core writes the values it actually
+                // enforces into its runtime config, while the settings may lag behind a
+                // change made while the core was already running, or carry none at all.
+                // Using the stale pair makes the proxy answer HTTP 407.
+                val liveCreds = SettingsManager.readLocalProxyCredentials()
+                Route(
+                    mode = mode,
+                    httpPort = httpPort,
+                    proxyUsername = liveCreds?.first ?: SettingsManager.getSocksUsername(),
+                    proxyPassword = liveCreds?.second ?: SettingsManager.getSocksPassword(),
+                    profileRunning = true,
+                    routedViaProfile = true,
+                )
+            }
+            Mode.PROFILE_WITHOUT_LOCAL_PROXY -> Route(mode = mode, profileRunning = true)
+            Mode.NONE -> Route(mode = mode)
         }
-
-        return Route(mode = Mode.NONE)
     }
 
     /**

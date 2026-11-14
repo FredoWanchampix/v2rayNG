@@ -90,10 +90,10 @@ class UserAssetViewModel(application: Application) : BaseViewModel(application) 
         val snapshot = uiState.value.assets
         var successCount = 0
         val failures = mutableListOf<String>()
+        val portsToTry = geoPortsToTry(httpPort)
 
         snapshot.forEach { cache ->
             val item = cache.assetUrl
-            val portsToTry = if (httpPort == 0) listOf(0) else listOf(httpPort, 0)
             if (portsToTry.any { tryDownload(item, extDir, it, proxyUsername, proxyPassword) }) {
                 successCount++
             } else {
@@ -164,3 +164,22 @@ class UserAssetViewModel(application: Application) : BaseViewModel(application) 
         val failedAssets: List<String>
     )
 }
+
+
+/**
+ * Порты для попытки скачивания geo-файла.
+ *
+ * httpPort == 0 ->прямой режим (пользователь НЕ требовал «через профиль»):
+ * единственная попытка напрямую.
+ * httpPort != 0 -> режим «строго через активный профиль»: пробуем ТОЛЬКО loopback
+ * HTTP-прокси и НИКОГДА не откатываемся на direct. Прежнее поведение
+ * `listOf(httpPort, 0)` при сбое прокси молча уходило напрямую, а приложение
+ * исключено из собственного туннеля (addDisallowedApplication / --uid-owner
+ * RETURN), поэтому такой запрос обошёл бы профиль - ровно то, что запрещено.
+ * Совпадает с политикой обновления подписки в AngConfigManager, которое тоже не
+ * откатывается на direct при updateViaActiveProxy.
+ *
+ * Чистая функция - покрыта unit-тестом без сети и файловой системы.
+ */
+internal fun geoPortsToTry(httpPort: Int): List<Int> =
+    if (httpPort == 0) listOf(0) else listOf(httpPort)
