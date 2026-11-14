@@ -113,27 +113,39 @@ class UserAssetViewModel(application: Application) : BaseViewModel(application) 
     ): Boolean {
         val targetTemp = File(extDir, item.remarks + "_temp")
         val target = File(extDir, item.remarks)
-        try {
-            if (
-                HttpUtil.downloadToFile(
-                    UrlContentRequest(
-                        url = item.url,
-                        timeout = 15000,
-                        httpPort = httpPort,
-                        proxyUsername = proxyUsername,
-                        proxyPassword = proxyPassword
-                    ),
-                    targetTemp
-                )
-            ) {
-                if (!replaceAssetFile(targetTemp, target)) {
-                    LogUtil.e(AppConfig.TAG, "Failed to replace geo file: ${item.remarks}")
-                    return false
+        // Same retry policy as the subscription updater and the update check: one
+        // dropped TLS handshake in a restrictive network must not fail the whole
+        // geo-asset update. The proxy profile's port/auth are passed through the
+        // caller, so every attempt honestly uses the active profile.
+        repeat(3) { attempt ->
+            try {
+                if (attempt > 0) {
+                    LogUtil.w(AppConfig.TAG, "Geo download retry $attempt/3 for ${item.remarks}")
+                    Thread.sleep(1500L * attempt)
                 }
-                return true
+                if (
+                    HttpUtil.downloadToFile(
+                        UrlContentRequest(
+                            url = item.url,
+                            timeout = 15000,
+                            httpPort = httpPort,
+                            proxyUsername = proxyUsername,
+                            proxyPassword = proxyPassword
+                        ),
+                        targetTemp
+                    )
+                ) {
+                    if (!replaceAssetFile(targetTemp, target)) {
+                        LogUtil.e(AppConfig.TAG, "Failed to replace geo file: ${item.remarks}")
+                        return false
+                    }
+                    return true
+                }
+            } catch (e: InterruptedException) {
+                throw e
+            } catch (e: Exception) {
+                LogUtil.w(AppConfig.TAG, "Geo download attempt ${attempt + 1}/3 failed: ${item.remarks}: ${e.message}")
             }
-        } catch (e: Exception) {
-            LogUtil.e(AppConfig.TAG, "Failed to download geo file: ${item.remarks}", e)
         }
         return false
     }

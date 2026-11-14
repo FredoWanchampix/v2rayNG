@@ -345,6 +345,10 @@
     <string name="sub_keep_balancers_custom_tip">Configs with balancers stay as custom profiles to preserve routing and load balancing</string>
     <string name="sub_auto_set_insecure_when_sha256_present">Auto set allowInsecure if SHA-256 present</string>
     <string name="sub_auto_set_insecure_when_sha256_present_tip">When updating, if a config contains pinnedCA256, automatically skip TLS certificate verification (allowInsecure).</string>
+    <string name="asset_action_update_direct">Update directly</string>
+    <string name="asset_action_update_via_profile">Update via active profile</string>
+    <string name="asset_update_via_profile_active">Updating geo assets via the active profile…</string>
+    <string name="asset_update_via_profile_hint">Downloads are routed strictly through the running profile, exactly like a subscription update.</string>
     <string name="sub_update_via_active_proxy">Update only via active proxy</string>
     <string name="sub_update_via_active_proxy_tip">If enabled, updates will only work if a proxy profile is currently running. Traffic strictly goes through the proxy.</string>
     <string name="toast_requires_active_proxy">An active proxy profile is required to perform this action.</string>

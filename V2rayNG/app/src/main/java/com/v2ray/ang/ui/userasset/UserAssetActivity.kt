@@ -55,6 +55,7 @@ import com.v2ray.ang.extension.toastSuccess
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.ui.base.HelperBaseComponentActivity
+import com.v2ray.ang.util.ActiveProfileRoute
 import com.v2ray.ang.ui.compose.AppDropdownMenuItems
 import com.v2ray.ang.ui.compose.AppTopBar
 import com.v2ray.ang.ui.compose.DeleteConfirmDialog
@@ -76,6 +77,12 @@ private enum class AddAssetMenuAction(@StringRes val labelRes: Int) {
     File(R.string.menu_item_add_file),
     Url(R.string.menu_item_add_url),
     QRCode(R.string.menu_item_scan_qrcode)
+}
+
+/** Actions offered by the cloud-download icon: plain update vs profile-routed. */
+private enum class DownloadAction(@StringRes val labelRes: Int) {
+    Direct(R.string.asset_action_update_direct),
+    ViaProfile(R.string.sub_update_via_active_proxy),
 }
 
 private data class AssetDeleteTarget(val guid: String, val name: String)
@@ -111,7 +118,12 @@ class UserAssetActivity : HelperBaseComponentActivity() {
             onAddFileClick = { showFileChooser() },
             onAddUrlClick = { startActivity(Intent(this, UserAssetUrlActivity::class.java)) },
             onAddQrcodeClick = { importAssetFromQRcode() },
-            onDownloadClick = { downloadGeoFiles() },
+            onDownloadClick = { action ->
+                when (action) {
+                    DownloadAction.Direct -> downloadGeo(viaProfile = false)
+                    DownloadAction.ViaProfile -> downloadGeo(viaProfile = true)
+                }
+            },
             onEditAsset = { guid ->
                 startActivity(Intent(this, UserAssetUrlActivity::class.java).putExtra("assetId", guid))
             },
@@ -209,13 +221,39 @@ class UserAssetActivity : HelperBaseComponentActivity() {
         return true
     }
 
-    private fun downloadGeoFiles() {
-        isLoadingState.value = true
-        toast(R.string.msg_downloading_content)
+    private fun downloadGeo(viaProfile: Boolean) {
+        if (viaProfile) {
+            // Resolve before showing a progress toast, so an unreachable profile is
+            // reported immediately instead of failing every download in turn.
+            val route = ActiveProfileRoute.resolve()
+            ActiveProfileRoute.log("Geo asset update", route)
+            when (route.mode) {
+                ActiveProfileRoute.Mode.NONE -> {
+                    toast(R.string.toast_requires_active_proxy)
+                    return
+                }
+                ActiveProfileRoute.Mode.PROFILE_WITHOUT_LOCAL_PROXY -> {
+                    // A profile IS running but there is no loopback HTTP inbound to
+                    // force the download through, and going direct would bypass it.
+                    toast(R.string.toast_requires_active_proxy_no_local_proxy)
+                    return
+                }
+                ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY -> Unit
+            }
+            toast(R.string.asset_update_via_profile_active)
+            executeDownloadGeoFiles(route.httpPort, route.proxyUsername, route.proxyPassword)
+        } else {
+            toast(R.string.msg_downloading_content)
+            executeDownloadGeoFiles(0)
+        }
+    }
 
-        val proxyUsername = SettingsManager.getSocksUsername()
-        val proxyPassword = SettingsManager.getSocksPassword()
-        val httpPort = SettingsManager.getHttpPort()
+    private fun executeDownloadGeoFiles(
+        httpPort: Int,
+        proxyUsername: String? = null,
+        proxyPassword: String? = null,
+    ) {
+        isLoadingState.value = true
         lifecycleScope.launch {
             refreshData().join()
             val result = withContext(Dispatchers.IO) {
@@ -260,7 +298,7 @@ internal fun UserAssetScreen(
     onAddFileClick: () -> Unit,
     onAddUrlClick: () -> Unit,
     onAddQrcodeClick: () -> Unit,
-    onDownloadClick: () -> Unit,
+    onDownloadClick: (DownloadAction) -> Unit,
     onEditAsset: (String) -> Unit,
     onRemoveAsset: (String, String) -> Unit
 ) {
@@ -297,8 +335,23 @@ internal fun UserAssetScreen(
                             }
                         }
                     }
-                    IconButton(onClick = onDownloadClick) {
-                        Icon(painterResource(R.drawable.ic_cloud_download_24dp), contentDescription = stringResource(R.string.acc_download_file))
+                    Box(modifier = Modifier.wrapContentSize(Alignment.TopEnd)) {
+                        var showDownloadMenu by remember { mutableStateOf(false) }
+                        IconButton(onClick = { showDownloadMenu = true }) {
+                            Icon(painterResource(R.drawable.ic_cloud_download_24dp), contentDescription = stringResource(R.string.acc_download_file))
+                        }
+                        DropdownMenu(
+                            expanded = showDownloadMenu,
+                            onDismissRequest = { showDownloadMenu = false },
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            offset = DpOffset(x = 0.dp, y = 0.dp),
+                            modifier = Modifier.wrapContentWidth(Alignment.End)
+                        ) {
+                            AppDropdownMenuItems(DownloadAction.entries, { it.labelRes }) { action ->
+                                showDownloadMenu = false
+                                onDownloadClick(action)
+                            }
+                        }
                     }
                 }
             )

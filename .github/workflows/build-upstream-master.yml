@@ -292,7 +292,7 @@ jobs:
           git diff --check
           git add V2rayNG/app/build.gradle.kts
           if ! git diff --cached --quiet; then
-            git commit -m "chore: pin ndkVersion and sync version with upstream ${UP_VERSION_NAME}"
+            git commit -m "chore(version): закрепить ndkVersion и версию от upstream ${UP_VERSION_NAME}"
           fi
 
           echo "MERGED_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"

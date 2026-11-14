@@ -423,18 +423,55 @@ jobs:
           APP_KEYSTORE_PASSWORD: ${{ secrets.APP_KEYSTORE_PASSWORD }}
           APP_KEYSTORE_ALIAS: ${{ secrets.APP_KEYSTORE_ALIAS }}
           APP_KEY_PASSWORD: ${{ secrets.APP_KEY_PASSWORD }}
+          RELEASE_TAG: ${{ steps.prepare.outputs.release_tag }}
+          RELEASE_CHANNEL: ${{ inputs.release_channel }}
         shell: bash
         run: |
           set -euo pipefail
+          # Publisher policy: every release APK is signed with the owner's key.
+          # A debug-signed build is allowed only for `release_channel=none` (the
+          # build-and-test path, which publishes nothing). An explicit
+          # release_tag on its own also counts as publish intent. Anything else
+          # requires all four signing secrets to be present and accepted.
+          # No keystore contents, alias, certificate subject or fingerprints are
+          # ever printed: the keytool probe output goes to a deleted temp file.
+          #
+          # Signing secrets live only in the runner workspace, never committed:
+          # the encoded keystore material exists only as `android_keystore.jks`.
+          HAVE_ALL="false"
           if [ -n "${APP_KEYSTORE_BASE64:-}" ] && [ -n "${APP_KEYSTORE_PASSWORD:-}" ] \
              && [ -n "${APP_KEYSTORE_ALIAS:-}" ] && [ -n "${APP_KEY_PASSWORD:-}" ]; then
             printf '%s' "$APP_KEYSTORE_BASE64" | base64 -d > android_keystore.jks
+            KEYTOOL="${JAVA_HOME}/bin/keytool"
+            if [ -x "$KEYTOOL" ]; then
+              if ! "$KEYTOOL" -list -v -alias "$APP_KEYSTORE_ALIAS" \
+                    -keystore android_keystore.jks -storepass "$APP_KEYSTORE_PASSWORD" \
+                    > /tmp/keycheck.txt 2>&1; then
+                rm -f /tmp/keycheck.txt
+                echo "::error::The supplied release keystore could not be opened with the chosen password/alias."
+                exit 1
+              fi
+              rm -f /tmp/keycheck.txt
+            fi
             echo "release=true" >> "$GITHUB_OUTPUT"
             echo "keystore=$PWD/android_keystore.jks" >> "$GITHUB_OUTPUT"
-            echo "Signing: release build with the repository keystore."
+            HAVE_ALL="true"
+            echo "Release keystore present and opened successfully."
           else
             echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::APP_KEYSTORE_* secrets are not set - building a debug-signed APK. Add them to get a release build."
+          fi
+
+          if [ "$HAVE_ALL" != "true" ]; then
+            case "${RELEASE_CHANNEL:-none}" in
+              stable|prerelease)
+                echo "::error::A ${RELEASE_CHANNEL} release was requested, but no valid owner's keystore was supplied. Required secrets: APP_KEYSTORE_BASE64, APP_KEYSTORE_PASSWORD, APP_KEY_PASSWORD, APP_KEYSTORE_ALIAS. Use release_channel=none to only build and test."
+                exit 1
+                ;;
+            esac
+            if [ -n "${RELEASE_TAG:-}" ]; then
+              echo "::error::An explicit release tag was requested, but the owner's release keystore is incomplete or could not be opened."
+              exit 1
+            fi
           fi
 
       - name: Run unit tests
@@ -563,18 +600,18 @@ jobs:
         run: |
           set -euo pipefail
           {
-            echo "# v2rayNG ${RELEASE_VERSION} - fork build"
+            echo "# v2rayNG ${RELEASE_VERSION} — сборка форка"
             echo
             if [ "$IS_PRERELEASE" = "true" ]; then
-              echo "> **Pre-release (beta).** Install it only if you enabled"
-              echo "> \"Check pre-release versions\" in Settings -> Check for update."
+              echo "> **Предварительный выпуск (бета).** Ставьте только если включён"
+              echo "> переключатель «Проверять предварительные версии» в разделе «Проверка обновлений»."
               echo
             fi
             echo "- Commit: \`${GITHUB_SHA}\`"
-            echo "- Channel: $([ "$IS_PRERELEASE" = "true" ] && echo 'prerelease' || echo 'stable')"
-            echo "- Build type: $([ "${{ steps.signing.outputs.release }}" = "true" ] && echo "release (signed)" || echo "debug (debug-signed)")"
+            echo "- Канал: $([ "$IS_PRERELEASE" = "true" ] && echo 'предварительная бета' || echo 'стабильная')"
+            echo "- Подпись: $([ "${{ steps.signing.outputs.release }}" = "true" ] && echo "релизный ключ владельца" || echo "отладочная")"
             echo
-            echo "## Checksums"
+            echo "## Контрольные суммы (SHA-256)"
             echo '```'
             cat release-assets/SHA256SUMS.txt
             echo '```'
@@ -596,28 +633,28 @@ jobs:
               "refs/tags/${PREV_TAG}^{commit}" >/dev/null 2>&1; then
             PREV_TAG=""
           fi
-          echo "Previous release tag: ${PREV_TAG:-<none>}"
+          echo "Предыдущий релиз: ${PREV_TAG:-отсутствует}"
 
           {
             echo
-            echo "## What changed in this release"
+            echo "## Что изменилось в этом выпуске"
             echo
             if [ -n "$PREV_TAG" ]; then
-              echo "Commits since \`${PREV_TAG}\`:"
+              echo "Коммиты с предыдущего опубликованного выпуска \`${PREV_TAG}\`:"
               echo
               RANGE_LOG="$(git log --no-merges --date=short \
                 --pretty=format:'- %s (%h, %ad)' "${PREV_TAG}..HEAD" 2>/dev/null || true)"
             else
-              echo "No previous release found. Last 20 commits:"
+              echo "Предыдущий выпуск не найден. Последние 20 коммитов:"
               echo
               RANGE_LOG="$(git log --no-merges -n 20 --date=short \
                 --pretty=format:'- %s (%h, %ad)' HEAD 2>/dev/null || true)"
             fi
-            if [ -n "$RANGE_LOG" ]; then printf '%s\n' "$RANGE_LOG"; else echo "- No new commits."; fi
+            if [ -n "$RANGE_LOG" ]; then printf '%s\n' "$RANGE_LOG"; else echo "- Новых коммитов нет."; fi
           } >> release-notes.md
 
           GH_FLAGS=(--repo "$GITHUB_REPOSITORY"
-                    --title "v2rayNG ${RELEASE_VERSION} - fork build"
+                    --title "v2rayNG ${RELEASE_VERSION} — сборка форка"
                     --notes-file release-notes.md
                     --target "$GITHUB_SHA")
           if [ "$IS_PRERELEASE" = "true" ]; then
@@ -674,7 +711,7 @@ jobs:
 
           git add "$GRADLE"
           if ! git diff --cached --quiet; then
-            git commit -m "chore(release): set version ${NEW_VER} (${NEW_CODE}) for ${TAG}"
+            git commit -m "chore(version): установить версию ${NEW_VER} (${NEW_CODE}) для ${TAG}"
           else
             echo "Release version already committed."
           fi
@@ -684,7 +721,7 @@ jobs:
             sed -i -E "s/^([[:space:]]*versionCode[[:space:]]*=[[:space:]]*)[0-9]+/\1${NEXT_CODE}/" "$GRADLE"
             sed -i -E "s/^([[:space:]]*versionName[[:space:]]*=[[:space:]]*)\"[^\"]*\"/\1\"${NEXT_VER}\"/" "$GRADLE"
             git add "$GRADLE"
-            git commit -m "chore(release): start next development cycle ${NEXT_VER} (${NEXT_CODE})"
+            git commit -m "chore(version): начать новый цикл разработки ${NEXT_VER} (${NEXT_CODE})"
           fi
 
           if [ -n "${REPO_WRITE_TOKEN:-}" ]; then
