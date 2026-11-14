@@ -80,7 +80,7 @@ private enum class AddAssetMenuAction(@StringRes val labelRes: Int) {
 }
 
 /** Actions offered by the cloud-download icon: plain update vs profile-routed. */
-private enum class DownloadAction(@StringRes val labelRes: Int) {
+internal enum class DownloadAction(@StringRes val labelRes: Int) {
     Direct(R.string.asset_action_update_direct),
     ViaProfile(R.string.sub_update_via_active_proxy),
 }
