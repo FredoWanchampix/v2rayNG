@@ -97,6 +97,17 @@ object AppConfig {
      * другой случайный порт, чем демон, и проба loopback шла бы не туда.
      */
     const val PREF_CORE_HTTP_PORT = "pref_core_http_port"
+    /**
+     * JSON-снимок [com.v2ray.ang.dto.RunningProxyEndpoint]: адрес, порт и учётные
+     * данные loopback-прокси, которые ядро РЕАЛЬНО подняло при старте.
+     *
+     * Это единственный достоверный источник: настройки порта, адреса и учётных
+     * данных пользователь может сменить в любой момент, в том числе ПОСЛЕ запуска
+     * профиля, а запущенное ядро продолжает слушать те значения, с которыми его
+     * подняли. Поэтому функция «через активный профиль» читает снимок, а не
+     * текущие настройки.
+     */
+    const val PREF_CORE_PROXY_ENDPOINT = "pref_core_proxy_endpoint"
     const val PREF_GEO_FILES_SOURCES = "pref_geo_files_sources"
     const val PREF_USE_HEV_TUNNEL = "pref_use_hev_tunnel_v2"
     const val PREF_HEV_TUNNEL_LOGLEVEL = "pref_hev_tunnel_loglevel"

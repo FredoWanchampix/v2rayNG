@@ -100,9 +100,13 @@ object UpdateCheckerManager {
                 UrlContentRequest(
                     url = url,
                     timeout = 15000,
-                    // 0 means "no loopback proxy", i.e. go direct. Only possible
-                    // when the user did NOT require the active profile; when they
-                    // did, the modes above already refused the call.
+                    // Адрес и порт берутся из снимка РЕАЛЬНО запущенного конфига
+                    // ядра, а не из настроек: пользователь может сменить их в любой
+                    // момент, а запущенное ядро слушает прежние значения.
+                    // httpPort == 0 означает «без прокси, напрямую»; это возможно
+                    // только если пользователь НЕ требовал активный профиль —
+                    // иначе вызов уже отклонён выше по режимам.
+                    httpHost = route.httpHost,
                     httpPort = route.httpPort,
                     proxyUsername = route.proxyUsername,
                     proxyPassword = route.proxyPassword,

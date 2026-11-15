@@ -626,6 +626,7 @@ object AngConfigManager {
             // the profile is active and already carrying the app's traffic.
             val route = ActiveProfileRoute.resolve()
             ActiveProfileRoute.log("Subscription update '${it.subscription.remarks}'", route)
+            val httpHost = route.httpHost
             val proxyUsername = route.proxyUsername
             val proxyPassword = route.proxyPassword
             val httpPort = route.httpPort
@@ -669,6 +670,7 @@ object AngConfigManager {
                             userAgent = userAgent,
                             requestHeaders = requestHeaders,
                             timeout = 15000,
+                            httpHost = httpHost,
                             httpPort = httpPort,
                             proxyUsername = proxyUsername,
                             proxyPassword = proxyPassword

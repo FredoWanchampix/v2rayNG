@@ -16,6 +16,8 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.contracts.IDialerService
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.dto.ConnectionTestResult
+import com.v2ray.ang.dto.RunningProxyEndpoint
+import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.dto.OutboundTrafficStat
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.EConfigType
@@ -160,9 +162,9 @@ object CoreServiceManager {
                 error("fptn-client failed to start; see engines/fptn-client.log")
             }
             MmkvManager.encodeSettings(AppConfig.PREF_CORE_DAEMON_PID, Process.myPid())
-            // FPTN не поднимает Xray HTTP inbound, поэтому порт сбрасываем:
-            // это честно отражает, что локального прокси нет.
-            MmkvManager.encodeSettings(AppConfig.PREF_CORE_HTTP_PORT, 0)
+            // FPTN владеет собственным TUN и не поднимает Xray HTTP inbound,
+            // поэтому снимок очищаем: это честно отражает отсутствие локального прокси.
+            MmkvManager.encodeSettings(AppConfig.PREF_CORE_PROXY_ENDPOINT, "")
             NotificationManager.showNotification(currentConfig)
             return
         }
@@ -182,13 +184,13 @@ object CoreServiceManager {
             error("Core failed to start")
         }
 
-        // Publish the daemon PID and the REAL loopback HTTP port so OTHER processes
-        // (UI :main, :tasks) can tell that a profile is running AND reach its proxy:
-        // CoreServiceManager.isRunning() reads native state that exists only inside
-        // this :daemon process, and with a dynamic SOCKS port each process would
-        // otherwise generate its OWN random port and probe the wrong one.
+        // Публикуем PID демона и снимок РЕАЛЬНО запущенного прокси, чтобы другие
+        // процессы (UI :main, :tasks) могли и понять, что профиль работает, и
+        // достучаться до его прокси. Снимок строится разбором того самого конфига,
+        // который ушёл в ядро, а не текущими настройками: настройки пользователь
+        // может поменять в любой момент, а запущенное ядро слушает старые значения.
         MmkvManager.encodeSettings(AppConfig.PREF_CORE_DAEMON_PID, Process.myPid())
-        MmkvManager.encodeSettings(AppConfig.PREF_CORE_HTTP_PORT, SettingsManager.getHttpPort())
+        publishRunningProxyEndpoint(result.content, config.configType)
 
         if (browserDialer != null) {
             browserDialer!!.stop()
@@ -222,7 +224,7 @@ object CoreServiceManager {
      */
     fun stopCoreLoop(): Boolean {
         MmkvManager.encodeSettings(AppConfig.PREF_CORE_DAEMON_PID, 0)
-        MmkvManager.encodeSettings(AppConfig.PREF_CORE_HTTP_PORT, 0)
+        MmkvManager.encodeSettings(AppConfig.PREF_CORE_PROXY_ENDPOINT, "")
         SidecarEngineManager.stopAll()
         getService()?.let { FptnRootRunner.stop(it) }
         connectionTestScope.coroutineContext.cancelChildren()
@@ -417,6 +419,41 @@ object CoreServiceManager {
                 MessageHelper.sendMsg2UI(service, AppConfig.MSG_MEASURE_DELAY_CANCEL, "", requestId)
             }
         }
+    }
+
+    /**
+     * Публикует снимок loopback-прокси, который ядро РЕАЛЬНО подняло.
+     *
+     * Источник - JSON конфига, переданный в coreController.startLoop(), поэтому
+     * значения верны для любого сочетания режимов (hev-tun, root, root+LAN,
+     * proxy-only, VPN-tun, per-app, routeOnly) и любых пользовательских настроек,
+     * включая динамический порт и смену адреса/порта/учётных данных после старта.
+     *
+     * Если HTTP inbound в конфиге нет (профиль поднят без локального прокси),
+     * снимок очищается: функция «через активный профиль» в этом случае честно
+     * отказывает, а не уходит напрямую в обход профиля.
+     */
+    private fun publishRunningProxyEndpoint(configJson: String, configType: EConfigType?) {
+        val endpoint = RunningProxyEndpoint.fromCoreConfig(configJson, configType?.name)
+        if (endpoint == null) {
+            MmkvManager.encodeSettings(AppConfig.PREF_CORE_PROXY_ENDPOINT, "")
+            LogUtil.i(
+                AppConfig.TAG,
+                "StartCore-Manager: профиль поднят без локального HTTP-прокси, снимок очищен"
+            )
+            return
+        }
+        // Учётные данные не логируются: только адрес и порт.
+        LogUtil.i(
+            AppConfig.TAG,
+            "StartCore-Manager: опубликован снимок прокси ${endpoint.host}:${endpoint.port} " +
+                "(udp=${endpoint.udpEnabled}, routeOnly=${endpoint.routeOnly}, " +
+                "auth=${endpoint.username != null}, type=${endpoint.configType})"
+        )
+        MmkvManager.encodeSettings(
+            AppConfig.PREF_CORE_PROXY_ENDPOINT,
+            JsonUtil.toJson(endpoint)
+        )
     }
 
     /**

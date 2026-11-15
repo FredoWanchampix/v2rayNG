@@ -241,14 +241,16 @@ class UserAssetActivity : HelperBaseComponentActivity() {
                 ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY -> Unit
             }
             toast(R.string.asset_update_via_profile_active)
-            executeDownloadGeoFiles(route.httpPort, route.proxyUsername, route.proxyPassword)
+            // Адрес и порт - из снимка реально запущенного конфига ядра.
+            executeDownloadGeoFiles(route.httpHost, route.httpPort, route.proxyUsername, route.proxyPassword)
         } else {
             toast(R.string.msg_downloading_content)
-            executeDownloadGeoFiles(0)
+            executeDownloadGeoFiles(AppConfig.LOOPBACK, 0)
         }
     }
 
     private fun executeDownloadGeoFiles(
+        httpHost: String = AppConfig.LOOPBACK,
         httpPort: Int,
         proxyUsername: String? = null,
         proxyPassword: String? = null,
@@ -257,7 +259,7 @@ class UserAssetActivity : HelperBaseComponentActivity() {
         lifecycleScope.launch {
             refreshData().join()
             val result = withContext(Dispatchers.IO) {
-                viewModel.downloadGeoFiles(extDir, httpPort, proxyUsername, proxyPassword)
+                viewModel.downloadGeoFiles(extDir, httpHost, httpPort, proxyUsername, proxyPassword)
             }
             if (result.successCount > 0) {
                 toast(

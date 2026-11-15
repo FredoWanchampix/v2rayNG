@@ -3,7 +3,9 @@ package com.v2ray.ang.util
 import android.os.Process
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.core.CoreServiceManager
+import com.v2ray.ang.dto.RunningProxyEndpoint
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.handler.SettingsManager
 import java.io.File
 
@@ -64,11 +66,17 @@ import java.io.File
  * live daemon without a listener means "profile on but cannot be honoured" and a
  * dead daemon means "nothing running".
  *
- * Both signals must be read CROSS-PROCESS. The port comes from [resolveHttpPort]
- * (value published by the daemon, or the tunnel runtime config), NOT from
- * SettingsManager.getHttpPort(): with a dynamic SOCKS port that getter derives the
- * port from a per-process variable, so the UI process would probe a port nobody
- * listens on and wrongly conclude "no active profile".
+ * Адрес, порт и учётные данные берутся из [RunningProxyEndpoint] - снимка,
+ * который демон строит РАЗБОРОМ фактического конфига ядра и публикует в MMKV.
+ * Это единственный достоверный источник: настройки адреса/порта/кредов
+ * пользователь вправе сменить в любой момент (в том числе после запуска),
+ * а запущенное ядро продолжает слушать прежние значения. Вычислять порт как
+ * socks+1 из настроек нельзя ещё и потому, что при динамическом порте
+ * SettingsManager.getSocksPort() генерирует случайное значение ВНУТРИ ПРОЦЕССА,
+ * так что UI-процесс промахнулся бы мимо реального слушателя и снова показал бы
+ * «профиль выключен». Снимок корректен для любого сочетания: hev-tun, root,
+ * root+LAN, proxy-only, VPN-tun (в т.ч. per-app bypass/allow-only и
+ * process-маршрутизация с routeOnly), общий/раздельный порт, TCP/UDP.
  */
 object ActiveProfileRoute {
 
@@ -90,10 +98,18 @@ object ActiveProfileRoute {
 
     data class Route(
         val mode: Mode,
-        /** Loopback HTTP port to use, or 0 when the request must go direct. */
+        /** Адрес loopback-прокси запущенного профиля (из рабочего конфига ядра). */
+        val httpHost: String = AppConfig.LOOPBACK,
+        /** Порт HTTP inbound из рабочего конфига; 0 - запрос идёт напрямую. */
         val httpPort: Int = 0,
         val proxyUsername: String? = null,
         val proxyPassword: String? = null,
+        /** UDP включён на SOCKS inbound рабочего конфига. */
+        val udpEnabled: Boolean = false,
+        /** Включена маршрутизация по доменам (sniffing.routeOnly, нужна для process-routing). */
+        val routeOnly: Boolean = false,
+        /** Тип запущенного профиля (для логов/диагностики). */
+        val configType: String? = null,
         /** True when a profile is running in any mode (core or FPTN). */
         val profileRunning: Boolean = false,
         /** True when the resolved route really carries traffic through the profile. */
@@ -135,27 +151,33 @@ object ActiveProfileRoute {
      * stale pair makes the proxy answer HTTP 407.
      */
     fun resolve(): Route {
-        // Two cross-process signals, then one pure decision. See decideMode() and the
-        // run-mode matrix in the class doc for why the port probe (not the native core
-        // flag) is authoritative from the UI/:tasks processes.
-        val httpPort = resolveHttpPort()
-        val portListening = httpPort > 0 && HttpUtil.isLocalProxyAvailable(httpPort)
+        // Три кросс-процессных сигнала, затем одно чистое решение (см. матрицу
+        // режимов в docstring класса):
+        //   1. снимок РЕАЛЬНО запущенного прокси (адрес/порт/креды/udp/routeOnly),
+        //      который демон построил по фактическому конфигу ядра;
+        //   2. TCP-проба этого адреса:порт — слушатель действительно отвечает;
+        //   3. жив ли процесс демона — отличить «профиль без прокси» от «ничего не запущено».
+        val endpoint = readRunningEndpoint()
+        val httpHost = endpoint?.host ?: AppConfig.LOOPBACK
+        val httpPort = endpoint?.port ?: fallbackHttpPort()
+        val portListening = httpPort > 0 && HttpUtil.isLocalProxyAvailable(httpHost, httpPort)
         val coreAlive = isCoreProcessAlive()
 
         return when (val mode = decideMode(portListening, coreAlive)) {
             Mode.LOCAL_HTTP_PROXY -> {
-                // Credentials are read from the runtime tunnel config first
-                // (hev-socks5-tunnel.yaml / sys_cache/tun2socks.yml) and only then from
-                // the persisted settings: the core writes the values it actually
-                // enforces into its runtime config, while the settings may lag behind a
-                // change made while the core was already running, or carry none at all.
-                // Using the stale pair makes the proxy answer HTTP 407.
+                // Креды берём из снимка рабочего конфига (то, что inbound РЕАЛЬНО
+                // требует), и только при их отсутствии — из runtime-конфига туннеля
+                // и настроек как резерв. Это устраняет HTTP 407 из-за устаревшей пары.
                 val liveCreds = SettingsManager.readLocalProxyCredentials()
                 Route(
                     mode = mode,
+                    httpHost = httpHost,
                     httpPort = httpPort,
-                    proxyUsername = liveCreds?.first ?: SettingsManager.getSocksUsername(),
-                    proxyPassword = liveCreds?.second ?: SettingsManager.getSocksPassword(),
+                    proxyUsername = endpoint?.username ?: liveCreds?.first ?: SettingsManager.getSocksUsername(),
+                    proxyPassword = endpoint?.password ?: liveCreds?.second ?: SettingsManager.getSocksPassword(),
+                    udpEnabled = endpoint?.udpEnabled ?: false,
+                    routeOnly = endpoint?.routeOnly ?: false,
+                    configType = endpoint?.configType,
                     profileRunning = true,
                     routedViaProfile = true,
                 )
@@ -166,51 +188,26 @@ object ActiveProfileRoute {
     }
 
     /**
-     * HTTP-порт loopback inbound, на котором ядро РЕАЛЬНО слушает.
-     *
-     * Порядок источников правды (все кросс-процессные):
-     *  1. значение, опубликованное демоном в MMKV при старте ядра;
-     *  2. порт из runtime-конфига туннеля (hev-socks5-tunnel.yaml / tun2socks.yml);
-     *  3. SettingsManager.getHttpPort() как последний резерв.
-     *
-     * Почему нельзя просто звать SettingsManager.getHttpPort(): при включённом
-     * «динамическом порте» он опирается на переменную runtimeSocksPort, которая
-     * живёт внутри процесса. Демон сгенерировал один случайный порт, а UI-процесс
-     * (:main) и :tasks сгенерировали бы ДРУГОЙ - и TCP-проба уходила бы не туда,
-     * давая ложное «профиль выключен» ровно при работающем прокси.
+     * Читает снимок прокси, который демон опубликовал при старте ядра.
+     * Это источник правды по адресу/порту/кредам: настройки пользователь может
+     * сменить в любой момент, а запущенное ядро слушает старые значения.
      */
-    internal fun resolveHttpPort(): Int {
-        // Порядок важен и ленив: SettingsManager.getHttpPort() вызывается только
-        // как последний резерв, потому что при включённом динамическом порте он
-        // ГЕНЕРИРУЕТ случайный порт и кэширует его в переменной этого процесса -
-        // бессмысленный побочный эффект, если у нас уже есть достоверный порт.
-        val published = MmkvManager.decodeSettingsInt(AppConfig.PREF_CORE_HTTP_PORT, 0)
-        if (published > 0) return published
-
-        val runtime = SettingsManager.readRuntimeSocksPort()
-        if (runtime != null && runtime > 0) return runtime + 1
-
-        return pickHttpPort(0, null, SettingsManager.getHttpPort())
+    private fun readRunningEndpoint(): RunningProxyEndpoint? {
+        val json = MmkvManager.decodeSettingsString(AppConfig.PREF_CORE_PROXY_ENDPOINT)
+        if (json.isNullOrBlank()) return null
+        return JsonUtil.fromJsonSafe(json, RunningProxyEndpoint::class.java)
     }
 
     /**
-     * Чистое правило выбора порта, покрытое unit-тестом.
-     *
-     * @param publishedHttpPort порт, который демон опубликовал в MMKV при старте
-     *   ядра (0 - не опубликован).
-     * @param runtimeSocksPort SOCKS-порт из runtime-конфига туннеля, null если
-     *   конфиг недоступен. HTTP inbound всегда на socks+1.
-     * @param settingsHttpPort значение из настроек - последний резерв. При
-     *   включённом динамическом порте оно НЕДОСТОВЕРНО в чужом процессе.
+     * Резервный HTTP-порт, если снимок по какой-то причине недоступен (старый
+     * демон, гонка старта). При динамическом порте SettingsManager.getHttpPort()
+     * в чужом процессе недостоверен, поэтому сначала пробуем runtime-конфиг
+     * туннеля, где демон записал реальный SOCKS-порт (HTTP = SOCKS + 1).
      */
-    internal fun pickHttpPort(
-        publishedHttpPort: Int,
-        runtimeSocksPort: Int?,
-        settingsHttpPort: Int,
-    ): Int {
-        if (publishedHttpPort > 0) return publishedHttpPort
-        if (runtimeSocksPort != null && runtimeSocksPort > 0) return runtimeSocksPort + 1
-        return settingsHttpPort
+    private fun fallbackHttpPort(): Int {
+        val runtime = SettingsManager.readRuntimeSocksPort()
+        if (runtime != null && runtime > 0) return runtime + 1
+        return SettingsManager.getHttpPort()
     }
 
     /**

@@ -83,6 +83,7 @@ class UserAssetViewModel(application: Application) : BaseViewModel(application) 
 
     fun downloadGeoFiles(
         extDir: File,
+        httpHost: String = AppConfig.LOOPBACK,
         httpPort: Int,
         proxyUsername: String? = null,
         proxyPassword: String? = null
@@ -94,7 +95,7 @@ class UserAssetViewModel(application: Application) : BaseViewModel(application) 
 
         snapshot.forEach { cache ->
             val item = cache.assetUrl
-            if (portsToTry.any { tryDownload(item, extDir, it, proxyUsername, proxyPassword) }) {
+            if (portsToTry.any { tryDownload(item, extDir, httpHost, it, proxyUsername, proxyPassword) }) {
                 successCount++
             } else {
                 failures.add(item.remarks)
@@ -107,6 +108,7 @@ class UserAssetViewModel(application: Application) : BaseViewModel(application) 
     private fun tryDownload(
         item: AssetUrlItem,
         extDir: File,
+        httpHost: String,
         httpPort: Int,
         proxyUsername: String? = null,
         proxyPassword: String? = null
@@ -128,6 +130,7 @@ class UserAssetViewModel(application: Application) : BaseViewModel(application) 
                         UrlContentRequest(
                             url = item.url,
                             timeout = 15000,
+                            httpHost = httpHost,
                             httpPort = httpPort,
                             proxyUsername = proxyUsername,
                             proxyPassword = proxyPassword

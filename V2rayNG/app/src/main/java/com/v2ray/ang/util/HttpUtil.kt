@@ -119,7 +119,7 @@ object HttpUtil {
      */
     fun getUrlContent(request: UrlContentRequest): String? {
         val url = request.url ?: return null
-        val client = buildOkHttpClient(request.timeout, request.httpPort, request.proxyUsername, request.proxyPassword, followRedirects = true)
+        val client = buildOkHttpClient(request.timeout, request.httpHost, request.httpPort, request.proxyUsername, request.proxyPassword, followRedirects = true)
         val requestBuilder = Request.Builder()
             .url(url)
             .get()
@@ -141,11 +141,27 @@ object HttpUtil {
         return null
     }
 
-    fun isLocalProxyAvailable(port: Int, timeoutMs: Int = 500): Boolean {
+    /**
+     * Пробует ли loopback-прокси на [host]:[port].
+     *
+     * Адрес принимается параметром, а не захардкожен: профиль может поднять inbound
+     * на 0.0.0.0 (режим «поделиться прокси» по LAN) или на произвольном адресе,
+     * а порт бывает динамическим. Оба значения берутся из снимка реально
+     * запущенного конфига ядра, а не из настроек.
+     */
+    /**
+     * Перегрузка для вызовов, где адрес не передаётся явно: по умолчанию loopback.
+     * Сохранена, чтобы существующие вызовы не сломались при переходе на снимок
+     * реально запущенного конфига.
+     */
+    fun isLocalProxyAvailable(port: Int, timeoutMs: Int = 500): Boolean =
+        isLocalProxyAvailable(AppConfig.LOOPBACK, port, timeoutMs)
+
+    fun isLocalProxyAvailable(host: String, port: Int, timeoutMs: Int = 500): Boolean {
         if (port <= 0) return false
         return try {
             Socket().use { socket ->
-                socket.connect(InetSocketAddress("127.0.0.1", port), timeoutMs)
+                socket.connect(InetSocketAddress(host, port), timeoutMs)
             }
             true
         } catch (_: Exception) {
@@ -174,7 +190,7 @@ object HttpUtil {
 
         while (redirects++ < maxRedirects) {
             if (currentUrl == null) continue
-            val client = buildOkHttpClient(request.timeout, request.httpPort, request.proxyUsername, request.proxyPassword, followRedirects = false)
+            val client = buildOkHttpClient(request.timeout, request.httpHost, request.httpPort, request.proxyUsername, request.proxyPassword, followRedirects = false)
             val finalUserAgent = if (request.userAgent.isNullOrBlank()) {
                 "v2rayNG/${BuildConfig.VERSION_NAME}"
             } else {
@@ -292,6 +308,7 @@ object HttpUtil {
 
     private fun buildOkHttpClient(
         timeout: Int,
+        httpHost: String,
         httpPort: Int,
         proxyUsername: String?,
         proxyPassword: String?,
@@ -308,7 +325,7 @@ object HttpUtil {
         builder.hostnameVerifier { _, _ -> true }
 
         if (httpPort != 0) {
-            builder.proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", httpPort)))
+            builder.proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(httpHost, httpPort)))
             if (!proxyUsername.isNullOrBlank() && !proxyPassword.isNullOrBlank()) {
                 builder.proxyAuthenticator { _, response ->
                     if (response.request.header("Proxy-Authorization") != null) {
@@ -349,7 +366,7 @@ object HttpUtil {
         targetFile: File
     ): Boolean {
         val url = request.url ?: return false
-        val client = buildOkHttpClient(request.timeout, request.httpPort, request.proxyUsername, request.proxyPassword, followRedirects = true)
+        val client = buildOkHttpClient(request.timeout, request.httpHost, request.httpPort, request.proxyUsername, request.proxyPassword, followRedirects = true)
         val requestBuilder = Request.Builder()
             .url(url)
             .get()
