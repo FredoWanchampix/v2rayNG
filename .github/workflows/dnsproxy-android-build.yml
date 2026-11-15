@@ -1,0 +1,108 @@
+name: DNSProxy Android build
+
+# Отдельный reusable-workflow для сборки DNS-форвардера dnsproxy под Android.
+#
+# Зачем он нужен:
+#   Профили FPTN измеряются в изолированном network namespace (см. FptnProbeRunner).
+#   Внутри netns системный resolver Android возвращает fake-IP активного VPN,
+#   поэтому нужен локальный DNS-форвардер, который:
+#     - слушает на 127.0.0.1:53 внутри netns;
+#     - форвардит запросы на upstream из НАСТРОЕК ПОЛЬЗОВАТЕЛЯ
+#       (udp/tcp/tls/https/quic/sdns - все пять транспортов);
+#     - не подменяет DNS никаким hardcoded-провайдером.
+#   dnsproxy (AdGuardTeam) - проверенный форвардер с Apache-2.0 лицензией,
+#   чистый Go без cgo, поэтому кросс-компилируется под android/arm64 так же,
+#   как mimic-client.
+#
+# Почему отдельный workflow, а не шаг в build.yml:
+#   dnsproxy требует Go 1.25.5+, а build.yml использует Go 1.25 для sing-box/mimic.
+#   Отдельный workflow со своей версией Go изолирует риск: обновление Go для dnsproxy
+#   не затрагивает уже работающие сборки sing-box/mimic.
+#
+# Hard-gate: build.yml НЕ соберёт APK, если dnsproxy не собран или его SHA не совпал.
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      sha256:
+        value: ${{ jobs.build-dnsproxy-android.outputs.sha256 }}
+      size:
+        value: ${{ jobs.build-dnsproxy-android.outputs.size }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dnsproxy-android-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-dnsproxy-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      sha256: ${{ steps.stage.outputs.sha256 }}
+      size: ${{ steps.stage.outputs.size }}
+    steps:
+      - name: Checkout dnsproxy source
+        uses: actions/checkout@v7
+        with:
+          repository: AdGuardTeam/dnsproxy
+          ref: v0.80.0
+          fetch-depth: 1
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.5'
+          cache: true
+
+      - name: Build dnsproxy for android/arm64
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Чистый Go без cgo: CGO_ENABLED=0 гарантирует статический бинарник
+          # без зависимостей от bionic libc, как у mimic-client.
+          # GOOS=android GOARCH=arm64 - целевая платформа устройства.
+          CGO_ENABLED=0 GOOS=android GOARCH=arm64 \
+            go build -trimpath -buildvcs=false \
+            -ldflags="-s -w" \
+            -o dnsproxy .
+
+      - name: Verify and stage the binary
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Проверяем, что это действительно ELF для ARM aarch64 (android),
+          # а не x86-бинарник хоста.
+          file dnsproxy | grep -qi "ELF" || { echo "::error::dnsproxy is not an ELF"; exit 1; }
+          file dnsproxy | grep -qiE "ARM aarch64|arm64" || { echo "::error::dnsproxy is not arm64"; exit 1; }
+          # Статический (без динамического линкера) - как и должно быть при CGO_ENABLED=0.
+          if file dnsproxy | grep -qi "dynamically linked"; then
+            echo "::error::dnsproxy is dynamically linked (CGO_ENABLED=0 expected static)"
+            exit 1
+          fi
+          SHA="$(sha256sum dnsproxy | cut -d' ' -f1)"
+          SIZE="$(stat -c%s dnsproxy)"
+          echo "dnsproxy sha256=$SHA size=$SIZE"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+          # Краткая сводка в job summary (без чувствительных данных).
+          {
+            echo "## DNSProxy (android/arm64)"
+            echo '```'
+            file dnsproxy
+            echo "sha256: $SHA"
+            echo "size:   $SIZE bytes"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload dnsproxy artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dnsproxy-android-arm64
+          path: dnsproxy
+          if-no-files-found: error
+          retention-days: 7
