@@ -538,12 +538,18 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          # Раньше этот шаг выдавал до 60 ОТДЕЛЬНЫХ ::error-аннотаций, из-за чего
+          # страница упавшей сборки превращалась в стену красных блоков log-1..log-60,
+          # а настоящую причину приходилось искать глазами. Теперь:
+          #   1. ОДНА сводная аннотация с первыми строками реальной причины;
+          #   2. полный разбор - в сворачиваемом блоке job summary (читается удобно,
+          #      аннотации не засоряет).
           : > /tmp/err.txt
           for f in /tmp/build.log /tmp/tests.log; do
             [ -f "$f" ] || continue
             {
               echo "=== $f ==="
-              grep -nE "^e: |^w: .*(rror|nresolved)|FAILURE: |What went wrong|Execution failed|Caused by:|error: |> Task .* FAILED|BUILD FAILED|Could not resolve|Could not find|A problem occurred|tests? completed|FAILED$" "$f" | tail -50
+              grep -nE "^e: |FAILURE: |What went wrong|Execution failed|Caused by:|error: |> Task .* FAILED|BUILD FAILED|Could not resolve|Could not find|A problem occurred|tests? completed|FAILED$" "$f" | tail -80
               echo "--- tail 60 ---"
               tail -60 "$f"
             } >> /tmp/err.txt 2>&1 || true
@@ -551,14 +557,33 @@ jobs:
           if [ ! -s /tmp/err.txt ]; then
             echo "no gradle log captured" >> /tmp/err.txt
           fi
-          n=0
-          while IFS= read -r line; do
-            n=$((n+1))
-            [ "$n" -gt 60 ] && break
-            safe=$(printf '%s' "$line" | sed 's/%/%25/g' | tr -d '\r' | cut -c1-450)
-            echo "::error title=log-$n::${safe}"
-          done < /tmp/err.txt
-          echo "Emitted $n annotation lines from the Gradle logs."
+
+          # В summary: полный разбор под раскрывающимся заголовком.
+          {
+            echo "## Причина падения сборки"
+            echo
+            echo "<details><summary>Разбор логов Gradle (нажмите, чтобы раскрыть)</summary>"
+            echo
+            echo '```'
+            head -c 60000 /tmp/err.txt
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Одна аннотация вместо стены из 60. Берём ПЕРВУЮ настоящую причину из
+          # сообщений компилятора/Gradle: без "tail 60" и без дублей, которые и
+          # создавали шум. Полный разбор уже записан в job summary выше.
+          ROOT_CAUSE="$(grep -E "^e: |FAILURE: |Caused by:|> Task .* FAILED|BUILD FAILED|Could not resolve|Could not find" /tmp/err.txt \
+            | sed -E 's#file:///home/runner/work/[^ ]*/##' | head -1)"
+          if [ -z "$ROOT_CAUSE" ]; then
+            ROOT_CAUSE="$(tail -1 /tmp/err.txt)"
+          fi
+          FAILING="$(grep -cE "^e: |FAILED|BUILD FAILED" /tmp/err.txt 2>/dev/null || echo 0)"
+          # Аннотация строго однострочная: percent экранируется в %25 (требование
+          # workflow-команд GitHub), возвраты каретки и переводы строк вырезаются.
+          SAFE="$(printf '%s' "$ROOT_CAUSE" | tr -d '\r\n' | sed -e 's/%/%25/g' | cut -c1-400)"
+          echo "::error title=Gradle failure (${FAILING} error lines, details in summary)::${SAFE}"
 
       - name: Verify APK signing schemes (v1+v2+v3+v4)
         if: steps.signing.outputs.release == 'true'

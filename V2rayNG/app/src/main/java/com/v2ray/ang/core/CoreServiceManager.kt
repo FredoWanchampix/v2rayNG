@@ -135,9 +135,68 @@ object CoreServiceManager {
         val config = MmkvManager.decodeServerConfig(guid) ?: error("Failed to decode server config")
 
         LogUtil.i(AppConfig.TAG, "StartCore-Manager: Starting core loop for ${config.remarks}")
+
+        // ===== Порядок здесь КРИТИЧЕН =====
+        //
+        // (1) FPTN обрабатывается ПЕРВЫМ и вообще не требует конфига Xray.
+        //     Раньше ветка FPTN стояла ПОСЛЕ getV2rayConfig(), а построение конфига
+        //     для EConfigType.FPTN шло в CoreOutboundBuilder.toOutboundSidecar(),
+        //     где SidecarEngineManager.currentPort == 0 (FPTN запускается не через
+        //     SidecarEngineManager, а через FptnRootRunner) -> error("Sidecar engine
+        //     is not running") -> getV2rayConfig возвращал status=false -> launchCore
+        //     падал на строке проверки status, НЕ ДОХОДЯ до ветки FPTN. Профиль FPTN
+        //     не запускался никогда.
+        if (config.configType == EConfigType.FPTN) {
+            if (!SettingsManager.isRootMode()) {
+                error("FPTN profiles require root mode: Android grants a single VPN slot")
+            }
+            currentConfig = config
+            if (!FptnRootRunner.start(service, config)) {
+                error("fptn-client failed to start; see engines/fptn-client.log")
+            }
+            MmkvManager.encodeSettings(AppConfig.PREF_CORE_DAEMON_PID, Process.myPid())
+            // Xray и его loopback HTTP inbound для FPTN не поднимаются: fptn-client
+            // владеет собственным TUN и маршрутизирует трафик всего устройства,
+            // включая наше приложение (оно НЕ исключено из fptn0). Поэтому снимок
+            // прокси помечается как «туннельный режим без HTTP-прокси», и вызывающий
+            // код знает, что прямой запрос здесь как раз и идёт через профиль.
+            MmkvManager.encodeSettings(
+                AppConfig.PREF_CORE_PROXY_ENDPOINT,
+                JsonUtil.toJson(
+                    RunningProxyEndpoint(
+                        host = "",
+                        port = 0,
+                        udpEnabled = true,
+                        routeOnly = false,
+                        configType = EConfigType.FPTN.name,
+                        tunnelOnly = true,
+                    )
+                )
+            )
+            NotificationManager.showNotification(currentConfig)
+            if (!isReload) {
+                MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_START_SUCCESS, "")
+            }
+            NotificationManager.startSpeedNotification()
+            LogUtil.i(AppConfig.TAG, "StartCore-Manager: FPTN client started successfully")
+            return
+        }
+
+        // (2) Сайдкар-движок (mihomo / sing-box / mimic-client) поднимается ДО
+        //     построения конфига. Конфиг читает SidecarEngineManager.currentPort,
+        //     чтобы подключить движок как SOCKS-upstream; если строить конфиг раньше,
+        //     порт ещё равен 0 и построение падает. Раньше syncForProfile() стоял
+        //     ПОСЛЕ getV2rayConfig() - из-за этого AmneziaWG, NaiveProxy,
+        //     OpenConnect и Mimic не запускались вообще.
+        SidecarEngineManager.syncForProfile(service, config, guid)
+
+        // (3) Только теперь строим конфиг Xray - движок уже слушает свой порт.
         val result = CoreConfigManager.getV2rayConfig(service, guid)
         LogUtil.d(AppConfig.TAG, result.content)
         if (!result.status) {
+            // Конфиг не собрался - движок оставлять нельзя: он продолжит висеть
+            // в памяти и держать порт, а профиль не запущен.
+            SidecarEngineManager.stopAll()
             error(result.errorMessage.ifBlank { "Failed to get V2Ray config" })
         }
 
@@ -152,27 +211,6 @@ object CoreServiceManager {
         if (SettingsManager.isUsingHevTun()) {
             tunFd = 0
         }
-
-        // FPTN owns its own TUN and replaces the whole Xray + hev stack.
-        if (config.configType == EConfigType.FPTN) {
-            if (!SettingsManager.isRootMode()) {
-                error("FPTN profiles require root mode: Android grants a single VPN slot")
-            }
-            if (!FptnRootRunner.start(service, config)) {
-                error("fptn-client failed to start; see engines/fptn-client.log")
-            }
-            MmkvManager.encodeSettings(AppConfig.PREF_CORE_DAEMON_PID, Process.myPid())
-            // FPTN владеет собственным TUN и не поднимает Xray HTTP inbound,
-            // поэтому снимок очищаем: это честно отражает отсутствие локального прокси.
-            MmkvManager.encodeSettings(AppConfig.PREF_CORE_PROXY_ENDPOINT, "")
-            NotificationManager.showNotification(currentConfig)
-            return
-        }
-
-        // Bring up the sidecar engine (if this profile needs one) before the
-        // Xray core reads SidecarEngineManager.currentPort while building its
-        // socks upstream.
-        SidecarEngineManager.syncForProfile(service, config, guid)
 
         NotificationManager.showNotification(currentConfig)
         if (dialerAddr.isNotNullEmpty()) {
@@ -301,7 +339,15 @@ object CoreServiceManager {
             connectionTestScope.coroutineContext.cancelChildren()
             LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core reload start...")
 
-            coreController.stopLoop()
+            // Для профиля FPTN ядро Xray не запускалось вовсе (fptn-client владеет
+            // собственным TUN), поэтому coreController.stopLoop() здесь обращался бы
+            // к неинициализированному нативному состоянию. Пропускаем остановку и
+            // даём launchCore заново поднять fptn-client (он сам делает stop первым шагом).
+            if (!FptnRootRunner.active) {
+                coreController.stopLoop()
+            } else {
+                LogUtil.i(AppConfig.TAG, "StartCore-Manager: reload for FPTN profile, skipping Xray stopLoop")
+            }
             launchCore(service, tunFd, isReload = true)
 
             LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core reload finished")

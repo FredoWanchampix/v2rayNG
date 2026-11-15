@@ -37,6 +37,21 @@ object SidecarEngineManager {
 
     private const val PORT_WAIT_MS = 10_000L
 
+    /**
+     * ЕДИНСТВЕННАЯ блокировка всех проб, поднимающих движок, для всего процесса.
+     *
+     * [currentPort] один на процесс, поэтому две параллельные пробы сайдкар-профилей
+     * перезаписали бы порт друг друга. Проверяющая код выполняется из разных мест
+     * (обычный тест задержки, «поиск стабильных профилей», проба скорости), и эти
+     * места могут работать одновременно - поэтому блокировка обязана быть общей,
+     * а не своей у каждого вызывающего. Иначе две разные блокировки не дали бы
+     * никакой защиты: каждая считала бы, что владеет движком единолично.
+     */
+    private val probeLock = Any()
+
+    /** Выполняет [block] монопольно относительно всех остальных проб движка. */
+    fun <T> runExclusiveProbe(block: () -> T): T = synchronized(probeLock) { block() }
+
     /** Asset/executable name per engine, null when the profile needs no sidecar. */
     fun engineFor(type: EConfigType): String? = when (type) {
         EConfigType.AMNEZIAWG -> "mihomo"
@@ -48,6 +63,23 @@ object SidecarEngineManager {
     /** True when the profile type is served by a sidecar engine. */
     fun needsSidecar(profile: ProfileItem?): Boolean =
         profile != null && engineFor(profile.configType) != null
+
+    /**
+     * True, когда профиль ВООБЩЕ нельзя измерить временным ядром.
+     *
+     * Сейчас это только FPTN: для него Xray-конфиг не строится вовсе, fptn-client
+     * владеет собственным TUN, поэтому временного ядра для пробы не существует.
+     *
+     * Сайдкар-типы (AmneziaWG, NaiveProxy, OpenConnect, Mimic) сюда НЕ входят: их
+     * можно измерить, если поднять движок в том же процессе, где выполняется проба
+     * (см. [acquireForProbe]). Раньше они ошибочно попадали в эту категорию и
+     * получали фиктивные -1/0, из-за чего «Удалить недействительные» и «Удалить
+     * нулевые» стирали рабочие профили пользователя.
+     */
+    fun cannotMeasureInTempCore(type: EConfigType): Boolean = type == EConfigType.FPTN
+
+    /** True, если для измерения профиля нужен локально поднятый сайдкар-движок. */
+    fun needsProbeEngine(type: EConfigType): Boolean = engineFor(type) != null
 
     /**
      * Makes sure the sidecar required by [profile] is running, stopping any
@@ -111,6 +143,48 @@ object SidecarEngineManager {
 
     /** Exposed for [FptnRootRunner], which starts its binary outside this manager. */
     fun ensureBinaryPublic(context: Context, engine: String): File? = ensureBinary(context, engine)
+
+    /**
+     * Поднимает движок профиля в ТЕКУЩЕМ процессе на время пробы и гарантирует,
+     * что по её завершении он остановлен.
+     *
+     * Зачем это нужно. [currentPort] - это состояние объекта, а объект в Android
+     * свой для каждого процесса. Основной профиль поднимает движок в :daemon,
+     * а проверка скорости и «поиск стабильных профилей» выполняют временное ядро
+     * в :tasks, где currentPort равен 0. Поэтому [CoreOutboundBuilder.toOutboundSidecar]
+     * падал с «Sidecar engine is not running», конфиг пробы не собирался, профиль
+     * получал фиктивную задержку -1 и скорость 0 - и затем «Удалить нулевые» /
+     * «Удалить недействительные» стирали РАБОЧИЙ профиль пользователя.
+     *
+     * Здесь движок поднимается локально в процессе пробы (на случайном свободном
+     * порту, независимом от порта основного профиля), временное ядро подключается
+     * к нему как к SOCKS-upstream, и измерение становится честным.
+     *
+     * Вызов ОБЯЗАН быть сериализован: [currentPort] общий для процесса, поэтому
+     * две параллельные пробы сайдкар-профилей перезаписали бы порт друг друга.
+     * Сериализацию обеспечивает RealPingExecutionLimiter.
+     *
+     * @return true, если движок поднят (или профиль его не требует), false при сбое.
+     */
+    fun acquireForProbe(context: Context, profile: ProfileItem?, guid: String?): Boolean {
+        if (profile == null || engineFor(profile.configType) == null) return true
+        return try {
+            syncForProfile(context, profile, guid)
+            currentPort > 0
+        } catch (e: Exception) {
+            LogUtil.e(
+                AppConfig.TAG,
+                "SidecarEngineManager: не удалось поднять ${profile.configType} для пробы: ${e.message}",
+                e,
+            )
+            false
+        }
+    }
+
+    /** Останавливает движок, поднятый [acquireForProbe]. Безопасно звать всегда. */
+    fun releaseAfterProbe() {
+        stopAll()
+    }
 
     private fun ensureBinary(context: Context, engine: String): File? {
         val target = File(context.filesDir, "engines/$engine")

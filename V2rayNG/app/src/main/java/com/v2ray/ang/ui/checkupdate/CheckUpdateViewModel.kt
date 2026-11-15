@@ -60,12 +60,14 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
                         return@launchLoading
                     }
                     ActiveProfileRoute.Mode.PROFILE_WITHOUT_LOCAL_PROXY -> {
-                        // A profile IS running, but there is no loopback HTTP inbound
-                        // to force this request through. Tell the user exactly that
-                        // instead of a generic failure.
+                        // Профиль запущен, но loopback HTTP inbound не поднят.
+                        // Сообщаем именно это, а не общую ошибку.
                         toast(R.string.toast_requires_active_proxy_no_local_proxy)
                         return@launchLoading
                     }
+                    ActiveProfileRoute.Mode.TUNNEL_DIRECT -> Unit
+                    // Профиль FPTN: запрос пойдёт напрямую и пройдёт через туннель
+                    // профиля, так что требование «через активный профиль» соблюдено.
                     ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY -> Unit
                 }
             }

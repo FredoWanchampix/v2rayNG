@@ -9,6 +9,7 @@ import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.core.CoreServiceManager
 import com.v2ray.ang.handler.AppLocaleManager
 import com.v2ray.ang.handler.NotificationManager
+import com.v2ray.ang.core.FptnRootRunner
 import com.v2ray.ang.root.RootProxyManager
 import com.v2ray.ang.util.LogUtil
 import kotlinx.coroutines.CoroutineScope
@@ -55,10 +56,28 @@ class CoreRootService : Service(), ServiceControl {
             return START_NOT_STICKY
         }
 
-        setupJob = CoroutineScope(Dispatchers.IO).launch {
-            if (!RootProxyManager.start(this@CoreRootService)) {
-                LogUtil.e(AppConfig.TAG, "StartCore-Root: failed to start root mode, stopping")
-                stopService()
+        // Профиль FPTN сам владеет системной маршрутизацией: fptn-client поднимает
+        // собственный TUN (fptn0) и устанавливает маршруты устройства. Устанавливать
+        // поверх этого наш root-tun (utun7788 + hev-socks5-tunnel) НЕЛЬЗЯ:
+        //   1) hev перенаправлял бы трафик в SOCKS-порт Xray, а Xray для FPTN
+        //      не запускается вовсе -> весь трафик ушёл бы в чёрную дыру;
+        //   2) два конкурирующих TUN с дефолтными маршрутами ломают сеть устройства;
+        //   3) правило `-m owner --uid-owner <appUid> -j RETURN` исключило бы наше
+        //      приложение из utun7788, тогда как fptn0 его НЕ исключает - получилась
+        //      бы противоречивая картина, где поведение приложения зависело бы от
+        //      того, какой из двух туннелей победил в таблице маршрутов.
+        if (FptnRootRunner.active) {
+            LogUtil.i(
+                AppConfig.TAG,
+                "StartCore-Root: профиль FPTN сам управляет маршрутизацией, " +
+                    "root-tun (hev/utun7788) не устанавливается"
+            )
+        } else {
+            setupJob = CoroutineScope(Dispatchers.IO).launch {
+                if (!RootProxyManager.start(this@CoreRootService)) {
+                    LogUtil.e(AppConfig.TAG, "StartCore-Root: failed to start root mode, stopping")
+                    stopService()
+                }
             }
         }
 

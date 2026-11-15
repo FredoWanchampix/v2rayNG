@@ -2,6 +2,8 @@ package com.v2ray.ang.core
 
 import com.google.gson.JsonObject
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.AngApplication
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
 import libv2ray.CoreCallbackHandler
@@ -34,6 +36,7 @@ object WhitelistSpeedTester {
     private const val PROXY_WARMUP_MS = 700L
     private const val INTER_ATTEMPT_DELAY_MS = 500L
 
+
     data class Settings(
         val downloadSizeMb: Int,
         val downloadTimeoutSeconds: Int,
@@ -49,6 +52,46 @@ object WhitelistSpeedTester {
      */
     fun measureProfileSpeed(guid: String, settings: Settings): Pair<Long, Boolean> {
         val port = Utils.findRandomFreePort()
+        val context = AngApplication.application
+        val profile = MmkvManager.decodeServerConfig(guid)
+        // Профили на сайдкар-движках (AmneziaWG, NaiveProxy, OpenConnect, Mimic)
+        // требуют, чтобы движок был поднят В ЭТОМ ЖЕ процессе: SidecarEngineManager
+        // - объект, а значит у процесса :tasks свой экземпляр с currentPort == 0,
+        // и построение конфига временного ядра падало бы. Поднимаем движок локально
+        // и обязательно останавливаем его по завершении пробы.
+        val needsEngine = profile?.configType?.let { SidecarEngineManager.needsProbeEngine(it) } == true
+        // Фаза 2 идёт несколькими воркерами параллельно, а SidecarEngineManager
+        // хранит ОДИН currentPort на процесс. Без блокировки две параллельные
+        // сайдкар-пробы перезаписали бы порт друг друга и обе дали бы неверный
+        // результат, поэтому такие пробы сериализуются полностью: подъём движка,
+        // построение конфига, замер и остановка идут под одной блокировкой.
+        val probeBody = {
+            val engineReady = !needsEngine || SidecarEngineManager.acquireForProbe(context, profile, guid)
+            if (!engineReady) {
+                LogUtil.e(AppConfig.TAG, "WhitelistSpeedTester: sidecar engine unavailable for profile $guid")
+                Pair(0L, false)
+            } else {
+                runProbe(guid, port, settings, needsEngine)
+            }
+        }
+        return if (needsEngine) {
+            // Блокировка ОБЩАЯ для всех проб процесса (SidecarEngineManager.probeLock),
+            // а не локальная: иначе проба скорости и обычный тест задержки, идущие
+            // одновременно, считали бы, что каждая владеет движком единолично,
+            // и перезаписали бы currentPort друг у друга.
+            SidecarEngineManager.runExclusiveProbe { probeBody() }
+        } else {
+            probeBody()
+        }
+    }
+
+    /** Сама проба: временное ядро + скачивание тестового файла. */
+    private fun runProbe(
+        guid: String,
+        port: Int,
+        settings: Settings,
+        needsEngine: Boolean,
+    ): Pair<Long, Boolean> {
         var controller: CoreController? = null
         return try {
             val configResult = CoreConfigManager.getV2rayConfig4SpeedtestWithSocksInbound(guid, port)
@@ -73,6 +116,17 @@ object WhitelistSpeedTester {
                 controller?.stopLoop()
             } catch (e: Exception) {
                 LogUtil.w(AppConfig.TAG, "WhitelistSpeedTester: failed to stop core: ${e.message}")
+            }
+            // Останавливаем движок ТОЛЬКО если эта проба его поднимала и только под
+            // блокировкой SidecarEngineManager.probeLock (см. measureProfileSpeed). Проверка по
+            // currentPort была бы небезопасна: параллельная проба обычного профиля,
+            // завершаясь, остановила бы движок чужой активной сайдкар-пробы.
+            if (needsEngine) {
+                try {
+                    SidecarEngineManager.releaseAfterProbe()
+                } catch (e: Exception) {
+                    LogUtil.w(AppConfig.TAG, "WhitelistSpeedTester: failed to stop probe engine: ${e.message}")
+                }
             }
         }
     }

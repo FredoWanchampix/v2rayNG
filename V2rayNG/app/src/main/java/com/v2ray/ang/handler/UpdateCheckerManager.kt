@@ -81,15 +81,20 @@ object UpdateCheckerManager {
                     )
 
                 ActiveProfileRoute.Mode.PROFILE_WITHOUT_LOCAL_PROXY ->
-                    // A profile IS running, but there is no loopback HTTP inbound to
-                    // send this request through. Fetching directly is not an option:
-                    // the app exempts itself from its own tunnel
-                    // (addDisallowedApplication / --uid-owner RETURN), so a direct
-                    // socket would bypass the profile and leak outside the tunnel.
+                    // Профиль работает, но loopback HTTP inbound не поднят.
+                    // Идти напрямую нельзя: приложение исключено из собственного
+                    // туннеля (addDisallowedApplication / --uid-owner RETURN),
+                    // поэтому прямой сокет обошёл бы профиль.
                     throw NoActiveProfileException(
-                        "A profile is running but its local proxy is not listening " +
-                            "(enable the local proxy, or use hev-tun/root mode where it is forced on)"
+                        "Профиль запущен, но его локальный прокси не слушает порт. " +
+                            "Включите локальный прокси или используйте режим hev-tun/root, " +
+                            "где он включается автоматически."
                     )
+
+                ActiveProfileRoute.Mode.TUNNEL_DIRECT -> Unit
+                // Профиль FPTN: системный TUN без HTTP-прокси, приложение внутри
+                // туннеля. httpPort == 0 -> запрос идёт напрямую и физически
+                // проходит через fptn0, то есть строго через активный профиль.
 
                 ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY -> Unit
             }

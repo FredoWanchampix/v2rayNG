@@ -233,11 +233,14 @@ class UserAssetActivity : HelperBaseComponentActivity() {
                     return
                 }
                 ActiveProfileRoute.Mode.PROFILE_WITHOUT_LOCAL_PROXY -> {
-                    // A profile IS running but there is no loopback HTTP inbound to
-                    // force the download through, and going direct would bypass it.
+                    // Профиль запущен, но loopback HTTP inbound не поднят, а прямой
+                    // запрос обошёл бы профиль (приложение исключено из своего туннеля).
                     toast(R.string.toast_requires_active_proxy_no_local_proxy)
                     return
                 }
+                ActiveProfileRoute.Mode.TUNNEL_DIRECT -> Unit
+                // Профиль FPTN: системный TUN без HTTP-прокси. Загрузка пойдёт
+                // напрямую (httpPort == 0) и физически пройдёт через fptn0.
                 ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY -> Unit
             }
             toast(R.string.asset_update_via_profile_active)

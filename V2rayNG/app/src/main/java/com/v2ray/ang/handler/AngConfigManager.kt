@@ -639,13 +639,18 @@ object AngConfigManager {
                         return SubscriptionUpdateResult(failureCount = 1)
                     }
                     ActiveProfileRoute.Mode.PROFILE_WITHOUT_LOCAL_PROXY -> {
-                        // A profile is running but there is no loopback HTTP inbound to
-                        // force the fetch through. Falling back to a direct request is
-                        // not acceptable here: the app exempts itself from its own
-                        // tunnel, so that request would bypass the profile.
+                        // Профиль работает, но loopback HTTP inbound не поднят.
+                        // Идти напрямую здесь НЕЛЬЗЯ: приложение исключено из
+                        // собственного туннеля, поэтому прямой запрос обошёл бы профиль.
                         AngApplication.application.toast(R.string.toast_requires_active_proxy_no_local_proxy)
                         LogUtil.w(AppConfig.TAG, "Subscription requires the local proxy, but it is not listening")
                         return SubscriptionUpdateResult(failureCount = 1)
+                    }
+                    ActiveProfileRoute.Mode.TUNNEL_DIRECT -> {
+                        // Профиль FPTN: системный TUN, приложение внутри него.
+                        // httpPort == 0, запрос пойдёт напрямую - и физически
+                        // пройдёт через туннель профиля, как и требуется.
+                        LogUtil.i(AppConfig.TAG, "Subscription update via profile TUN (direct socket is tunneled)")
                     }
                     ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY -> Unit
                 }

@@ -1,6 +1,7 @@
 package com.v2ray.ang.service
 
 import android.content.Context
+import com.v2ray.ang.core.SidecarEngineManager
 import com.v2ray.ang.core.WhitelistSpeedTester
 import com.v2ray.ang.dto.RealPingEvent
 import com.v2ray.ang.enums.EConfigType
@@ -70,14 +71,43 @@ class WhitelistSearchWorkerService(
             downloadAttempts = SettingsManager.getWlDownloadAttempts(),
         )
 
-        // Phase 1: real ping. Profiles that already carry a measured delay
-        // (e.g. from a previous regular delay test) are reused as-is; only the
-        // unmeasured ones are probed now.
+        // Фаза 1: реальный пинг. Профили, у которых уже есть измеренная задержка
+        // (например, от предыдущего обычного теста), берутся как есть; меряются
+        // только неизмеренные.
+        //
+        // Профили FPTN ИСКЛЮЧАЮТСЯ из обеих фаз, а не получают фиктивное значение.
+        // Причина: для FPTN Xray-конфиг не строится вовсе (fptn-client владеет
+        // собственным TUN), поэтому временного ядра для пробы не существует.
+        // Прежний код писал в этом случае -1 в testDelayMillis, а «Удалить
+        // недействительные» удаляет профили с задержкой < 0 - то есть пользователь
+        // терял рабочий профиль форка.
+        //
+        // Сайдкар-профили (AmneziaWG, NaiveProxy, OpenConnect, Mimic) здесь НЕ
+        // пропускаются: они измеряются честно, потому что RealPingMeasure и
+        // WhitelistSpeedTester теперь поднимают нужный движок локально в процессе
+        // пробы (SidecarEngineManager.acquireForProbe).
         val pingResults = HashMap<String, Long>()
         val toPing = ArrayList<String>()
+        val skippedSidecar = ArrayList<String>()
         for (guid in guids) {
+            val cfgType = MmkvManager.decodeServerConfig(guid)?.configType
+            if (cfgType != null && SidecarEngineManager.cannotMeasureInTempCore(cfgType)) {
+                // Не трогаем ни задержку, ни скорость профиля: измерение невозможно,
+                // а записывать фиктивное значение опасно (см. выше).
+                skippedSidecar.add("${cfgType.name}")
+                continue
+            }
             val existing = MmkvManager.decodeServerAffiliationInfo(guid)?.testDelayMillis ?: 0L
             if (existing == 0L) toPing.add(guid) else pingResults[guid] = existing
+        }
+        if (skippedSidecar.isNotEmpty()) {
+            onEvent(
+                RealPingEvent.Progress(
+                    "Пропущено профилей на сайдкар-движках: ${skippedSidecar.size} " +
+                        "(${skippedSidecar.distinct().joinToString()}) - " +
+                        "их нельзя измерить временным ядром, значения не менялись"
+                )
+            )
         }
 
         if (toPing.isNotEmpty()) {
@@ -86,6 +116,16 @@ class WhitelistSearchWorkerService(
             val jobs = toPing.map { guid ->
                 scope.launch {
                     val ping = RealPingMeasure.measure(guid)
+                    if (ping == RealPingMeasure.NOT_MEASURABLE) {
+                        // Профиль нельзя измерить временным ядром (FPTN). НЕ
+                        // записываем значение и НЕ добавляем профиль в кандидаты:
+                        // иначе «Удалить недействительные» стёр бы рабочий профиль.
+                        if (job.isActive) {
+                            val n = done.incrementAndGet()
+                            onEvent(RealPingEvent.Progress("ping $n/${toPing.size}"))
+                        }
+                        return@launch
+                    }
                     synchronized(pingResults) {
                         pingResults[guid] = ping
                     }
@@ -125,6 +165,27 @@ class WhitelistSearchWorkerService(
                         // The measured ping stays untouched: a shaped profile keeps its green
                         // delay numbers and is flagged only through its speed result.
                         val cfgType = MmkvManager.decodeServerConfig(guid)?.configType
+
+                        // Профили FPTN нельзя мерить временным ядром (Xray для них
+                        // не используется). Прежний код записывал в этом случае 0 в
+                        // скорость, а «Удалить нулевые» затем УДАЛЯЛ такой профиль -
+                        // то есть рабочая функция теряла данные пользователя.
+                        // Честно пропускаем: измерения не трогаем, сообщаем причину.
+                        // Сайдкар-профили (AmneziaWG/Naive/OpenConnect/Mimic)
+                        // измеряются: движок поднимается локально в WhitelistSpeedTester.
+                        if (cfgType != null && SidecarEngineManager.cannotMeasureInTempCore(cfgType)) {
+                            if (job.isActive) {
+                                onEvent(
+                                    RealPingEvent.Progress(
+                                        "speed: ${cfgType.name} не измеряется временным ядром, " +
+                                            "профиль пропущен без изменения значений"
+                                    )
+                                )
+                                onEvent(RealPingEvent.Progress("speed ${done.incrementAndGet()}/${candidates.size}"))
+                            }
+                            continue
+                        }
+
                         val outcome = if (cfgType == EConfigType.CUSTOM) {
                             RealPingExecutionLimiter.run(EConfigType.CUSTOM) {
                                 WhitelistSpeedTester.measureProfileSpeed(guid, probeSettings)

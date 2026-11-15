@@ -15,14 +15,22 @@ import org.junit.jupiter.api.Test
  * Ключевой факт: loopback HTTP inbound принудительно поднимается в hev-tun,
  * root, root+LAN-sharing и (по умолчанию) в proxy-only и обычном VPN-tun,
  * поэтому проба порта из ЛЮБОГО процесса (:main, :tasks) находит его. Единственные
- * режимы, где inbound отсутствует при живом профиле, - обычный VPN-tun с
- * ВЫКЛЮЧЕНным локальным прокси и FPTN (владеет собственным TUN): там запрос
- * честно отклоняется, потому что приложение исключено из собственного туннеля и
- * прямой запрос обошёл бы профиль.
+ * Режимы, где HTTP inbound отсутствует при живом профиле, делятся на два РАЗНЫХ
+ * случая, и путать их нельзя:
+ *   - обычный VPN-tun с ВЫКЛЮЧЕНным локальным прокси: приложение исключено из
+ *     собственного туннеля, прямой запрос обошёл бы профиль -> честный отказ
+ *     (PROFILE_WITHOUT_LOCAL_PROXY);
+ *   - FPTN: профиль это системный TUN (fptn0), приложение НЕ исключено из него,
+ *     поэтому прямой запрос физически идёт через туннель -> TUNNEL_DIRECT,
+ *     и запрос выполняется напрямую (это и есть «через профиль»).
  */
 class ActiveProfileRouteTest {
 
-    private fun mode(portListening: Boolean, coreAlive: Boolean) = decideMode(portListening, coreAlive)
+    private fun mode(
+        portListening: Boolean,
+        coreAlive: Boolean,
+        tunnelOnly: Boolean = false,
+    ) = decideMode(portListening, coreAlive, tunnelOnly)
 
     // --- Режимы, где HTTP inbound есть: порт слушается -> через прокси ---
 
@@ -72,10 +80,39 @@ class ActiveProfileRouteTest {
         assertEquals(Mode.PROFILE_WITHOUT_LOCAL_PROXY, mode(portListening = false, coreAlive = true))
     }
 
+    // --- Профиль FPTN: системный TUN, приложение ВНУТРИ туннеля ---
+    //
+    // Ключевое отличие от предыдущего блока: приложение НЕ исключено из fptn0,
+    // поэтому прямой запрос физически проходит через туннель профиля. Здесь
+    // «напрямую» и есть «через профиль», и отказывать было бы ошибкой - функция
+    // стала бы нерабочей при полностью работающем профиле (именно тот баг, из-за
+    // которого пользователь видел «профиль выключен» при активном FPTN).
+
     @Test
-    fun `fptn profile refuses instead of reporting none`() {
-        // FPTN владеет собственным TUN и не поднимает Xray HTTP inbound.
-        assertEquals(Mode.PROFILE_WITHOUT_LOCAL_PROXY, mode(portListening = false, coreAlive = true))
+    fun `fptn tunnel profile goes direct because direct is tunneled`() {
+        assertEquals(
+            Mode.TUNNEL_DIRECT,
+            mode(portListening = false, coreAlive = true, tunnelOnly = true),
+        )
+    }
+
+    @Test
+    fun `fptn tunnel takes precedence over the refuse branch`() {
+        // Даже без слушателя и при живом демоне: tunnelOnly уводит решение
+        // в TUNNEL_DIRECT, а не в PROFILE_WITHOUT_LOCAL_PROXY.
+        assertEquals(
+            Mode.TUNNEL_DIRECT,
+            mode(portListening = false, coreAlive = true, tunnelOnly = true),
+        )
+    }
+
+    @Test
+    fun `tunnelOnly flag alone never fabricates a listener route`() {
+        // Если демон мёртв, профиль не работает даже с флагом tunnelOnly.
+        assertEquals(
+            Mode.NONE,
+            mode(portListening = false, coreAlive = false, tunnelOnly = true),
+        )
     }
 
     // --- Ничего не запущено ---

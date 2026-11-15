@@ -217,9 +217,25 @@ object CoreOutboundBuilder {
      * process owns the real protocol, Xray only forwards into it.
      */
     private fun toOutboundSidecar(profileItem: ProfileItem): OutboundBean? {
+        // FPTN принципиально не имеет Xray-outbound: fptn-client поднимает
+        // собственный TUN и заменяет весь стек Xray, поэтому конфиг Xray для
+        // такого профиля не строится вовсе (CoreServiceManager.launchCore
+        // обрабатывает FPTN до построения конфига). Если этот путь всё же
+        // достигнут, сообщаем точную причину, а не вводящее в заблуждение
+        // «Sidecar engine is not running», которое раньше и маскировало баг.
+        if (SidecarEngineManager.engineFor(profileItem.configType) == null) {
+            error(
+                "Профиль ${profileItem.configType} не использует ядро Xray: " +
+                    "для него не существует outbound-конфига"
+            )
+        }
         val port = SidecarEngineManager.currentPort
         if (port <= 0) {
-            error("Sidecar engine is not running for ${profileItem.configType}")
+            error(
+                "Сайдкар-движок для ${profileItem.configType} не запущен в этом процессе " +
+                    "(SidecarEngineManager.currentPort == 0). Движок должен быть поднят " +
+                    "до построения конфига."
+            )
         }
         val outboundBean = createInitOutbound(EConfigType.SOCKS)
         outboundBean?.settings?.let { settings ->

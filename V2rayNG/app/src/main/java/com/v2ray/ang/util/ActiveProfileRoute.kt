@@ -88,12 +88,24 @@ object ActiveProfileRoute {
         LOCAL_HTTP_PROXY,
 
         /**
-         * A profile is running but no loopback HTTP inbound exists, so the request
-         * cannot be forced through the profile. Callers that require the active
-         * profile must refuse here rather than fetch directly, because the app
-         * exempts itself from its own tunnel and a direct fetch would bypass it.
+         * Профиль работает, но loopback HTTP inbound отсутствует, поэтому запрос
+         * нельзя принудительно направить через профиль. Вызывающий код ОБЯЗАН
+         * отказать, а не идти напрямую: в этих режимах приложение исключено из
+         * собственного туннеля, и прямой запрос обошёл бы профиль.
          */
         PROFILE_WITHOUT_LOCAL_PROXY,
+
+        /**
+         * Профиль работает как системный TUN-провайдер без HTTP-прокси, и наше
+         * приложение НЕ исключено из его туннеля (FPTN: fptn0 маршрутизирует весь
+         * трафик устройства). Здесь запрос пускается НАПРЯМУЮ, и это корректно:
+         * «напрямую» физически означает «через профиль», потому что сокет
+         * приложения и так уходит в fptn0.
+         *
+         * Это ровно то, что отличает FPTN от PROFILE_WITHOUT_LOCAL_PROXY: там
+         * приложение вне туннеля и прямой запрос обошёл бы профиль, здесь - внутри.
+         */
+        TUNNEL_DIRECT,
     }
 
     data class Route(
@@ -110,6 +122,12 @@ object ActiveProfileRoute {
         val routeOnly: Boolean = false,
         /** Тип запущенного профиля (для логов/диагностики). */
         val configType: String? = null,
+        /**
+         * True для профиля-системного TUN без HTTP-прокси (FPTN): запрос идёт
+         * напрямую, и это корректно, потому что приложение находится внутри
+         * туннеля профиля.
+         */
+        val tunnelOnly: Boolean = false,
         /** True when a profile is running in any mode (core or FPTN). */
         val profileRunning: Boolean = false,
         /** True when the resolved route really carries traffic through the profile. */
@@ -124,16 +142,23 @@ object ActiveProfileRoute {
      * @param coreAlive the core/FPTN daemon process is alive (native flag inside
      *   :daemon, published PID elsewhere).
      */
-    internal fun decideMode(portListening: Boolean, coreAlive: Boolean): Mode = when {
+    internal fun decideMode(
+        portListening: Boolean,
+        coreAlive: Boolean,
+        tunnelOnly: Boolean = false,
+    ): Mode = when {
         // A live loopback listener is the one in-app path that carries the request
         // through the profile in EVERY mode that builds an HTTP inbound (hev-tun,
         // root, root+LAN, proxy-only, VPN-tun with the local proxy on). It is ground
         // truth, so it wins over the daemon-liveness signal.
         portListening -> Mode.LOCAL_HTTP_PROXY
-        // Profile is up but there is no HTTP inbound to force the request through
-        // (plain VPN-tun with the local proxy off, or FPTN which owns its own TUN).
-        // Callers must REFUSE here: the app exempts itself from its own tunnel, so a
-        // direct fetch would bypass the profile - the opposite of what was asked.
+        // Профиль работает, HTTP inbound нет. Дальше два РАЗНЫХ случая:
+        //   tunnelOnly  -> профиль это системный TUN, приложение внутри него,
+        //                  прямой запрос и есть путь через профиль (FPTN);
+        //   иначе       -> приложение исключено из собственного туннеля
+        //                  (VPN-tun без локального прокси), прямой запрос обошёл бы
+        //                  профиль, поэтому нужно честно отказать.
+        coreAlive && tunnelOnly -> Mode.TUNNEL_DIRECT
         coreAlive -> Mode.PROFILE_WITHOUT_LOCAL_PROXY
         // Nothing is running; a leftover listener (if any) is not trusted because the
         // daemon that owned it is gone.
@@ -163,10 +188,12 @@ object ActiveProfileRoute {
         val portListening = httpPort > 0 && HttpUtil.isLocalProxyAvailable(httpHost, httpPort)
         val coreAlive = isCoreProcessAlive()
 
-        return when (val mode = decideMode(portListening, coreAlive)) {
+        val tunnelOnly = endpoint?.tunnelOnly ?: false
+
+        return when (val mode = decideMode(portListening, coreAlive, tunnelOnly)) {
             Mode.LOCAL_HTTP_PROXY -> {
                 // Креды берём из снимка рабочего конфига (то, что inbound РЕАЛЬНО
-                // требует), и только при их отсутствии — из runtime-конфига туннеля
+                // требует), и только при их отсутствии - из runtime-конфига туннеля
                 // и настроек как резерв. Это устраняет HTTP 407 из-за устаревшей пары.
                 val liveCreds = SettingsManager.readLocalProxyCredentials()
                 Route(
@@ -182,6 +209,20 @@ object ActiveProfileRoute {
                     routedViaProfile = true,
                 )
             }
+            Mode.TUNNEL_DIRECT ->
+                // Профиль FPTN: системный TUN без HTTP-прокси, приложение внутри
+                // туннеля. httpPort = 0 -> HttpUtil пойдёт напрямую, и этот «прямой»
+                // запрос физически проходит через fptn0, то есть через профиль.
+                // routedViaProfile = true, потому что так оно и есть.
+                Route(
+                    mode = mode,
+                    httpHost = AppConfig.LOOPBACK,
+                    httpPort = 0,
+                    configType = endpoint?.configType,
+                    profileRunning = true,
+                    routedViaProfile = true,
+                    tunnelOnly = true,
+                )
             Mode.PROFILE_WITHOUT_LOCAL_PROXY -> Route(mode = mode, profileRunning = true)
             Mode.NONE -> Route(mode = mode)
         }
@@ -253,9 +294,13 @@ object ActiveProfileRoute {
         return cmdline == pkg || cmdline.startsWith("$pkg:")
     }
 
-    /** Human-readable description for logs and user-facing errors. */
+    /** Человекочитаемое описание маршрута для логов и сообщений пользователю. */
     fun describe(route: Route): String = when (route.mode) {
-        Mode.LOCAL_HTTP_PROXY -> "local http proxy 127.0.0.1:${route.httpPort}"
+        Mode.LOCAL_HTTP_PROXY ->
+            "local http proxy ${route.httpHost}:${route.httpPort}"
+        Mode.TUNNEL_DIRECT ->
+            "profile TUN (${route.configType ?: "tunnel"}): запрос идёт напрямую и " +
+                "проходит через туннель профиля"
         Mode.PROFILE_WITHOUT_LOCAL_PROXY ->
             "profile running but the local proxy is not listening"
         Mode.NONE -> "no active profile"
