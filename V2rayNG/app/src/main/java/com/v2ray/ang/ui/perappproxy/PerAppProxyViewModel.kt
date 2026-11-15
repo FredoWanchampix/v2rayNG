@@ -182,10 +182,12 @@ class PerAppProxyViewModel(application: Application) : BaseViewModel(application
                 // а не из настроек: при динамическом порте или смене настроек после
                 // старта значения из настроек указывали бы не на тот слушатель.
                 // Это та же точка, что у подписки, проверки обновлений и geo-файлов.
+                // Присваивание безусловное (else -> ""), чтобы content остался String,
+                // а не String?: иначе applyProxyAppList(content: String) не компилируется.
                 val route = ActiveProfileRoute.resolve()
-                if (route.mode == ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY) {
+                content = if (route.mode == ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY) {
                     ActiveProfileRoute.log("Per-app proxy list download", route)
-                    content = withContext(Dispatchers.IO) {
+                    withContext(Dispatchers.IO) {
                         HttpUtil.getUrlContent(
                             UrlContentRequest(
                                 url = url,
@@ -197,6 +199,8 @@ class PerAppProxyViewModel(application: Application) : BaseViewModel(application
                             )
                         )
                     } ?: ""
+                } else {
+                    ""
                 }
             }
             val success = applyProxyAppList(
