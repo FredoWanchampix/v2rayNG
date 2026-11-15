@@ -7,10 +7,10 @@ import com.v2ray.ang.dto.AppInfo
 import com.v2ray.ang.dto.UrlContentRequest
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsChangeManager
-import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.ui.AppSelection
 import com.v2ray.ang.ui.base.BaseViewModel
 import com.v2ray.ang.util.AppManagerUtil
+import com.v2ray.ang.util.ActiveProfileRoute
 import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
@@ -177,20 +177,27 @@ class PerAppProxyViewModel(application: Application) : BaseViewModel(application
                 )
             }
             if (content.isNullOrEmpty()) {
-                val proxyUsername = SettingsManager.getSocksUsername()
-                val proxyPassword = SettingsManager.getSocksPassword()
-                val httpPort = SettingsManager.getHttpPort()
-                content = withContext(Dispatchers.IO) {
-                    HttpUtil.getUrlContent(
-                        UrlContentRequest(
-                            url = url,
-                            timeout = 5000,
-                            httpPort = httpPort,
-                            proxyUsername = proxyUsername,
-                            proxyPassword = proxyPassword
+                // Резервная попытка через активный профиль. Адрес/порт/креды берём
+                // из снимка РЕАЛЬНО запущенного ядра (общий ActiveProfileRoute),
+                // а не из настроек: при динамическом порте или смене настроек после
+                // старта значения из настроек указывали бы не на тот слушатель.
+                // Это та же точка, что у подписки, проверки обновлений и geo-файлов.
+                val route = ActiveProfileRoute.resolve()
+                if (route.mode == ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY) {
+                    ActiveProfileRoute.log("Per-app proxy list download", route)
+                    content = withContext(Dispatchers.IO) {
+                        HttpUtil.getUrlContent(
+                            UrlContentRequest(
+                                url = url,
+                                timeout = 5000,
+                                httpHost = route.httpHost,
+                                httpPort = route.httpPort,
+                                proxyUsername = route.proxyUsername,
+                                proxyPassword = route.proxyPassword
+                            )
                         )
-                    )
-                } ?: ""
+                    } ?: ""
+                }
             }
             val success = applyProxyAppList(
                 content = content,

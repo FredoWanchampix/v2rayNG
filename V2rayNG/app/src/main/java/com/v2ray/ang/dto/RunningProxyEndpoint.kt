@@ -1,7 +1,7 @@
 package com.v2ray.ang.dto
 
-import com.v2ray.ang.util.JsonUtil
 import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 
 /**
  * Снимок loopback-прокси, который ядро ДЕЙСТВИТЕЛЬНО подняло при старте.
@@ -67,8 +67,17 @@ data class RunningProxyEndpoint(
          */
         fun fromCoreConfig(configJson: String?, configType: String? = null): RunningProxyEndpoint? {
             if (configJson.isNullOrBlank()) return null
-            val root: JsonObject = JsonUtil.parseString(configJson) ?: return null
-            val inbounds = root.getAsJsonArray("inbounds") ?: return null
+            // Разбор нарочно самодостаточный: без JsonUtil/LogUtil, которые тянут
+            // MMKV и android.util.Log и потому падают в unit-тестах (и маскируют
+            // ошибку как IllegalStateException вместо честного null). Некорректный
+            // JSON -> null, без логов и исключений.
+            val root: JsonObject = try {
+                val parsed = JsonParser.parseString(configJson)
+                if (parsed.isJsonObject) parsed.asJsonObject else null
+            } catch (e: Exception) {
+                null
+            } ?: return null
+            val inbounds = root.get("inbounds")?.takeIf { it.isJsonArray }?.asJsonArray ?: return null
 
             var httpPort: Int? = null
             var httpListen: String? = null
