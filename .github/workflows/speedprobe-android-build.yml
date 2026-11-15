@@ -1,0 +1,103 @@
+name: SpeedProbe Android build
+
+# Отдельный reusable-workflow для сборки speedprobe под Android.
+#
+# Зачем нужен speedprobe:
+#   Проверка FPTN-профилей выполняется в изолированном network namespace
+#   (см. FptnProbeRunner). Для замера скорости нужно скачать тестовый файл
+#   ВНУТРИ netns, но JVM приложения физически не видит TUN, поднятый внутри
+#   netns. Поэтому нужен внешний бинарник, запускаемый через `ip netns exec`.
+#
+#   Использовать системный `curl` нельзя: он НЕ входит в toybox и появился в
+#   AOSP только с Android 8.0, тогда как minSdk приложения - 24 (Android 7.0).
+#   На части устройств его просто нет, и функция молча перестала бы работать.
+#   `nc` из toybox есть всегда, но не умеет TLS, а тестовые зеркала - HTTPS.
+#
+#   Поэтому speedprobe - минимальный инструмент на чистом Go (stdlib), который:
+#     - поддерживает HTTPS через net/http;
+#     - позволяет задать DNS-сервер явно (обходя fake-IP активного VPN);
+#     - печатает результат в формате "ATTEMPT <bytes> <seconds>" для разбора
+#       в FptnProbeRunner.parseAttempts (совместим с curl).
+#
+# Сборка: чистый Go без cgo, CGO_ENABLED=0 GOOS=android GOARCH=arm64, как у
+# mimic-client. Статический бинарник без PT_INTERP и NEEDED.
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      sha256:
+        value: ${{ jobs.build-speedprobe-android.outputs.sha256 }}
+      size:
+        value: ${{ jobs.build-speedprobe-android.outputs.size }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: speedprobe-android-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-speedprobe-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      sha256: ${{ steps.stage.outputs.sha256 }}
+      size: ${{ steps.stage.outputs.size }}
+    steps:
+      - name: Checkout fork source
+        uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 1
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25.5'
+          cache: false
+
+      - name: Build speedprobe for android/arm64
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tools/speedprobe
+          # Чистый Go без cgo: статический бинарник без зависимостей от bionic.
+          CGO_ENABLED=0 GOOS=android GOARCH=arm64 \
+            go build -trimpath -ldflags="-s -w" -o speedprobe .
+
+      - name: Verify and stage the binary
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tools/speedprobe
+          # ELF64 + AArch64, без NEEDED (чистый Go, как mimic-client).
+          readelf -h speedprobe | grep -q "Class:.*ELF64" || { echo "::error::speedprobe is not ELF64"; exit 1; }
+          readelf -h speedprobe | grep -qiE "Machine:.*AArch64" || { echo "::error::speedprobe is not arm64"; exit 1; }
+          if readelf -d speedprobe 2>/dev/null | grep -q "NEEDED"; then
+            echo "::error::speedprobe has NEEDED libs; expected none for CGO_ENABLED=0"; exit 1
+          fi
+          SHA="$(sha256sum speedprobe | cut -d' ' -f1)"
+          SIZE="$(stat -c%s speedprobe)"
+          echo "speedprobe sha256=$SHA size=$SIZE"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+          {
+            echo "## SpeedProbe (android/arm64)"
+            echo '```'
+            readelf -h speedprobe | grep -E "Class|Machine|Type"
+            echo "static: no NEEDED (pure Go, CGO_ENABLED=0)"
+            echo "sha256: $SHA"
+            echo "size:   $SIZE bytes"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload speedprobe artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: speedprobe-android-arm64
+          path: tools/speedprobe/speedprobe
+          if-no-files-found: error
+          retention-days: 7

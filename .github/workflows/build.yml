@@ -53,10 +53,26 @@ jobs:
     with:
       fptn_tag: "0.4.6"
 
+  # dnsproxy - hard gate, как и FPTN. Это DNS-форвардер (AdGuardTeam, Apache-2.0),
+  # который нужен для измерения FPTN-профилей в изолированном netns: внутри netns
+  # системный resolver Android возвращает fake-IP активного VPN, поэтому запросы
+  # идут через локальный dnsproxy на upstream из настроек пользователя (udp/tcp/
+  # tls/https/quic). Собирается в ОТДЕЛЬНОМ reusable-workflow со своей версией Go
+  # (1.26.8), чтобы не затрагивать Go 1.25 для sing-box/mimic в этом файле.
+  dnsproxy:
+    uses: ./.github/workflows/dnsproxy-android-build.yml
+
+  # speedprobe - hard gate. Собственный измеритель скорости на чистом Go (stdlib),
+  # нужен для проверки FPTN-профилей в изолированном netns. Заменяет системный
+  # curl, которого нет на части устройств (curl не входит в toybox и появился
+  # только с Android 8.0, а minSdk приложения - 24). См. tools/speedprobe.
+  speedprobe:
+    uses: ./.github/workflows/speedprobe-android-build.yml
+
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    needs: fptn
+    needs: [fptn, dnsproxy, speedprobe]
 
     steps:
       - name: Checkout code
@@ -395,6 +411,85 @@ jobs:
           install -m 0755 "$SRC" V2rayNG/app/src/main/assets/engines/fptn-client
           echo "FPTN client bundled: $(sha256sum V2rayNG/app/src/main/assets/engines/fptn-client)"
 
+      - name: Download dnsproxy (hard gate)
+        uses: actions/download-artifact@v8
+        with:
+          name: dnsproxy-android-arm64
+          path: dnsproxy-in
+
+      - name: Bundle dnsproxy into assets
+        shell: bash
+        env:
+          DNSPROXY_SHA256: ${{ needs.dnsproxy.outputs.sha256 }}
+          DNSPROXY_SIZE: ${{ needs.dnsproxy.outputs.size }}
+        run: |
+          set -euo pipefail
+          # dnsproxy - hard gate, как и FPTN. Job `dnsproxy` (reusable workflow)
+          # собирает форвардер под android/arm64 и выгружает его; этот шаг не
+          # пропустит сборку, если бинарник отсутствует, пуст, не совпал по SHA256
+          # с продюсером или не является статическим arm64 ELF (без NEEDED -
+          # признак чистой Go-сборки без cgo, как у mimic-client).
+          SRC="dnsproxy-in/dnsproxy"
+          if [ ! -f "$SRC" ]; then
+            echo "::error::dnsproxy artifact is missing (dnsproxy-in/dnsproxy)"
+            ls -la dnsproxy-in 2>/dev/null || true
+            exit 1
+          fi
+          ACTUAL_SHA="$(sha256sum "$SRC" | cut -d' ' -f1)"
+          ACTUAL_SIZE="$(stat -c%s "$SRC")"
+          echo "dnsproxy   sha256=$ACTUAL_SHA size=$ACTUAL_SIZE"
+          echo "expected   sha256=$DNSPROXY_SHA256 size=$DNSPROXY_SIZE"
+          if [ -n "$DNSPROXY_SHA256" ] && [ "$ACTUAL_SHA" != "$DNSPROXY_SHA256" ]; then
+            echo "::error::dnsproxy checksum mismatch"; exit 1
+          fi
+          # ELF64 + AArch64. PT_INTERP для GOOS=android обязателен и НЕ является
+          # признаком динамической линковки, поэтому проверяем не его, а отсутствие
+          # NEEDED (единственный корректный критерий "чистый Go без cgo").
+          readelf -h "$SRC" | grep -q "Class:.*ELF64" || { echo "::error::dnsproxy is not ELF64"; exit 1; }
+          readelf -h "$SRC" | grep -qiE "Machine:.*AArch64" || { echo "::error::dnsproxy is not arm64"; exit 1; }
+          if readelf -d "$SRC" 2>/dev/null | grep -q "NEEDED"; then
+            echo "::error::dnsproxy has NEEDED libs; expected a static CGO_ENABLED=0 Go binary"; exit 1
+          fi
+          install -m 0755 "$SRC" V2rayNG/app/src/main/assets/engines/dnsproxy
+          echo "dnsproxy bundled: $(sha256sum V2rayNG/app/src/main/assets/engines/dnsproxy)"
+
+      - name: Download speedprobe (hard gate)
+        uses: actions/download-artifact@v8
+        with:
+          name: speedprobe-android-arm64
+          path: speedprobe-in
+
+      - name: Bundle speedprobe into assets
+        shell: bash
+        env:
+          SPEEDPROBE_SHA256: ${{ needs.speedprobe.outputs.sha256 }}
+          SPEEDPROBE_SIZE: ${{ needs.speedprobe.outputs.size }}
+        run: |
+          set -euo pipefail
+          # speedprobe - hard gate. Job `speedprobe` собирает измеритель под
+          # android/arm64; шаг не пропустит сборку, если бинарник отсутствует,
+          # пуст, не совпал по SHA256 или не является статическим arm64 ELF.
+          SRC="speedprobe-in/speedprobe"
+          if [ ! -f "$SRC" ]; then
+            echo "::error::speedprobe artifact is missing (speedprobe-in/speedprobe)"
+            ls -la speedprobe-in 2>/dev/null || true
+            exit 1
+          fi
+          ACTUAL_SHA="$(sha256sum "$SRC" | cut -d' ' -f1)"
+          ACTUAL_SIZE="$(stat -c%s "$SRC")"
+          echo "speedprobe sha256=$ACTUAL_SHA size=$ACTUAL_SIZE"
+          echo "expected   sha256=$SPEEDPROBE_SHA256 size=$SPEEDPROBE_SIZE"
+          if [ -n "$SPEEDPROBE_SHA256" ] && [ "$ACTUAL_SHA" != "$SPEEDPROBE_SHA256" ]; then
+            echo "::error::speedprobe checksum mismatch"; exit 1
+          fi
+          readelf -h "$SRC" | grep -q "Class:.*ELF64" || { echo "::error::speedprobe is not ELF64"; exit 1; }
+          readelf -h "$SRC" | grep -qiE "Machine:.*AArch64" || { echo "::error::speedprobe is not arm64"; exit 1; }
+          if readelf -d "$SRC" 2>/dev/null | grep -q "NEEDED"; then
+            echo "::error::speedprobe has NEEDED libs; expected a static Go binary"; exit 1
+          fi
+          install -m 0755 "$SRC" V2rayNG/app/src/main/assets/engines/speedprobe
+          echo "speedprobe bundled: $(sha256sum V2rayNG/app/src/main/assets/engines/speedprobe)"
+
       - name: Verify all sidecar engines are bundled
         shell: bash
         run: |
@@ -404,7 +499,10 @@ jobs:
           # fptn-client was silently missing from shipped releases.
           D="V2rayNG/app/src/main/assets/engines"
           missing=0
-          for e in mihomo sing-box mimic-client fptn-client; do
+          # dnsproxy включён в обязательный список: без него FPTN-профили нельзя
+          # измерить в netns (см. FptnProbeRunner). Отсутствие любого движка -
+          # ошибка сборки, а не тихий пропуск.
+          for e in mihomo sing-box mimic-client fptn-client dnsproxy speedprobe; do
             if [ -f "$D/$e" ]; then
               printf '%s\n' "$D/$e: $(stat -c%s "$D/$e") bytes  $(sha256sum "$D/$e" | cut -c1-16)"
             else

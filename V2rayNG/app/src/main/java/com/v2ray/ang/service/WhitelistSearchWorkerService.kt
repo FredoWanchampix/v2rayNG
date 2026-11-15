@@ -15,6 +15,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Two-phase "whitelist" profile search.
@@ -71,138 +72,176 @@ class WhitelistSearchWorkerService(
             downloadAttempts = SettingsManager.getWlDownloadAttempts(),
         )
 
-        // Фаза 1: реальный пинг. Профили, у которых уже есть измеренная задержка
-        // (например, от предыдущего обычного теста), берутся как есть; меряются
-        // только неизмеренные.
+        // Профили делятся на две РАЗНЫЕ дорожки, потому что измеряются они
+        // принципиально разными механизмами:
         //
-        // Профили FPTN ИСКЛЮЧАЮТСЯ из обеих фаз, а не получают фиктивное значение.
-        // Причина: для FPTN Xray-конфиг не строится вовсе (fptn-client владеет
-        // собственным TUN), поэтому временного ядра для пробы не существует.
-        // Прежний код писал в этом случае -1 в testDelayMillis, а «Удалить
-        // недействительные» удаляет профили с задержкой < 0 - то есть пользователь
-        // терял рабочий профиль форка.
+        //   обычные (VLESS/VMess/SS/Trojan/WG/Hysteria2/MASQUE/CUSTOM и сайдкар-типы
+        //   AmneziaWG/Naive/OpenConnect/Mimic) - временное ядро Xray в этом же
+        //   процессе; их можно мерить параллельно, ограничение берётся из настроек
+        //   клиента;
         //
-        // Сайдкар-профили (AmneziaWG, NaiveProxy, OpenConnect, Mimic) здесь НЕ
-        // пропускаются: они измеряются честно, потому что RealPingMeasure и
-        // WhitelistSpeedTester теперь поднимают нужный движок локально в процессе
-        // пробы (SidecarEngineManager.acquireForProbe).
-        val pingResults = HashMap<String, Long>()
-        val toPing = ArrayList<String>()
-        val skippedSidecar = ArrayList<String>()
+        //   FPTN - изолированный network namespace с собственным fptn-client
+        //   (FptnProbeRunner). Такая проба настраивает ОБЩИЕ для устройства ресурсы
+        //   (ip rule с фиксированными приоритетами, правила в общих цепочках
+        //   iptables, флаг ip_forward), поэтому двух одновременно работающих проб
+        //   быть не может. Для FPTN параллельность принудительно равна ОДНОЙ и НЕ
+        //   зависит от настройки пользователя: несколько FPTN-профилей в одной
+        //   подписке измеряются строго по очереди.
+        val normalGuids = ArrayList<String>()
+        val fptnGuids = ArrayList<String>()
         for (guid in guids) {
             val cfgType = MmkvManager.decodeServerConfig(guid)?.configType
             if (cfgType != null && SidecarEngineManager.cannotMeasureInTempCore(cfgType)) {
-                // Не трогаем ни задержку, ни скорость профиля: измерение невозможно,
-                // а записывать фиктивное значение опасно (см. выше).
-                skippedSidecar.add("${cfgType.name}")
-                continue
+                fptnGuids.add(guid)
+            } else {
+                normalGuids.add(guid)
             }
-            val existing = MmkvManager.decodeServerAffiliationInfo(guid)?.testDelayMillis ?: 0L
-            if (existing == 0L) toPing.add(guid) else pingResults[guid] = existing
         }
-        if (skippedSidecar.isNotEmpty()) {
+        val fptnSet = fptnGuids.toHashSet()
+        if (fptnGuids.isNotEmpty()) {
             onEvent(
                 RealPingEvent.Progress(
-                    "Пропущено профилей на сайдкар-движках: ${skippedSidecar.size} " +
-                        "(${skippedSidecar.distinct().joinToString()}) - " +
-                        "их нельзя измерить временным ядром, значения не менялись"
+                    "FPTN-профилей: ${fptnGuids.size} - измеряются строго по одному " +
+                        "(изолированный netns), настройка параллельности к ним не применяется"
                 )
             )
         }
 
-        if (toPing.isNotEmpty()) {
-            onEvent(RealPingEvent.Progress("ping 0/${toPing.size}"))
-            val done = java.util.concurrent.atomic.AtomicInteger(0)
-            val jobs = toPing.map { guid ->
-                scope.launch {
-                    val ping = RealPingMeasure.measure(guid)
-                    if (ping == RealPingMeasure.NOT_MEASURABLE) {
-                        // Профиль нельзя измерить временным ядром (FPTN). НЕ
-                        // записываем значение и НЕ добавляем профиль в кандидаты:
-                        // иначе «Удалить недействительные» стёр бы рабочий профиль.
-                        if (job.isActive) {
-                            val n = done.incrementAndGet()
-                            onEvent(RealPingEvent.Progress("ping $n/${toPing.size}"))
-                        }
-                        return@launch
-                    }
-                    synchronized(pingResults) {
-                        pingResults[guid] = ping
-                    }
-                    MmkvManager.encodeServerTestDelayMillis(guid, ping)
-                    if (job.isActive) {
-                        onEvent(RealPingEvent.Result(guid, ping))
-                        val n = done.incrementAndGet()
-                        onEvent(RealPingEvent.Progress("ping $n/${toPing.size}"))
-                    }
-                }
-            }
-            joinAll(*jobs.toTypedArray())
-        }
+        // Фаза 1: реальный пинг. Профили, у которых уже есть измеренная задержка
+        // (например, от предыдущего обычного теста), берутся как есть; меряются
+        // только неизмеренные.
+        val pingResults = HashMap<String, Long>()
+        runPingPhase(normalGuids, pingResults, "ping", parallel = true)
+        if (!job.isActive) return
+        runPingPhase(fptnGuids, pingResults, "ping FPTN", parallel = false)
         if (!job.isActive) return
 
-        // Phase 2: speed-probe every responsive profile, best ping first, in
-        // parallel using the same concurrency setting as the ping phase.
-        // No early exit: leaving profiles unlabeled made it impossible to tell
-        // whether they were ever speed-checked.
+        // Фаза 2: проба скорости по всем отозвавшимся профилям, лучшие по пингу
+        // первыми. Раннего выхода нет намеренно: непроверенный профиль неотличим от
+        // непроверяемого, и пользователь не мог понять, мерился ли он вообще.
         val candidates = pingResults.filterValues { it >= 0L }
             .entries.sortedBy { it.value }
             .map { it.key }
+        val (normalCandidates, fptnCandidates) = candidates.partition { it in fptnSet }
 
-        if (candidates.isNotEmpty()) {
-            onEvent(RealPingEvent.Progress("speed 0/${candidates.size}"))
-            val next = java.util.concurrent.atomic.AtomicInteger(0)
-            val done = java.util.concurrent.atomic.AtomicInteger(0)
-            // Every probe spins up a full Xray core; too many live cores at once
-            // pressure-kill the VPN daemon process, so cap this phase hard.
-            val workers = minOf(candidates.size, concurrency, SPEED_PROBE_MAX_PARALLEL).coerceAtLeast(1)
-            val probeJobs = (0 until workers).map {
-                scope.launch {
-                    while (job.isActive) {
-                        val index = next.getAndIncrement()
-                        if (index >= candidates.size) break
-                        val guid = candidates[index]
-                        // The measured ping stays untouched: a shaped profile keeps its green
-                        // delay numbers and is flagged only through its speed result.
-                        val cfgType = MmkvManager.decodeServerConfig(guid)?.configType
+        runSpeedPhase(normalCandidates, "speed", parallel = true, probeSettings = probeSettings)
+        if (!job.isActive) return
+        runSpeedPhase(fptnCandidates, "speed FPTN", parallel = false, probeSettings = probeSettings)
+    }
 
-                        // Профили FPTN нельзя мерить временным ядром (Xray для них
-                        // не используется). Прежний код записывал в этом случае 0 в
-                        // скорость, а «Удалить нулевые» затем УДАЛЯЛ такой профиль -
-                        // то есть рабочая функция теряла данные пользователя.
-                        // Честно пропускаем: измерения не трогаем, сообщаем причину.
-                        // Сайдкар-профили (AmneziaWG/Naive/OpenConnect/Mimic)
-                        // измеряются: движок поднимается локально в WhitelistSpeedTester.
-                        if (cfgType != null && SidecarEngineManager.cannotMeasureInTempCore(cfgType)) {
-                            if (job.isActive) {
-                                onEvent(
-                                    RealPingEvent.Progress(
-                                        "speed: ${cfgType.name} не измеряется временным ядром, " +
-                                            "профиль пропущен без изменения значений"
-                                    )
-                                )
-                                onEvent(RealPingEvent.Progress("speed ${done.incrementAndGet()}/${candidates.size}"))
-                            }
-                            continue
-                        }
+    /**
+     * Фаза пинга для одной дорожки профилей.
+     *
+     * @param parallel true - несколько воркеров согласно настройке клиента;
+     *   false - ровно один воркер (дорожка FPTN).
+     *
+     * Значение [RealPingMeasure.NOT_MEASURABLE] никогда не записывается в профиль:
+     * иначе «Удалить недействительные» стёр бы рабочий профиль, который просто не
+     * удалось измерить. Такой профиль и в кандидаты фазы 2 не попадает.
+     */
+    private suspend fun runPingPhase(
+        targets: List<String>,
+        pingResults: MutableMap<String, Long>,
+        label: String,
+        parallel: Boolean,
+    ) {
+        if (targets.isEmpty()) return
 
-                        val outcome = if (cfgType == EConfigType.CUSTOM) {
-                            RealPingExecutionLimiter.run(EConfigType.CUSTOM) {
-                                WhitelistSpeedTester.measureProfileSpeed(guid, probeSettings)
-                            }
-                        } else {
-                            WhitelistSpeedTester.measureProfileSpeed(guid, probeSettings)
-                        }
-                        MmkvManager.encodeServerTestSpeedBytesPerSec(guid, outcome.first, outcome.second)
+        val toPing = ArrayList<String>()
+        for (guid in targets) {
+            val existing = MmkvManager.decodeServerAffiliationInfo(guid)?.testDelayMillis ?: 0L
+            if (existing == 0L) {
+                toPing.add(guid)
+            } else {
+                synchronized(pingResults) { pingResults[guid] = existing }
+            }
+        }
+        if (toPing.isEmpty()) return
+
+        val workers = if (parallel) {
+            minOf(toPing.size, concurrency).coerceAtLeast(1)
+        } else {
+            1
+        }
+        val next = AtomicInteger(0)
+        val done = AtomicInteger(0)
+        onEvent(RealPingEvent.Progress("$label 0/${toPing.size}"))
+
+        val jobs = (0 until workers).map {
+            scope.launch {
+                while (job.isActive) {
+                    val index = next.getAndIncrement()
+                    if (index >= toPing.size) break
+                    val guid = toPing[index]
+                    val ping = RealPingMeasure.measure(guid)
+                    if (ping == RealPingMeasure.NOT_MEASURABLE) {
                         if (job.isActive) {
-                            onEvent(RealPingEvent.SpeedResult(guid, outcome.first, outcome.second))
-                            onEvent(RealPingEvent.Progress("speed ${done.incrementAndGet()}/${candidates.size}"))
+                            onEvent(RealPingEvent.Progress("$label ${done.incrementAndGet()}/${toPing.size}"))
                         }
+                        continue
+                    }
+                    synchronized(pingResults) { pingResults[guid] = ping }
+                    MmkvManager.encodeServerTestDelayMillis(guid, ping)
+                    if (job.isActive) {
+                        onEvent(RealPingEvent.Result(guid, ping))
+                        onEvent(RealPingEvent.Progress("$label ${done.incrementAndGet()}/${toPing.size}"))
                     }
                 }
             }
-            joinAll(*probeJobs.toTypedArray())
         }
+        joinAll(*jobs.toTypedArray())
+    }
+
+    /**
+     * Фаза пробы скорости для одной дорожки профилей.
+     *
+     * @param parallel true - пул воркеров с жёстким потолком
+     *   [SPEED_PROBE_MAX_PARALLEL]: каждая проба поднимает полноценное ядро Xray, и
+     *   слишком много живых ядер одновременно убивают процесс демона по памяти.
+     *   false - ровно один воркер (дорожка FPTN).
+     */
+    private suspend fun runSpeedPhase(
+        candidates: List<String>,
+        label: String,
+        parallel: Boolean,
+        probeSettings: WhitelistSpeedTester.Settings,
+    ) {
+        if (candidates.isEmpty()) return
+
+        val workers = if (parallel) {
+            minOf(candidates.size, concurrency, SPEED_PROBE_MAX_PARALLEL).coerceAtLeast(1)
+        } else {
+            1
+        }
+        val next = AtomicInteger(0)
+        val done = AtomicInteger(0)
+        onEvent(RealPingEvent.Progress("$label 0/${candidates.size}"))
+
+        val jobs = (0 until workers).map {
+            scope.launch {
+                while (job.isActive) {
+                    val index = next.getAndIncrement()
+                    if (index >= candidates.size) break
+                    val guid = candidates[index]
+                    // Измеренный пинг не затирается: профиль за шейпингом сохраняет
+                    // зелёные цифры задержки и помечается только результатом скорости.
+                    val cfgType = MmkvManager.decodeServerConfig(guid)?.configType
+                    val outcome = if (cfgType == EConfigType.CUSTOM) {
+                        RealPingExecutionLimiter.run(EConfigType.CUSTOM) {
+                            WhitelistSpeedTester.measureProfileSpeed(guid, probeSettings)
+                        }
+                    } else {
+                        WhitelistSpeedTester.measureProfileSpeed(guid, probeSettings)
+                    }
+                    MmkvManager.encodeServerTestSpeedBytesPerSec(guid, outcome.first, outcome.second)
+                    if (job.isActive) {
+                        onEvent(RealPingEvent.SpeedResult(guid, outcome.first, outcome.second))
+                        onEvent(RealPingEvent.Progress("$label ${done.incrementAndGet()}/${candidates.size}"))
+                    }
+                }
+            }
+        }
+        joinAll(*jobs.toTypedArray())
     }
 
     companion object {

@@ -4,6 +4,7 @@ import android.content.Context
 import com.v2ray.ang.AngApplication
 import com.v2ray.ang.core.CoreConfigManager
 import com.v2ray.ang.core.CoreNativeManager
+import com.v2ray.ang.core.FptnProbeRunner
 import com.v2ray.ang.core.SidecarEngineManager
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.RealPingEvent
@@ -15,6 +16,7 @@ import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.SpeedtestManager
 import com.v2ray.ang.util.LogUtil
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -69,6 +71,33 @@ internal object RealPingMeasure {
         val retFailure = FAIL
 
         val config = MmkvManager.decodeServerConfig(guid) ?: return retFailure
+
+        // Профили, для которых временное ядро Xray построить невозможно (сейчас это
+        // FPTN: fptn-client владеет собственным TUN, Xray-конфига для него нет),
+        // измеряются в ИЗОЛИРОВАННОМ network namespace через FptnProbeRunner.
+        // Иначе пришлось бы либо вернуть фиктивное значение (тогда «Удалить
+        // недействительные» стёр бы рабочий профиль), либо оставить профиль
+        // неизмеренным. Здесь используется тот же тестовый URL из настроек клиента,
+        // что и для остальных профилей.
+        if (SidecarEngineManager.cannotMeasureInTempCore(config.configType)) {
+            val probeDelay = FptnProbeRunner.measureDelayMs(
+                AngApplication.application,
+                config,
+                SettingsManager.getDelayTestUrl(),
+            )
+            if (probeDelay >= 0L) {
+                return probeDelay
+            }
+            // Измерить не удалось (нет root, нет токена, туннель не поднялся).
+            // Возвращаем NOT_MEASURABLE, а не FAIL: значение не запишется, и профиль
+            // не будет удалён как недействительный.
+            LogUtil.w(
+                AppConfig.TAG,
+                "RealPing: профиль ${config.configType} не удалось измерить, значение не изменяется"
+            )
+            return NOT_MEASURABLE
+        }
+
         if (!config.configType.isComplexType()
             && config.configType != EConfigType.HYSTERIA2
             && config.configType != EConfigType.WIREGUARD
@@ -82,24 +111,6 @@ internal object RealPingMeasure {
             if (tcpTime <= -1L) {
                 return retFailure
             }
-            // Профили, для которых временное ядро Xray построить невозможно (FPTN:
-            // fptn-client владеет собственным TUN, Xray-конфига нет), дальше не идут.
-            // Для них уже полученный TCP-пинг до сервера и есть честная задержка.
-            // Если же и TCP-пинг неприменим (у FPTN адрес сервера живёт внутри JWT и
-            // поле server может быть пустым), возвращаем NOT_MEASURABLE, чтобы
-            // значение НЕ записалось и профиль не был удалён как недействительный.
-            if (SidecarEngineManager.cannotMeasureInTempCore(config.configType)) {
-                return tcpTime
-            }
-        }
-
-        if (SidecarEngineManager.cannotMeasureInTempCore(config.configType)) {
-            LogUtil.i(
-                AppConfig.TAG,
-                "RealPing: профиль ${config.configType} нельзя измерить временным ядром, " +
-                    "значение задержки не изменяется"
-            )
-            return NOT_MEASURABLE
         }
 
         // Профили на сайдкар-движках требуют, чтобы движок был поднят В ЭТОМ ЖЕ
@@ -163,11 +174,43 @@ class RealPingWorkerService(
     private val dispatcher = Executors.newFixedThreadPool(if (onlyTcp || onlyIcmp) concurrency * 2 else concurrency).asCoroutineDispatcher()
     private val scope = CoroutineScope(job + dispatcher + CoroutineName("RealPingBatchWorker"))
 
+    /**
+     * Отдельный ОДНОПОТОЧНЫЙ исполнитель для профилей FPTN.
+     *
+     * Проба FPTN выполняется в изолированном netns и физически не может идти
+     * параллельно с другой пробой FPTN (FptnProbeRunner.probeLock). Если запускать
+     * её в общем пуле, то при нескольких FPTN-профилях в подписке они заняли бы все
+     * потоки пула и заблокировали измерение остальных профилей: каждый поток стоял
+     * бы в очереди за блокировкой. Отдельный поток с последовательной обработкой
+     * решает обе проблемы - FPTN мерится по одному, а общий пул остаётся свободным.
+     */
+    private val fptnDispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+    private val fptnScope = CoroutineScope(job + fptnDispatcher + CoroutineName("RealPingFptnWorker"))
+
     private val runningCount = AtomicInteger(0)
     private val totalCount = AtomicInteger(0)
 
     fun start() {
-        val jobs = guids.map { guid ->
+        // Профили FPTN уходят в отдельную последовательную дорожку (см. fptnScope).
+        val fptnGuids = ArrayList<String>()
+        val normalGuids = ArrayList<String>()
+        if (onlyTcp || onlyIcmp) {
+            // tcping/icmping измеряют только доступность сервера и не поднимают
+            // туннель, поэтому разделение не требуется.
+            normalGuids.addAll(guids)
+        } else {
+            for (guid in guids) {
+                val type = MmkvManager.decodeServerConfig(guid)?.configType
+                if (type != null && SidecarEngineManager.cannotMeasureInTempCore(type)) {
+                    fptnGuids.add(guid)
+                } else {
+                    normalGuids.add(guid)
+                }
+            }
+        }
+
+        val jobs = ArrayList<Job>(guids.size + 1)
+        jobs += normalGuids.map { guid ->
             totalCount.incrementAndGet()
             scope.launch {
                 runningCount.incrementAndGet()
@@ -200,6 +243,39 @@ class RealPingWorkerService(
             }
         }
 
+        if (fptnGuids.isNotEmpty()) {
+            totalCount.addAndGet(fptnGuids.size)
+            // Одна корутина на все FPTN-профили: они измеряются строго по очереди.
+            jobs += fptnScope.launch {
+                for (guid in fptnGuids) {
+                    if (!isActive) break
+                    runningCount.incrementAndGet()
+                    try {
+                        val result = RealPingMeasure.measure(guid)
+                        if (isActive) {
+                            if (result == RealPingMeasure.NOT_MEASURABLE) {
+                                onEvent(
+                                    RealPingEvent.Progress(
+                                        "профиль FPTN не удалось измерить, значение сохранено без изменений"
+                                    )
+                                )
+                            } else {
+                                onEvent(RealPingEvent.Result(guid, result))
+                            }
+                        }
+                    } catch (_: Throwable) {
+                        // ignore
+                    } finally {
+                        val count = totalCount.decrementAndGet()
+                        val left = runningCount.decrementAndGet()
+                        if (isActive) {
+                            onEvent(RealPingEvent.Progress("$left / $count"))
+                        }
+                    }
+                }
+            }
+        }
+
         scope.launch {
             try {
                 joinAll(*jobs.toTypedArray())
@@ -221,6 +297,11 @@ class RealPingWorkerService(
     private fun close() {
         try {
             dispatcher.close()
+        } catch (_: Throwable) {
+            // ignore
+        }
+        try {
+            fptnDispatcher.close()
         } catch (_: Throwable) {
             // ignore
         }

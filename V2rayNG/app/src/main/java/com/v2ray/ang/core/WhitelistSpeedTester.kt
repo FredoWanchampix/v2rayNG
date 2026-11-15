@@ -51,9 +51,23 @@ object WhitelistSpeedTester {
      * reports 0 so the UI can always show a number instead of a dash.
      */
     fun measureProfileSpeed(guid: String, settings: Settings): Pair<Long, Boolean> {
-        val port = Utils.findRandomFreePort()
         val context = AngApplication.application
         val profile = MmkvManager.decodeServerConfig(guid)
+
+        // Профиль FPTN измеряется НЕ временным ядром Xray (для него Xray-конфига не
+        // существует - fptn-client владеет собственным TUN), а в изолированном
+        // network namespace через FptnProbeRunner. Настройки (размер файла, таймаут,
+        // число попыток) и тестовые зеркала - ТЕ ЖЕ, что и у остальных профилей,
+        // поэтому результаты сопоставимы. Параллельность FPTN-проб ограничена одной
+        // (см. FptnProbeRunner.probeLock), т.к. проба настраивает общие сетевые
+        // правила устройства. Порт для такой пробы не нужен: она ходит в сеть из
+        // своего netns напрямую, поэтому находим его уже после этой ветки.
+        if (profile != null && SidecarEngineManager.cannotMeasureInTempCore(profile.configType)) {
+            return FptnProbeRunner.measureSpeed(context, profile, settings, DOWNLOAD_TEST_URLS)
+        }
+
+        val port = Utils.findRandomFreePort()
+
         // Профили на сайдкар-движках (AmneziaWG, NaiveProxy, OpenConnect, Mimic)
         // требуют, чтобы движок был поднят В ЭТОМ ЖЕ процессе: SidecarEngineManager
         // - объект, а значит у процесса :tasks свой экземпляр с currentPort == 0,
