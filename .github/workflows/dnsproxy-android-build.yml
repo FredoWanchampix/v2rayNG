@@ -11,13 +11,15 @@ name: DNSProxy Android build
 #       (udp/tcp/tls/https/quic/sdns - все пять транспортов);
 #     - не подменяет DNS никаким hardcoded-провайдером.
 #   dnsproxy (AdGuardTeam) - проверенный форвардер с Apache-2.0 лицензией,
-#   чистый Go без cgo, поэтому кросс-компилируется под android/arm64 так же,
-#   как mimic-client.
+#   чистый Go без cgo (CGO_ENABLED=0), поэтому кросс-компилируется под
+#   android/arm64 так же, как mimic-client (тоже без NEEDED-зависимостей).
 #
 # Почему отдельный workflow, а не шаг в build.yml:
-#   dnsproxy требует Go 1.25.5+, а build.yml использует Go 1.25 для sing-box/mimic.
-#   Отдельный workflow со своей версией Go изолирует риск: обновление Go для dnsproxy
-#   не затрагивает уже работающие сборки sing-box/mimic.
+#   dnsproxy v0.86.0 требует Go 1.26.8, а build.yml использует Go 1.25 для
+#   sing-box/mimic (проверено рабочей сборкой). Отдельный workflow со своей
+#   версией Go изолирует риск: Go 1.26.8 для dnsproxy НЕ затрагивает уже
+#   работающие сборки sing-box/mimic на Go 1.25. Именно поэтому выбрана
+#   актуальная стабильная версия dnsproxy, а не устаревшая под старый Go.
 #
 # Hard-gate: build.yml НЕ соберёт APK, если dnsproxy не собран или его SHA не совпал.
 
@@ -49,13 +51,13 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: AdGuardTeam/dnsproxy
-          ref: v0.80.0
+          ref: v0.86.0
           fetch-depth: 1
 
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.25.5'
+          go-version: '1.26.8'
           cache: true
 
       - name: Build dnsproxy for android/arm64
@@ -75,25 +77,50 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Проверяем, что это действительно ELF для ARM aarch64 (android),
-          # а не x86-бинарник хоста.
-          file dnsproxy | grep -qi "ELF" || { echo "::error::dnsproxy is not an ELF"; exit 1; }
-          file dnsproxy | grep -qiE "ARM aarch64|arm64" || { echo "::error::dnsproxy is not arm64"; exit 1; }
-          # Статический (без динамического линкера) - как и должно быть при CGO_ENABLED=0.
-          if file dnsproxy | grep -qi "dynamically linked"; then
-            echo "::error::dnsproxy is dynamically linked (CGO_ENABLED=0 expected static)"
+          # Объективная проверка через readelf (не эвристика `file`):
+          #
+          # 1. ELF-заголовок: класс ELF64, машина AArch64 (0xB7) - целевая
+          #    архитектура устройства, а не x86-64 хоста.
+          # 2. ОТСУТСТВИЕ записей NEEDED - это и есть корректный признак чистой
+          #    Go-сборки без cgo на Android. Проверено на эталоне: mimic-client
+          #    (собранный в build.yml с CGO_ENABLED=0 GOOS=android) НЕ имеет NEEDED,
+          #    тогда как sing-box (CGO_ENABLED=1) имеет liblog/libdl/libm/libandroid/libc.
+          #
+          # ВАЖНО про PT_INTERP: для GOOS=android Go ВСЕГДА добавляет интерпретатор
+          #    /system/bin/linker64 даже при CGO_ENABLED=0 (особенность Android-таргета,
+          #    подтверждено на mimic-client). Поэтому наличие PT_INTERP НЕ является
+          #    признаком динамической линковки и НЕ должно ронять сборку. Ранняя
+          #    проверка `file ... dynamically linked` ошибочно падала именно на этом.
+          #    Единственный надёжный критерий "чистый Go без cgo" - отсутствие NEEDED.
+
+          echo "=== ELF-заголовок ==="
+          readelf -h dnsproxy | grep -E "Class|Machine|Type"
+
+          # Класс и архитектура: ELF64 + AArch64 (arm64), а не x86-64 хоста.
+          readelf -h dnsproxy | grep -q "Class:.*ELF64" \
+            || { echo "::error::dnsproxy is not ELF64"; exit 1; }
+          readelf -h dnsproxy | grep -qiE "Machine:.*AArch64" \
+            || { echo "::error::dnsproxy is not AArch64/arm64"; exit 1; }
+
+          # Чистый Go без cgo: нет NEEDED-зависимостей от bionic-библиотек.
+          if readelf -d dnsproxy 2>/dev/null | grep -q "NEEDED"; then
+            echo "::error::dnsproxy has NEEDED shared libraries; expected none for a CGO_ENABLED=0 Go binary"
+            readelf -d dnsproxy | grep "NEEDED" || true
             exit 1
           fi
+
+          echo "dnsproxy is a static AArch64 ELF (no NEEDED shared libraries)."
+
           SHA="$(sha256sum dnsproxy | cut -d' ' -f1)"
           SIZE="$(stat -c%s dnsproxy)"
           echo "dnsproxy sha256=$SHA size=$SIZE"
           echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
           echo "size=$SIZE" >> "$GITHUB_OUTPUT"
-          # Краткая сводка в job summary (без чувствительных данных).
           {
             echo "## DNSProxy (android/arm64)"
             echo '```'
-            file dnsproxy
+            readelf -h dnsproxy | grep -E "Class|Machine|Type"
+            echo "static: no NEEDED (pure Go, CGO_ENABLED=0)"
             echo "sha256: $SHA"
             echo "size:   $SIZE bytes"
             echo '```'
