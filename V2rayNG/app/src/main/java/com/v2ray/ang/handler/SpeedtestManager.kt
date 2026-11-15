@@ -3,6 +3,7 @@ package com.v2ray.ang.handler
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.IPAPIInfo
 import com.v2ray.ang.dto.UrlContentRequest
+import com.v2ray.ang.util.ActiveProfileRoute
 import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
@@ -86,17 +87,23 @@ object SpeedtestManager {
         val url = MmkvManager.decodeSettingsString(AppConfig.PREF_IP_API_URL)
             .takeIf { !it.isNullOrBlank() } ?: AppConfig.IP_API_URL
 
-        val proxyUsername = SettingsManager.getSocksUsername()
-        val proxyPassword = SettingsManager.getSocksPassword()
-        val httpPort = SettingsManager.getHttpPort()
-        if (httpPort == 0) return null
+        // Адрес, порт и учётные данные берём из снимка РЕАЛЬНО запущенного конфига
+        // ядра (общий ActiveProfileRoute.resolve()), а не из настроек: настройки
+        // пользователь может сменить в любой момент, а запущенное ядро слушает
+        // прежние значения. Это тот же источник правды, что у обновления подписки,
+        // проверки обновлений и geo-файлов, поэтому поведение единообразно.
+        val route = ActiveProfileRoute.resolve()
+        if (route.mode != ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY || route.httpPort == 0) {
+            return null
+        }
         val content = HttpUtil.getUrlContent(
             UrlContentRequest(
                 url = url,
                 timeout = 5000,
-                httpPort = httpPort,
-                proxyUsername = proxyUsername,
-                proxyPassword = proxyPassword
+                httpHost = route.httpHost,
+                httpPort = route.httpPort,
+                proxyUsername = route.proxyUsername,
+                proxyPassword = route.proxyPassword
             )
         ) ?: return null
         val ipInfo = JsonUtil.fromJsonSafe(content, IPAPIInfo::class.java) ?: return null
