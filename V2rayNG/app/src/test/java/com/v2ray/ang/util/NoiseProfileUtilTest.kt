@@ -256,6 +256,53 @@ class NoiseProfileUtilTest {
         assertNull(NoiseProfileUtil.effectiveFinalMask("", "[]"))
     }
 
+    // --- применение в outbound: уровень CoreOutboundBuilder ---
+
+    @Test
+    fun `outbound builder puts noise into streamSettings finalmask udp`() {
+        // Промт требует: «сборка outbound с шумом -> JSON конфига содержит
+        // finalmask.udp noise с теми же элементами». toOutboundWireguard
+        // приватный и тянет MmkvManager, но публичный updateOutboundFinalMask —
+        // ровно тот шаг, которым builder кладёт finalmask в streamSettings.
+        val profile = com.v2ray.ang.dto.entities.ProfileItem.create(
+            com.v2ray.ang.enums.EConfigType.WIREGUARD
+        )
+        profile.noisesJson = warpNoises
+        // профиль с полем шума и пустым fm: эффективный finalmask собирается
+        val effective = NoiseProfileUtil.effectiveFinalMask(profile.finalMask, profile.noisesJson)
+        assertNotNull(effective)
+        val ss = com.v2ray.ang.dto.V2rayConfig.OutboundBean.StreamSettingsBean()
+        com.v2ray.ang.core.CoreOutboundBuilder.updateOutboundFinalMask(
+            ss, profile.copy(finalMask = effective)
+        )
+        assertNotNull(ss.finalmask)
+        // finalmask объявлен как Any? (исторически), фактически — JsonObject
+        val fmObj = ss.finalmask as com.google.gson.JsonObject
+        val udp = fmObj.getAsJsonArray("udp")
+        assertEquals(1, udp.size())
+        val mask = udp.get(0).asJsonObject
+        assertEquals("noise", mask.get("type").asString)
+        val noise = mask.getAsJsonObject("settings").getAsJsonArray("noise")
+        assertEquals(9, noise.size())
+        assertEquals("hex", noise.get(0).asJsonObject.get("type").asString)
+        assertEquals("576172704e6f697365", noise.get(0).asJsonObject.get("packet").asString)
+        assertEquals("23-911", noise.get(1).asJsonObject.get("rand").asString)
+        assertEquals("1-3", noise.get(1).asJsonObject.get("delay").asString)
+    }
+
+    @Test
+    fun `outbound builder keeps explicit finalMask untouched`() {
+        val profile = com.v2ray.ang.dto.entities.ProfileItem.create(
+            com.v2ray.ang.enums.EConfigType.WIREGUARD
+        )
+        val custom = """{"udp":[{"type":"header","settings":{"value":"dns"}}]}"""
+        profile.finalMask = custom
+        profile.noisesJson = """[{"rand":"40-70"}]"""
+        // finalMask приоритетен: builder применит его как есть
+        val effective = NoiseProfileUtil.effectiveFinalMask(profile.finalMask, profile.noisesJson)
+        assertEquals(custom, effective)
+    }
+
     // --- эквивалентность freedom-noises и finalmask-noise ---
 
     @Test

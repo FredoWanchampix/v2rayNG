@@ -130,6 +130,7 @@ object SubscriptionContentConverter {
                     try {
                         val probe = JSONObject(t)
                         if (isBalancerConfig(probe)) {
+                            logCustomKept(probe, "балансер/multi-server: включён «Оставить балансеры кастомными»")
                             res.append(probe.toString()).append("\n")
                             return@forEach
                         }

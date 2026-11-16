@@ -324,6 +324,14 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
+    fun `custom protocol stays custom with reason`() {
+        val cfg = """{ "outbounds": [ { "tag": "c", "protocol": "custom", "settings": {} } ] }"""
+        val out = convert(cfg)
+        assertTrue(out.contains("\"custom\""), "кастомный профиль сохраняется как есть: $out")
+        assertFalse(out.contains("://"), "ссылок из custom быть не должно: $out")
+    }
+
+    @Test
     fun `service only config stays custom`() {
         val cfg = """{ "outbounds": [ { "tag": "direct", "protocol": "freedom" }, { "tag": "block", "protocol": "blackhole" } ] }"""
         val out = convert(cfg)
