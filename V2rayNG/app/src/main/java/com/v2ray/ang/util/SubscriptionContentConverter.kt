@@ -270,19 +270,30 @@ object SubscriptionContentConverter {
         // такого конфига МОЛЧА потеряла бы обфускацию/цепочку (например WARP с
         // noise-outbound). Конфиг остаётся кастомным, а причина фиксируется в
         // логе: молчаливая потеря настроек хуже честного «осталось как есть».
-        chainReason(root)?.let { reason ->
+        // Цепочка wireguard -> freedom(noises) НЕ является потерей: ядро умеет
+        // шум на самом wireguard-outbound через streamSettings.finalmask.udp
+        // (в Xray-core v26.11.9 wireguard/client.go вызывает
+        // streamSettings.FinalMask.DialUDP), а формат ссылки форка уже несёт
+        // finalmask в ключе fm/finalmask (WireguardFmt.parse/toUri, поле
+        // ProfileItem.finalMask). Конвертируем такую цепочку в wireguard-ссылку
+        // с fm, сохраняя защиту от DPI. Прочие цепочки (dialerProxy на не-freedom)
+        // по-прежнему остаются кастомными с причиной в логе.
+        val noiseFm = noiseChainFinalMask(root)
+        if (noiseFm == null) {
+            chainReason(root)?.let { reason ->
             // Лог обёрнут в runCatching намеренно: LogUtil читает уровень из
             // MMKV, а в unit-тестах MMKV не инициализирован, поэтому прямой
             // вызов ронял бы конвертацию подписки в тестах. На устройстве
             // исключение невозможно, но защита делает функцию безопасной в
             // любом контексте. Диагностика не должна ломать обновление.
-            runCatching {
-                LogUtil.w(
-                    "SubConverter",
-                    "конфиг '${root.optString("remarks", root.optString("tag", "?"))}' оставлен кастомным: $reason",
-                )
+                runCatching {
+                    LogUtil.w(
+                        "SubConverter",
+                        "конфиг '${root.optString("remarks", root.optString("tag", "?"))}' оставлен кастомным: $reason",
+                    )
+                }
+                return emptyList()
             }
-            return emptyList()
         }
         // Bare sing-box / direct outbound object (single server by definition)
         val sbType = root.optString("type")
@@ -346,7 +357,7 @@ object SubscriptionContentConverter {
                 "trojan" -> buildTrojan(ob, rem)
                 "hysteria", "hysteria2" -> buildHysteriaX(ob, rem)
                 "tuic" -> buildTuic(ob, rem)
-                "wireguard" -> buildWireguard(ob, rem)
+                "wireguard" -> buildWireguard(ob, rem, noiseFm)
                 "masque" -> buildMasque(ob, rem)
                 else -> if (isShadowsocks(ob)) buildShadowsocks(ob, rem) else null
             }
@@ -364,7 +375,7 @@ object SubscriptionContentConverter {
                     "trojan" -> buildTrojan(ob, rem)
                     "hysteria", "hysteria2" -> buildHysteriaX(ob, rem)
                     "tuic" -> buildTuic(ob, rem)
-                    "wireguard" -> buildWireguard(ob, rem)
+                    "wireguard" -> buildWireguard(ob, rem, noiseFm)
                     "masque" -> buildMasque(ob, rem)
                     else -> if (isShadowsocks(ob)) buildShadowsocks(ob, rem) else null
                 }
@@ -389,6 +400,85 @@ object SubscriptionContentConverter {
         // распознавался, processJsonAll возвращал пустой список.
         "wireguard", "masque"
     )
+
+    /**
+     * Поглощает цепочку «wireguard -> freedom с noises» и возвращает JSON
+     * finalmask для ключа fm, либо null, если цепочки такого вида нет.
+     *
+     * Почему это безопасно и не потеря данных:
+     *   - Xray-core (v26.11.9, wireguard/client.go) применяет
+     *     streamSettings.FinalMask к UDP-сокету wireguard, то есть шум идёт
+     *     ПЕРЕД handshake ровно так же, как через freedom-цепочку;
+     *   - сам core помечает noises в freedom устаревшими и рекомендует
+     *     finalmask.udp (infra/conf/freedom.go: PrintDeprecatedFeatureWarning);
+     *   - формат элемента шума совпадает: type/packet/delay, а freedom-«rand»
+     *     (диапазон в packet) переходит в поле rand finalmask.
+     *
+     * Условия поглощения (иначе null, и цепочка остаётся кастомной):
+     *   - ровно один outbound с sockopt.dialerProxy и он wireguard;
+     *   - цель dialerProxy — freedom с непустым settings.noises;
+     *   - ни у одного другого outbound нет dialerProxy (иначе это настоящая
+     *     multi-hop цепочка, её формат ссылки не выражает);
+     *   - каждый noise-элемент конвертируем (type rand/hex/str/base64/exp).
+     */
+    internal fun noiseChainFinalMask(root: JSONObject): String? {
+        val obs = root.optJSONArray("outbounds") ?: return null
+        var wgWithDialer: JSONObject? = null
+        var dialerTag: String? = null
+        var otherDialers = 0
+        val byTag = mutableMapOf<String, JSONObject>()
+        for (i in 0 until obs.length()) {
+            val ob = obs.optJSONObject(i) ?: continue
+            ob.optString("tag").takeIf { it.isNotEmpty() }?.let { byTag[it] = ob }
+            val dialer = ob.optJSONObject("streamSettings")
+                ?.optJSONObject("sockopt")
+                ?.optString("dialerProxy")?.takeIf { it.isNotEmpty() }
+            if (dialer != null) {
+                otherDialers++
+                if (ob.optString("protocol") == "wireguard" && wgWithDialer == null) {
+                    wgWithDialer = ob; dialerTag = dialer; otherDialers--
+                }
+            }
+        }
+        if (wgWithDialer == null || otherDialers > 0) return null
+        val target = byTag[dialerTag] ?: return null
+        if (target.optString("protocol") != "freedom") return null
+        val noises = target.optJSONObject("settings")?.optJSONArray("noises")
+        if (noises == null || noises.length() == 0) return null
+
+        val items = org.json.JSONArray()
+        for (i in 0 until noises.length()) {
+            val n = noises.optJSONObject(i) ?: return null
+            val type = n.optString("type", "")
+            val packet = n.optString("packet", "")
+            val delay = n.optString("delay", "")
+            val item = JSONObject()
+            when (type) {
+                // freedom: диапазон длины лежит в packet; finalmask: поле rand
+                "rand" -> {
+                    if (packet.isEmpty()) return null
+                    item.put("rand", packet)
+                }
+                "hex", "str", "base64", "exp" -> {
+                    item.put("type", type)
+                    item.put("packet", packet)
+                }
+                "" -> {
+                    // freedom без type = сырые байты массивом; finalmask type array
+                    item.put("type", "array")
+                    item.put("packet", n.opt("packet") ?: return null)
+                }
+                else -> return null
+            }
+            if (delay.isNotEmpty()) item.put("delay", delay)
+            items.put(item)
+        }
+        val fm = JSONObject()
+            .put("udp", org.json.JSONArray().put(
+                JSONObject().put("type", "noise").put("settings", JSONObject().put("noise", items))
+            ))
+        return fm.toString()
+    }
 
     /**
      * Причина, по которой конфиг НЕ может быть конвертирован в ссылку без
@@ -443,7 +533,7 @@ object SubscriptionContentConverter {
      *   - allowedIPs отличны от полного маршрута (0.0.0.0/0 и ::/0);
      *   - цепочка dialerProxy (проверяется выше).
      */
-    private fun buildWireguard(ob: JSONObject, rem: String): String? = try {
+    private fun buildWireguard(ob: JSONObject, rem: String, finalMaskJson: String? = null): String? = try {
         val st = ob.optJSONObject("settings") ?: return null
         val secret = st.optString("secretKey", "")
         if (secret.isEmpty()) return null
@@ -473,6 +563,10 @@ object SubscriptionContentConverter {
         st.optInt("mtu").takeIf { it > 0 }?.let { params["mtu"] = it.toString() }
         peer.optString("preSharedKey", "").takeIf { it.isNotEmpty() }?.let { params["presharedkey"] = it }
         st.optString("remoteDNS", "").takeIf { it.isNotEmpty() }?.let { params["dns"] = it }
+        // Шумовая защита от DPI: finalmask целиком (JSON), ключ fm читает
+        // WireguardFmt.parse в ProfileItem.finalMask, а CoreOutboundBuilder
+        // кладёт его в streamSettings.finalmask.
+        finalMaskJson?.takeIf { it.isNotEmpty() }?.let { params["fm"] = it }
         val q = params.toList().joinToString("&") { "${it.first}=${URLEncoder.encode(it.second, "UTF-8")}" }
         val enc = URLEncoder.encode(rem, "UTF-8").replace("+", "%20")
         "wireguard://${URLEncoder.encode(secret, "UTF-8")}@$host:$port?$q#$enc"

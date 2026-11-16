@@ -85,14 +85,45 @@ class SubscriptionContentConverterTest {
     }
 
     @Test
-    fun `warp with noise chain stays custom and is not silently converted`() {
-        // convert() с включённым customToLinks: конфиг с цепочкой обязан пройти
-        // насквозь как JSON (кастомный профиль), а не превратиться в ссылку и не
-        // исчезнуть. Проверяем, что результат содержит исходный wireguard-тег.
+    fun `warp noise chain converts to wireguard link preserving the noise`() {
+        // Цепочка wireguard -> freedom(noises) поглощается: ядро применяет шум
+        // на самом wireguard через streamSettings.finalmask (Xray-core v26.11.9,
+        // wireguard/client.go: FinalMask.DialUDP), а ссылка несёт finalmask в
+        // ключе fm (WireguardFmt.parse -> ProfileItem.finalMask). Поэтому
+        // «прелесть» (шум до handshake) НЕ теряется и профиль становится ссылкой.
         val out = SubscriptionContentConverter.convert(warpWithNoise, decodeBase64 = false, customToLinks = true)
-        assertTrue(out.contains("\"wireguard\""), "wireguard-часть обязана сохраниться: $out")
-        assertTrue(out.contains("noise-out"), "noise-outbound обязан сохраниться: $out")
-        assertFalse(out.startsWith("wireguard://"), "конфиг с цепочкой НЕ должен стать ссылкой")
+        assertTrue(out.startsWith("wireguard://"), "ожидалась wireguard-ссылка: $out")
+        assertTrue(out.contains("SECRETKEY"), "secretKey обязан попасть в userinfo: $out")
+        assertTrue(out.contains("162.159.195.1:500"), "endpoint обязан попасть: $out")
+        assertTrue(out.contains("fm="), "finalmask обязан попасть в ссылку ключом fm: $out")
+        // шум пережил конвертацию: rand 23-911 из freedom-noises стал rand в finalmask
+        assertTrue(out.contains("23-911"), "диапазон шума обязан сохраниться: $out")
+        // noise-outbound больше не нужен отдельным хопом: он поглощён finalmask
+        assertFalse(out.contains("noise-out"), "freedom-хоп обязан быть поглощён: $out")
+    }
+
+    @Test
+    fun `real multi-hop chain to a non-freedom outbound stays custom`() {
+        // dialerProxy на outbound, который НЕ является freedom с шумами, — это
+        // настоящая multi-hop цепочка: формат ссылки её не выражает, поэтому
+        // конфиг остаётся кастомным с причиной в логе.
+        val chain = """
+            {
+              "remarks": "chain",
+              "outbounds": [
+                { "tag": "wg", "protocol": "wireguard",
+                  "settings": { "secretKey": "S=", "address": ["172.16.0.2/32"], "mtu": 1280,
+                    "peers": [ { "endpoint": "1.2.3.4:500", "publicKey": "P=", "allowedIPs": ["0.0.0.0/0", "::/0"] } ] },
+                  "streamSettings": { "sockopt": { "dialerProxy": "prev" } } },
+                { "tag": "prev", "protocol": "vless",
+                  "settings": { "vnext": [ { "address": "9.9.9.9", "port": 443,
+                    "users": [ { "id": "u", "encryption": "none" } ] } ] } }
+              ]
+            }
+        """.trimIndent()
+        val out = SubscriptionContentConverter.convert(chain, decodeBase64 = false, customToLinks = true)
+        assertFalse(out.startsWith("wireguard://"), "цепочка через vless не выражается ссылкой: $out")
+        assertTrue(out.contains("\"wireguard\""), "конфиг обязан остаться кастомным: $out")
     }
 
     @Test
