@@ -259,18 +259,54 @@ object ActiveProfileRoute {
      */
     private fun isCoreProcessAlive(): Boolean {
         val published = MmkvManager.decodeSettingsInt(AppConfig.PREF_CORE_DAEMON_PID, 0)
-        if (published <= 0) return false
-
-        // Same process as the core daemon: the native state is the truth here.
-        if (published == Process.myPid()) {
-            return runCatching { CoreServiceManager.isRunning() }.getOrDefault(false)
+        if (published > 0) {
+            // Same process as the core daemon: the native state is the truth here.
+            if (published == Process.myPid()) {
+                return runCatching { CoreServiceManager.isRunning() }.getOrDefault(false)
+            }
+            // Another process. "/proc/<pid> exists" alone is not enough: after a daemon
+            // crash the PID can be recycled by an unrelated process, which would make us
+            // report a profile that is gone (and then refuse the fetch forever). Verify
+            // the process really is ours by comparing its cmdline.
+            if (isOurProcess(published)) return true
         }
 
-        // Another process. "/proc/<pid> exists" alone is not enough: after a daemon
-        // crash the PID can be recycled by an unrelated process, which would make us
-        // report a profile that is gone (and then refuse the fetch forever). Verify
-        // the process really is ours by comparing its cmdline.
-        return isOurProcess(published)
+        // Резервный путь, не зависящий от MMKV.
+        //
+        // Наблюдённый дефект: файл SETTING периодически компактится самим MMKV, и
+        // компактящий процесс перезаписывает файл только теми записями, которые
+        // есть в ЕГО памяти. Процесс с устаревшим кэшем (например :bg, который не
+        // читал настройки после старта ядра) стирает из живой области файла
+        // pref_core_daemon_pid и pref_core_proxy_endpoint, записанные демоном.
+        // После этого decodeSettingsInt возвращает 0, и сигнал «демон жив»
+        // становился ложно отрицательным, хотя демон работал.
+        //
+        // Поэтому при отсутствии валидного PID ищем процесс демона напрямую по
+        // /proc/<pid>/cmdline. Это даёт «демон существует», чего достаточно для
+        // честного отказа PROFILE_WITHOUT_LOCAL_PROXY вместо ложного NONE: оба
+        // режима отклоняют запрос «через активный профиль», а при выключенном
+        // требовании оба уходят напрямую, то есть маршрутизация не меняется.
+        return findDaemonPidByProc() != null
+    }
+
+    /**
+     * Ищет PID процесса демона (:daemon) обходом /proc. Возвращает null, если
+     * такого процесса нет или /proc недоступен (unit-тесты, не-Android).
+     */
+    internal fun findDaemonPidByProc(): Int? {
+        val daemonName = "${AppConfig.ANG_PACKAGE}:daemon"
+        val dirs = File("/proc").listFiles() ?: return null
+        for (d in dirs) {
+            val name = d.name
+            if (name.isEmpty() || !name.all { it.isDigit() }) continue
+            val cmdline = try {
+                File(d, "cmdline").readText().trim()
+            } catch (e: Exception) {
+                null
+            } ?: continue
+            if (cmdline == daemonName) return name.toIntOrNull()
+        }
+        return null
     }
 
     /**

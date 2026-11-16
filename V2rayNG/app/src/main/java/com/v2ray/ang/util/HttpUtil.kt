@@ -164,7 +164,15 @@ object HttpUtil {
                 socket.connect(InetSocketAddress(host, port), timeoutMs)
             }
             true
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // Молчаливый catch здесь уже стоил одного бага: вызов на главном
+            // потоке бросает NetworkOnMainThreadException, который трактовался
+            // как «порт не слушает», и пользователь видел «требуется включённый
+            // профиль» при полностью рабочем профиле. Теперь причина видна в логе.
+            LogUtil.w(
+                AppConfig.TAG,
+                "Local proxy probe failed for $host:$port: ${e.javaClass.simpleName}: ${e.message}",
+            )
             false
         }
     }

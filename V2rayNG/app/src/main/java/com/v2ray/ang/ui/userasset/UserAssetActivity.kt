@@ -225,31 +225,45 @@ class UserAssetActivity : HelperBaseComponentActivity() {
         if (viaProfile) {
             // Resolve before showing a progress toast, so an unreachable profile is
             // reported immediately instead of failing every download in turn.
-            val route = ActiveProfileRoute.resolve()
-            ActiveProfileRoute.log("Geo asset update", route)
-            when (route.mode) {
-                ActiveProfileRoute.Mode.NONE -> {
-                    toast(R.string.toast_requires_active_proxy)
-                    return
-                }
-                ActiveProfileRoute.Mode.PROFILE_WITHOUT_LOCAL_PROXY -> {
-                    // Профиль запущен, но loopback HTTP inbound не поднят, а прямой
-                    // запрос обошёл бы профиль (приложение исключено из своего туннеля).
-                    toast(R.string.toast_requires_active_proxy_no_local_proxy)
-                    return
-                }
-                ActiveProfileRoute.Mode.TUNNEL_DIRECT -> Unit
-                // Профиль FPTN: системный TUN без HTTP-прокси. Загрузка пойдёт
-                // напрямую (httpPort == 0) и физически пройдёт через fptn0.
-                ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY -> Unit
+            //
+            // ВАЖНО: downloadGeo вызывается из клик-обработчика, то есть на
+            // ГЛАВНОМ потоке, а resolve() внутри выполняет TCP-пробу loopback-
+            // порта. Socket().connect() на главном потоке бросает
+            // NetworkOnMainThreadException, которую проба трактует как «порт не
+            // слушает», и пользователь видел «требуется включённый профиль» при
+            // полностью рабочем профиле. Поэтому resolve выполняется на IO.
+            // Сама загрузка ниже уже уходит в withContext(Dispatchers.IO).
+            lifecycleScope.launch {
+                val route = withContext(Dispatchers.IO) { ActiveProfileRoute.resolve() }
+                ActiveProfileRoute.log("Geo asset update", route)
+                downloadGeoViaRoute(route)
             }
-            toast(R.string.asset_update_via_profile_active)
-            // Адрес и порт - из снимка реально запущенного конфига ядра.
-            executeDownloadGeoFiles(route.httpHost, route.httpPort, route.proxyUsername, route.proxyPassword)
         } else {
             toast(R.string.msg_downloading_content)
             executeDownloadGeoFiles(AppConfig.LOOPBACK, 0)
         }
+    }
+
+    private fun downloadGeoViaRoute(route: ActiveProfileRoute.Route) {
+        when (route.mode) {
+            ActiveProfileRoute.Mode.NONE -> {
+                toast(R.string.toast_requires_active_proxy)
+                return
+            }
+            ActiveProfileRoute.Mode.PROFILE_WITHOUT_LOCAL_PROXY -> {
+                // Профиль запущен, но loopback HTTP inbound не поднят, а прямой
+                // запрос обошёл бы профиль (приложение исключено из своего туннеля).
+                toast(R.string.toast_requires_active_proxy_no_local_proxy)
+                return
+            }
+            ActiveProfileRoute.Mode.TUNNEL_DIRECT -> Unit
+            // Профиль FPTN: системный TUN без HTTP-прокси. Загрузка пойдёт
+            // напрямую (httpPort == 0) и физически пройдёт через fptn0.
+            ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY -> Unit
+        }
+        toast(R.string.asset_update_via_profile_active)
+        // Адрес и порт - из снимка реально запущенного конфига ядра.
+        executeDownloadGeoFiles(route.httpHost, route.httpPort, route.proxyUsername, route.proxyPassword)
     }
 
     private fun executeDownloadGeoFiles(

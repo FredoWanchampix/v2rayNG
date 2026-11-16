@@ -9,9 +9,11 @@ import com.v2ray.ang.handler.UpdateCheckerManager
 import com.v2ray.ang.ui.base.BaseViewModel
 import com.v2ray.ang.util.ActiveProfileRoute
 import com.v2ray.ang.util.LogUtil
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
 
 class CheckUpdateViewModel(application: Application) : BaseViewModel(application) {
 
@@ -50,7 +52,16 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
             // HTTP port alone was wrong: in VPN-tun and root modes that inbound may
             // not exist while the profile is active and already carrying the app's
             // traffic.
-            val route = ActiveProfileRoute.resolve()
+            //
+            // ВАЖНО: resolve() выполняет TCP-пробу loopback-порта. launchLoading
+            // стартует блок на Dispatchers.Main, а Socket().connect() на главном
+            // потоке бросает NetworkOnMainThreadException, которую проба честно
+            // трактует как «порт не слушает». Из-за этого проверка обновления и
+            // загрузка geo-файлов сообщали «профиль не включён» при полностью
+            // рабочем профиле, тогда как обновление подписки (вызывается внутри
+            // withContext(IO)) работало. Проба обязана выполняться вне главного
+            // потока.
+            val route = withContext(Dispatchers.IO) { ActiveProfileRoute.resolve() }
             ActiveProfileRoute.log("Update check requested", route)
 
             if (viaActiveProfile) {

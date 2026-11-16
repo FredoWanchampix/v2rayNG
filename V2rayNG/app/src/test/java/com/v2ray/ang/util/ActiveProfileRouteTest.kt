@@ -1,8 +1,10 @@
 package com.v2ray.ang.util
 
+import com.v2ray.ang.util.ActiveProfileRoute
 import com.v2ray.ang.util.ActiveProfileRoute.Mode
 import com.v2ray.ang.util.ActiveProfileRoute.decideMode
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
 /**
@@ -139,5 +141,18 @@ class ActiveProfileRouteTest {
         // Гонка старта: PID ещё не опубликован/не виден, но inbound уже слушает и
         // обслуживает запросы. Доверяем факту работающего слушателя.
         assertEquals(Mode.LOCAL_HTTP_PROXY, mode(portListening = true, coreAlive = false))
+    }
+
+    // --- Регрессия: компактящий MMKV-процесс с устаревшим кэшем стирал из живой
+    // области файла pref_core_daemon_pid, из-за чего сигнал «демон жив» становился
+    // ложно отрицательным при работающем профиле. Добавлен резервный поиск демона
+    // по /proc. Вне Android (unit-тест) он обязан вернуть null БЕЗ исключения:
+    // иначе fallback превратился бы в падение там, где раньше был честный отказ. ---
+
+    @Test
+    fun `daemon lookup by proc is safe outside android`() {
+        // На JVM нет /proc/<pid>/cmdline с именем пакета приложения, поэтому
+        // ожидается null, а не исключение.
+        assertNull(ActiveProfileRoute.findDaemonPidByProc())
     }
 }

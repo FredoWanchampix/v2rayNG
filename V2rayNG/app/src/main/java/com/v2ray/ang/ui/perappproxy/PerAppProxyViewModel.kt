@@ -184,7 +184,13 @@ class PerAppProxyViewModel(application: Application) : BaseViewModel(application
                 // Это та же точка, что у подписки, проверки обновлений и geo-файлов.
                 // Присваивание безусловное (else -> ""), чтобы content остался String,
                 // а не String?: иначе applyProxyAppList(content: String) не компилируется.
-                val route = ActiveProfileRoute.resolve()
+                //
+                // resolve() выполняет TCP-пробу loopback-порта, а selectProxyAppAuto
+                // вызывается из launchLoading на Dispatchers.Main. Socket().connect()
+                // на главном потоке бросает NetworkOnMainThreadException, которую проба
+                // трактует как «порт не слушает», и резервный путь через профиль молча
+                // не срабатывал. Проба обязана выполняться вне главного потока.
+                val route = withContext(Dispatchers.IO) { ActiveProfileRoute.resolve() }
                 content = if (route.mode == ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY) {
                     ActiveProfileRoute.log("Per-app proxy list download", route)
                     withContext(Dispatchers.IO) {
