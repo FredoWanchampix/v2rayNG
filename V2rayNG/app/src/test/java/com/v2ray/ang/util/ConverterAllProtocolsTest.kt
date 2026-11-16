@@ -436,6 +436,22 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
+    fun `singbox trojan ws keeps path and host`() {
+        val sb = """
+            { "type": "trojan", "tag": "t", "server": "t.example.com", "server_port": 443,
+              "password": "pw", "transport": { "type": "ws", "path": "/trojan-ws",
+                "headers": { "Host": "cdn.example.com" } },
+              "tls": { "server_name": "t.example.com" } }
+        """.trimIndent()
+        val out = convert(sb)
+        assertTrue(out.startsWith("trojan://"), out)
+        val profile = TrojanFmt.parse(out)
+        assertEquals("/trojan-ws", profile.path, "ws path обязан пережить конвертацию: $out")
+        assertEquals("cdn.example.com", profile.host, "ws Host обязан пережить конвертацию: $out")
+        assertEquals("ws", profile.network)
+    }
+
+    @Test
     fun `singbox anyconnect alias converts as openconnect`() {
         val sb = """
             { "type": "anyconnect", "tag": "oc", "server": "vpn.example.com", "server_port": 443,

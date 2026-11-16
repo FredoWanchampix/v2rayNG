@@ -1550,6 +1550,14 @@ object SubscriptionContentConverter {
             if (j.isNotEmpty()) query["alpn"] = j
         }
         if (sbTlsObj?.optBoolean("insecure", false) == true) query["allowInsecure"] = "1"
+        // ws-транспорт: path и Host обязательны для работоспособности туннеля;
+        // раньше терялись молча (TrojanFmt читает их из query).
+        if (sbTransportType(root) == "ws") {
+            val transport = root.optJSONObject("transport")
+            transport?.optString("path")?.takeIf { it.isNotEmpty() }?.let { query["path"] = it }
+            transport?.optJSONObject("headers")?.optString("Host")?.takeIf { it.isNotEmpty() }
+                ?.let { query["host"] = it }
+        }
         val queryStr = query.entries.sortedBy { it.key }.joinToString("&") {
             "${it.key}=${URLEncoder.encode(it.value, "UTF-8")}"
         }
