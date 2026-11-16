@@ -1420,8 +1420,17 @@ object SubscriptionContentConverter {
             ?: ""
 
         val tls = ob.optJSONObject("streamSettings")?.optJSONObject("tlsSettings")
-        val fmObj = stream?.optJSONObject("finalmask")?.toString()
-            ?: ob.optJSONObject("streamSettings")?.optJSONObject("finalmask")?.toString()
+
+        // Обфускация hy2 в xray-конфиге живёт НЕ в hysteriaSettings, а в
+        // streamSettings.finalmask.udp[type=salamander] (см.
+        // CoreOutboundBuilder.populateTransportSettings): password и
+        // packetSize("min-max" для gecko). Раньше она молча терялась —
+        // сервер отвергал туннель без obfs-password. Читаем оттуда.
+        val fmObjNode = stream?.optJSONObject("finalmask")
+        val salamander = fmObjNode?.optJSONArray("udp")?.let { udp ->
+            (0 until udp.length()).mapNotNull { udp.optJSONObject(it) }
+                .firstOrNull { it.optString("type") == "salamander" }
+        }
 
         val sni = tls?.optString("serverName")
         val alpn = tls?.optJSONArray("alpn")?.optString(0)
@@ -1432,9 +1441,19 @@ object SubscriptionContentConverter {
         alpn?.takeIf { it.isNotEmpty() }?.let { query.append("&alpn=").append(URLEncoder.encode(it, "UTF-8")) }
         if (tls?.optBoolean("allowInsecure", false) == true) query.append("&insecure=1")
         val obfsObj = hy?.optJSONObject("obfs") ?: settings?.optJSONObject("obfs")
-        obfsObj?.optString("type")?.takeIf { it == "salamander" }?.let { query.append("&obfs=salamander") }
-        obfsObj?.optString("password")?.takeIf { it.isNotEmpty() }
-            ?.let { query.append("&obfs-password=").append(URLEncoder.encode(it, "UTF-8")) }
+        val salamanderSettings = salamander?.optJSONObject("settings")
+        val obfsPassword = obfsObj?.optString("password")?.takeIf { it.isNotEmpty() }
+            ?: salamanderSettings?.optString("password")?.takeIf { it.isNotEmpty() }
+        val packetSize = salamanderSettings?.optString("packetSize")?.takeIf { it.isNotEmpty() }
+        if (obfsPassword != null) {
+            // packetSize "min-max" означает gecko; salamander без размеров — salamander
+            query.append("&obfs=").append(if (packetSize != null) "gecko" else "salamander")
+            query.append("&obfs-password=").append(URLEncoder.encode(obfsPassword, "UTF-8"))
+            packetSize?.split("-")?.takeIf { it.size == 2 }?.let { mm ->
+                query.append("&minPacketSize=").append(URLEncoder.encode(mm[0], "UTF-8"))
+                query.append("&maxPacketSize=").append(URLEncoder.encode(mm[1], "UTF-8"))
+            }
+        }
         hy?.optString("pinSHA256")?.takeIf { it.isNotEmpty() }
             ?.let { query.append("&pinSHA256=").append(URLEncoder.encode(it, "UTF-8")) }
         // finalmask/fm intentionally omitted: the URL-encoded JSON blob

@@ -549,6 +549,50 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
+    fun `xray hysteria2 gecko obfs from finalmask survives conversion`() {
+        // Обфускация hy2 в xray-конфиге живёт в streamSettings.finalmask.udp
+        // [type=salamander] с packetSize "min-max" (gecko). Потеря
+        // obfs-password означала бы нерабочий туннель.
+        val cfg = """
+            { "remarks": "HY-gecko", "outbounds": [ { "tag": "h", "protocol": "hysteria2",
+              "settings": { "address": "hy.example.com", "port": 8443 },
+              "streamSettings": {
+                "hysteriaSettings": { "version": 2, "auth": "authpw" },
+                "tlsSettings": { "serverName": "hy.example.com" },
+                "finalmask": { "udp": [ { "type": "salamander",
+                  "settings": { "password": "obfspw", "packetSize": "512-1200" } } ] } } } ] }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertTrue(out.startsWith("hysteria2://"), out)
+        assertTrue(out.contains("obfs=gecko"), "gecko обязан распознаться по packetSize: $out")
+        assertTrue(out.contains("obfs-password=obfspw"), out)
+        assertTrue(out.contains("minPacketSize=512"), out)
+        assertTrue(out.contains("maxPacketSize=1200"), out)
+        val profile = Hysteria2Fmt.parse(out)!!
+        assertEquals("obfspw", profile.obfsPassword)
+        assertEquals("512", profile.minPacketSize)
+        assertEquals("1200", profile.maxPacketSize)
+        assertTrue(profile.isGeckoObfs())
+    }
+
+    @Test
+    fun `xray hysteria2 salamander without sizes stays salamander`() {
+        val cfg = """
+            { "remarks": "HY-sal", "outbounds": [ { "tag": "h", "protocol": "hysteria2",
+              "settings": { "address": "hy.example.com", "port": 8443 },
+              "streamSettings": {
+                "hysteriaSettings": { "version": 2, "auth": "authpw" },
+                "finalmask": { "udp": [ { "type": "salamander",
+                  "settings": { "password": "pw2" } } ] } } } ] }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertTrue(out.contains("obfs=salamander"), out)
+        assertFalse(out.contains("obfs=gecko"), out)
+        val profile = Hysteria2Fmt.parse(out)!!
+        assertEquals("pw2", profile.obfsPassword)
+    }
+
+    @Test
     fun `xray hysteria2 round trip via Hysteria2Fmt`() {
         val cfg = """
             { "remarks": "HY", "outbounds": [ { "tag": "h", "protocol": "hysteria2",
