@@ -142,6 +142,15 @@
     <string name="server_lab_xhttp_mode">هالت XHTTP</string>
     <string name="server_lab_xhttp_extra">XHTTP Extra خام JSON، قالوو: { XHTTPObject }</string>
     <string name="server_lab_final_mask">finalMask خام JSON، قالوو: { FinalMaskObject }</string>
+    <string name="noise_preset_none">بی نویز</string>
+    <string name="noise_preset_amnezia">AmneziaWG: ۴ بسته زائد 40-70</string>
+    <string name="noise_preset_quic">نویز سی QUIC</string>
+    <string name="noise_preset_warp">WARP: hex + ۸ بسته تصادفی 23-911</string>
+    <string name="server_lab_noise_preset">پیش‌تنظیم نویز (محافظت DPI)</string>
+    <string name="server_lab_noise_preset_hint">اختیاری. فهرست نویز هار پر می‌کنه؛ پیش ز handshake وایرگارد فرستاده می‌بۉ</string>
+    <string name="server_lab_noises">فهرست نویزا (آرایه JSON)</string>
+    <string name="server_lab_noises_hint">اختیاری: [{"rand":"23-911","delay":"1-3"}] یا {"type":"hex|str|base64|exp","packet":"...","delay":"1-3"}</string>
+    <string name="server_lab_noises_placeholder">[{"rand":"23-911","delay":"1-3"}]</string>
     <string name="server_lab_ech_config_list" translatable="false">echConfigList</string>
     <string name="server_lab_verify_peer_cert_by_name">تئیڌ گوواهی هومتا و ری نوم</string>
     <string name="server_lab_pinned_ca256">جا کلک گوواهی (SHA-256)</string>

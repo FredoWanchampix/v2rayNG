@@ -109,7 +109,19 @@ object AmneziaFmt : FmtBase() {
         config.mtu?.let { dicQuery["mtu"] = it.toString() }
         config.reserved?.takeIf { it.isNotBlank() }?.let { dicQuery["reserved"] = it }
         runCatching { org.json.JSONObject(config.amneziaOptions.orEmpty()) }.getOrNull()?.let { opts ->
-            opts.keys().forEach { k -> opts.opt(k)?.toString()?.takeIf { it.isNotBlank() }?.let { dicQuery[k] = it } }
+            opts.keys().forEach { k ->
+                opts.opt(k)?.toString()?.takeIf { it.isNotBlank() }?.let { v ->
+                    // Редактор хранит boolean-опции в camelCase (randomTrailers),
+                    // а parse читает kebab-case (random-trailers). Без перевода
+                    // экспорт терял их при повторном импорте молча.
+                    val outKey = when (k) {
+                        "randomTrailers" -> "random-trailers"
+                        "disableCookies" -> "disable-cookies"
+                        else -> k
+                    }
+                    dicQuery[outKey] = v
+                }
+            }
         }
         return toUri(config, config.secretKey, dicQuery)
     }

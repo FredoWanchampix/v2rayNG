@@ -6,6 +6,7 @@ import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.extension.idnHost
 import com.v2ray.ang.extension.nullIfBlank
 import com.v2ray.ang.extension.removeWhiteSpace
+import com.v2ray.ang.util.NoiseProfileUtil
 import com.v2ray.ang.util.Utils
 import java.net.URI
 
@@ -35,6 +36,17 @@ object WireguardFmt : FmtBase() {
         config.remoteDNS = queryParam["dns"] ?: ""
         config.reserved = queryParam["reserved"] ?: "0,0,0"
         config.finalMask = (queryParam["fm"] ?: queryParam["finalmask"] ?: queryParam["finalMask"])?.nullIfBlank()
+        // Шум DPI-защиты: явный ключ noises приоритетнее noise-части fm; если
+        // задан только fm, список шумов восстанавливается из него, чтобы поле
+        // шума в редакторе было заполнено сразу после импорта из буфера.
+        val rawNoises = queryParam["noises"]?.nullIfBlank()
+        try {
+            val (noises, fm) = NoiseProfileUtil.syncProfileFields(rawNoises, config.finalMask)
+            config.noisesJson = noises
+            config.finalMask = fm
+        } catch (_: IllegalArgumentException) {
+            return null
+        }
 
         return config
     }
@@ -102,6 +114,14 @@ object WireguardFmt : FmtBase() {
         config.serverPort = port
         config.reserved = peerParams["reserved"] ?: "0,0,0"
         config.finalMask = (peerParams["finalmask"] ?: peerParams["fm"] ?: interfaceParams["finalmask"] ?: interfaceParams["fm"])?.nullIfBlank()
+        val rawNoises = (peerParams["noises"] ?: interfaceParams["noises"])?.nullIfBlank()
+        runCatching {
+            val (noises, fm) = NoiseProfileUtil.syncProfileFields(rawNoises, config.finalMask)
+            config.noisesJson = noises
+            config.finalMask = fm
+        }
+        // .conf остаётся пригодным и при битом списке шумов: поля просто
+        // не синхронизируются, fm хранится как есть (runCatching, не try/catch).
 
         return config
     }
@@ -130,7 +150,14 @@ object WireguardFmt : FmtBase() {
         if (config.remoteDNS != null) {
             dicQuery["dns"] = config.remoteDNS.removeWhiteSpace().orEmpty()
         }
+        // «Весь контекст»: экспортируем и полный fm, и явный список шумов.
+        // Инвариант (noisesJson == noise-часть fm) поддерживается при импорте
+        // и сохранении; здесь только экспорт, без мутации полей. Если профиль
+        // старый и noisesJson пуст — список восстанавливается из fm.
         config.finalMask?.nullIfBlank()?.let { dicQuery["fm"] = it }
+        (NoiseProfileUtil.normalizeNoises(config.noisesJson)
+            ?: NoiseProfileUtil.extractNoises(config.finalMask))
+            ?.let { dicQuery["noises"] = it }
 
         return toUri(config, config.secretKey, dicQuery)
     }

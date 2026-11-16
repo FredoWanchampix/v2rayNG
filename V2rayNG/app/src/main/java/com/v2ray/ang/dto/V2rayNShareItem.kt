@@ -4,6 +4,7 @@ import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.BalancerStrategyType
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.enums.NetworkType
+import com.v2ray.ang.util.NoiseProfileUtil
 
 @Suppress("PropertyName")
 data class V2rayNShareItem(
@@ -162,6 +163,14 @@ data class V2rayNShareItem(
             // NOTE: proxyChainProfileList stores remarks, not IndexId
             // proxyChainProfileList = ProtoExtraObj?.ChildItems,
         )
+        // Шум DPI-защиты из Finalmask восстанавливаем в явное поле профиля,
+        // чтобы редактор показал его сразу (обратная совместимость: поле
+        // noisesJson новое, старые выгрузки несут только Finalmask).
+        runCatching {
+            val (noises, fm) = NoiseProfileUtil.syncProfileFields(null, profile.finalMask)
+            profile.noisesJson = noises
+            profile.finalMask = fm
+        }
         // profile.description =
         return profile
     }

@@ -142,6 +142,15 @@
     <string name="server_lab_xhttp_mode">Chế độ XHTTP</string>
     <string name="server_lab_xhttp_extra">JSON thô của XHTTP Extra, định dạng: { XHTTPObject }</string>
     <string name="server_lab_final_mask">JSON thô của finalMask, định dạng: { FinalMaskObject }</string>
+    <string name="noise_preset_none">Không nhiễu</string>
+    <string name="noise_preset_amnezia">AmneziaWG: 4 gói rác 40-70</string>
+    <string name="noise_preset_quic">Nhiễu kiểu QUIC</string>
+    <string name="noise_preset_warp">WARP: hex + 8 gói ngẫu nhiên 23-911</string>
+    <string name="server_lab_noise_preset">Mẫu nhiễu (chống DPI)</string>
+    <string name="server_lab_noise_preset_hint">Tùy chọn. Điền danh sách nhiễu bên dưới; gửi trước handshake WireGuard</string>
+    <string name="server_lab_noises">Danh sách nhiễu (mảng JSON)</string>
+    <string name="server_lab_noises_hint">Tùy chọn: [{"rand":"23-911","delay":"1-3"}] hoặc {"type":"hex|str|base64|exp","packet":"...","delay":"1-3"}</string>
+    <string name="server_lab_noises_placeholder">[{"rand":"23-911","delay":"1-3"}]</string>
     <string name="server_lab_ech_config_list" translatable="false">echConfigList</string>
     <string name="server_lab_verify_peer_cert_by_name">Xác minh chứng chỉ ngang hàng theo tên</string>
     <string name="server_lab_pinned_ca256">Dấu vân tay chứng chỉ (SHA-256)</string>

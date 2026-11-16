@@ -262,7 +262,10 @@ object SubscriptionContentConverter {
      */
     private fun processJsonAll(root: JSONObject, keepBalancers: Boolean = false): List<String> {
         // Balancer configs stay as custom only when keepBalancers is explicitly on.
-        if (keepBalancers && isBalancerConfig(root)) return emptyList()
+        if (keepBalancers && isBalancerConfig(root)) {
+            logCustomKept(root, "балансер/multi-server: включён «Оставить балансеры кастомными»")
+            return emptyList()
+        }
 
         // Цепочка outbounds (multi-hop) выражается в Xray через
         // streamSettings.sockopt.dialerProxy, а в sing-box через detour. Формат
@@ -305,37 +308,58 @@ object SubscriptionContentConverter {
                 "trojan" -> buildSbTrojan(root, rem)
                 "shadowsocks" -> buildSbShadowsocks(root, rem)
                 "hysteria2" -> buildSbHysteria2(root, rem)
-                "tuic" -> buildTuic(root, rem)
+                // TUIC: парсер форка отключён, ссылка была бы мёртвой.
+                "tuic" -> null
                 "socks" -> buildUserPassLink("socks", root, rem)
                 "http" -> buildUserPassLink("http", root, rem)
                 "wireguard" -> buildSbWireguard(root, rem)
                 "naive" -> buildSbNaive(root, rem)
                 "openconnect" -> buildSbOpenconnect(root, rem)
+                "mimic" -> buildSbMimic(root, rem)
                 else -> null
             }
-            return if (built != null) listOf(built) else emptyList()
+            if (built != null) return listOf(built)
+            logCustomKept(root, unsupportedProtocolReason(sbType)
+                ?: "sing-box type=$sbType: сборщик ссылки не реализован или обязательные поля отсутствуют")
+            return emptyList()
         }
 
-        // Bare vmess/tuic outbound
+        // Bare vmess outbound
         val proto0 = root.optString("protocol", root.optString("type"))
         if (proto0 == "vmess") {
-            buildVmess(root, root.optString("tag", root.optString("remarks", "")))?.let {
-                return listOf(it)
-            }
+            val built = buildVmess(root, root.optString("tag", root.optString("remarks", "")))
+            if (built != null) return listOf(built)
+            logCustomKept(root, conversionFailureReason(root, proto0))
             return emptyList()
         }
         if (proto0 == "tuic") {
-            buildTuic(root, root.optString("tag", root.optString("remarks", "")))?.let {
-                return listOf(it)
-            }
+            logCustomKept(root, unsupportedProtocolReason("tuic")!!)
             return emptyList()
+        }
+        // Явный protocol без outbounds и без server/server_port: называем причину.
+        if (proto0.isNotEmpty() && !root.has("outbounds")) {
+            unsupportedProtocolReason(proto0)?.let {
+                logCustomKept(root, it)
+                return emptyList()
+            }
+            if (proto0 in PROXY_PROTOCOLS || isShadowsocks(root)) {
+                val built = buildXrayProxy(root, proto0, root.optString("tag", root.optString("remarks", "")), noiseFm)
+                if (built != null) return listOf(built)
+                logCustomKept(root, conversionFailureReason(root, proto0))
+                return emptyList()
+            }
         }
 
         // Full xray config: count convertible proxy outbounds
-        val obs = root.optJSONArray("outbounds")
-            ?: return if (isShadowsocks(root)) {
-                buildShadowsocks(root, root.optString("remarks", ""))?.let { listOf(it) } ?: emptyList()
-            } else emptyList()
+        val obs = root.optJSONArray("outbounds") ?: run {
+            if (isShadowsocks(root)) {
+                buildShadowsocks(root, root.optString("remarks", ""))?.let { return listOf(it) }
+                logCustomKept(root, "shadowsocks: обязательные поля отсутствуют")
+            } else {
+                logCustomKept(root, "JSON не распознан как конфиг: нет outbounds/server/распознаваемого протокола")
+            }
+            return emptyList()
+        }
 
         val rem = root.optString("remarks", "")
         val proxies = mutableListOf<Pair<org.json.JSONObject, String>>() // ob to protocol
@@ -350,41 +374,295 @@ object SubscriptionContentConverter {
         // Exactly one proxy outbound -> convert to a link.
         if (proxies.size == 1) {
             val (ob, p) = proxies[0]
-            val built = when (p) {
-                "vless" -> buildVless(ob, rem)
-                "vmess" -> buildVmess(ob, rem)
-                "shadowsocks" -> buildShadowsocks(ob, rem)
-                "trojan" -> buildTrojan(ob, rem)
-                "hysteria", "hysteria2" -> buildHysteriaX(ob, rem)
-                "tuic" -> buildTuic(ob, rem)
-                "wireguard" -> buildWireguard(ob, rem, noiseFm)
-                "masque" -> buildMasque(ob, rem)
-                else -> if (isShadowsocks(ob)) buildShadowsocks(ob, rem) else null
-            }
+            val built = buildXrayProxy(ob, p, rem, noiseFm)
             if (built != null) return listOf(built)
+            logCustomKept(root, conversionFailureReason(ob, p))
+            return emptyList()
         }
 
-        // Multiple proxy outbounds (balancer / multi-server) -> emit one link per proxy.
+        // Multiple proxy outbounds (balancer / multi-server) -> emit one link per
+        // proxy ТОЛЬКО если собраны ВСЕ: возврат подмножества молча потерял бы
+        // несконвертированные outbounds. Иначе конфиг целиком остаётся
+        // кастомным (исходный JSON сохраняется без потерь), а причина каждого
+        // отказа зафиксирована в логе.
         if (proxies.size > 1) {
             val links = mutableListOf<String>()
+            var failed = false
             for ((ob, p) in proxies) {
-                val built = when (p) {
-                    "vless" -> buildVless(ob, rem)
-                    "vmess" -> buildVmess(ob, rem)
-                    "shadowsocks" -> buildShadowsocks(ob, rem)
-                    "trojan" -> buildTrojan(ob, rem)
-                    "hysteria", "hysteria2" -> buildHysteriaX(ob, rem)
-                    "tuic" -> buildTuic(ob, rem)
-                    "wireguard" -> buildWireguard(ob, rem, noiseFm)
-                    "masque" -> buildMasque(ob, rem)
-                    else -> if (isShadowsocks(ob)) buildShadowsocks(ob, rem) else null
-                }
+                val built = buildXrayProxy(ob, p, rem, noiseFm)
                 if (built != null) links.add(built)
+                else {
+                    failed = true
+                    logCustomKept(root, "outbound '${ob.optString("tag", "?")}': ${conversionFailureReason(ob, p)}")
+                }
             }
-            if (links.isNotEmpty()) return links
+            if (!failed && links.isNotEmpty()) return links
+            if (failed) {
+                logCustomKept(root, "multi-server: не все outbounds конвертируются, конфиг сохранён целиком без потерь")
+                return emptyList()
+            }
         }
 
+        // Ни одного прокси-outbound: явная причина вместо молчаливого пустого списка.
+        val firstProto = (0 until obs.length())
+            .mapNotNull { obs.optJSONObject(it)?.optString("protocol")?.takeIf { s -> s.isNotEmpty() } }
+            .firstOrNull()
+        logCustomKept(root, when {
+            firstProto != null && unsupportedProtocolReason(firstProto) != null ->
+                unsupportedProtocolReason(firstProto)!!
+            isShadowsocks(root) -> "shadowsocks: обязательные поля отсутствуют"
+            else -> "в конфиге нет распознаваемых прокси-outbound (протоколы: " +
+                (0 until obs.length()).mapNotNull { obs.optJSONObject(it)?.optString("protocol") }
+                    .joinToString(",").ifEmpty { "нет outbounds" } + ")"
+        })
         return emptyList()
+    }
+
+    /**
+     * Единый диспетчер «xray-outbound -> ссылка» для полного конфига.
+     * Возвращает ссылку, либо null — и тогда вызывающий ОБЯЗАН зафиксировать
+     * причину отказа (conversionFailureReason), молчаливых пустых списков нет.
+     */
+    private fun buildXrayProxy(ob: JSONObject, p: String, rem: String, noiseFm: String?): String? = when (p) {
+        "vless" -> buildVless(ob, rem)
+        "vmess" -> buildVmess(ob, rem)
+        "shadowsocks" -> buildShadowsocks(ob, rem)
+        "trojan" -> buildTrojan(ob, rem)
+        "hysteria", "hysteria2" -> buildHysteriaX(ob, rem)
+        // TUIC: парсер в форке отключён (EConfigType.TUIC закомментирован,
+        // в configFmtParsers нет) — tuic:// ссылка не импортировалась бы.
+        // Честный отказ вместо мёртвой ссылки.
+        "tuic" -> null
+        "wireguard" -> buildWireguard(ob, rem, noiseFm)
+        "masque" -> buildMasque(ob, rem)
+        "socks", "http" -> buildXrayUserPass(p, ob, rem)
+        "amneziawg", "awg" -> buildAmnezia(ob, rem)
+        "mimic" -> buildXrayMimic(ob, rem)
+        else -> if (isShadowsocks(ob)) buildShadowsocks(ob, rem) else null
+    }
+
+    /**
+     * Явная причина, по которой протокол/конфиг не конвертируется в ссылку.
+     * null — для протоколов, которые диспетчер умеет собирать (там отказ
+     * объясняет conversionFailureReason по содержимому outbound).
+     */
+    private fun unsupportedProtocolReason(p: String): String? = when (p) {
+        "fptn" -> "FPTN поднимает собственный TUN в root-режиме; outbound-конфига Xray для него не существует, а токен доступа передаётся только ссылкой fptn://, не JSON-конфигом"
+        "policygroup", "policy-group" -> "POLICYGROUP — внутренняя группа форка (балансер/фильтр подписки), формат share-ссылки её не выражает"
+        "proxychain", "proxy-chain" -> "PROXYCHAIN — внутренняя цепочка профилей форка, формат share-ссылки её не выражает"
+        "custom", "custom_outbound", "custom-outbound" -> "кастомный профиль уже хранит исходный JSON без потерь; конвертация в ссылку не требуется"
+        "tuic" -> "TUIC: парсер ссылок в форке отключён (EConfigType.TUIC закомментирован), tuic:// ссылка не импортировалась бы — профиль остаётся кастомным"
+        "freedom", "blackhole", "dns", "dokodemo-door", "loopback" -> "служебный outbound '$p' не является прокси-сервером"
+        else -> null
+    }
+
+    /**
+     * Причина отказа конвертации конкретного outbound, когда сборщик вернул
+     * null. Диагностическая: называет протокол и самое вероятное ограничение,
+     * чтобы в логе было видно, ПОЧЕМУ запись осталась кастомной.
+     */
+    private fun conversionFailureReason(ob: JSONObject, p: String): String {
+        unsupportedProtocolReason(p)?.let { return it }
+        val st = ob.optJSONObject("settings")
+        return when (p) {
+            "wireguard" -> when {
+                (ob.optJSONObject("amnezia-wg-option") ?: ob.optJSONObject("amnezia")
+                    ?: st?.optJSONObject("amnezia-wg-option"))?.length() ?: 0 > 0 ->
+                    "wireguard с AmneziaWG-опциями: awg-сборка не удалась (нет ключей/endpoint), plain-ссылка потеряла бы обфускацию"
+                ob.has("private_key") && ob.optString("private_key").isEmpty() ->
+                    "wireguard (sing-box): пустой private_key"
+                st?.optJSONArray("peers")?.length() ?: 0 > 1 ->
+                    "wireguard: peers > 1 (multi-peer не выражается одной ссылкой)"
+                st?.optJSONArray("peers")?.optJSONObject(0)?.optJSONArray("allowedIPs")?.let { a ->
+                    (0 until a.length()).map { a.optString(it) }.toSet()
+                }?.let { it.isNotEmpty() && it != setOf("0.0.0.0/0", "::/0") } == true ->
+                    "wireguard: allowedIPs отличается от полного маршрута (ссылка его не выражает)"
+                else -> "wireguard: нет secretKey/endpoint или иной обязательный параметр отсутствует"
+            }
+            "amneziawg", "awg" -> when {
+                (ob.optJSONObject("amnezia-wg-option") ?: ob.optJSONObject("amneziaOptions")
+                    ?: ob.optJSONObject("settings")?.optJSONObject("amnezia-wg-option"))
+                    ?.length() ?: 0 == 0 ->
+                    "amneziawg: нет amnezia-wg-option — обфускации нет, awg-ссылка бессмысленна (для plain используйте protocol=wireguard)"
+                else -> "amneziawg: нет обязательных полей (secretKey/publicKey/endpoint) или version не число"
+            }
+            "mimic" -> "mimic: нет uuid/адреса/порта"
+            "socks", "http" -> "$p: settings.servers[] пуст или содержит более одного сервера"
+            "hysteria", "hysteria2" -> "hysteria: версия 1 не поддерживается парсером форка либо нет адреса/порта"
+            else -> "$p: обязательные поля outbound отсутствуют или формат не распознан"
+        }
+    }
+
+    /** Лог причины с защитой от неинициализированного MMKV в unit-тестах. */
+    private fun logCustomKept(root: JSONObject, reason: String) {
+        runCatching {
+            LogUtil.w(
+                "SubConverter",
+                "конфиг '${root.optString("remarks", root.optString("tag", "?"))}' оставлен кастомным: $reason",
+            )
+        }
+    }
+
+    /**
+     * Xray socks/http outbound полного конфига -> socks://|http:// ссылка.
+     * В отличие от bare sing-box объекта, здесь креды лежат в
+     * settings.servers[0].{address,port,users[0].{user,pass}}.
+     * Более одного сервера — отказ (одна ссылка = один сервер).
+     */
+    private fun buildXrayUserPass(scheme: String, ob: JSONObject, rem: String): String? = try {
+        val servers = ob.optJSONObject("settings")?.optJSONArray("servers") ?: return null
+        if (servers.length() != 1) return null
+        val s = servers.getJSONObject(0)
+        val address = s.optString("address", "")
+        val port = s.optInt("port", 0)
+        if (address.isEmpty() || port <= 0) return null
+        val u = s.optJSONArray("users")?.optJSONObject(0)
+        val user = u?.optString("user", "").orEmpty()
+        val pass = u?.optString("pass", "").orEmpty()
+        // SocksFmt.parse читает userInfo с ':' напрямую, без URL-декодирования,
+        // но спецсимволы (@/:/пробел) обязаны быть percent-encoded для URI.
+        val userinfo = if (user.isEmpty() && pass.isEmpty()) "" else
+            "${URLEncoder.encode(user, "UTF-8").replace("+", "%20")}:${URLEncoder.encode(pass, "UTF-8").replace("+", "%20")}@"
+        val hp = if (address.contains(':')) "[$address]" else address
+        val encRem = URLEncoder.encode(ob.optString("remarks", rem), "UTF-8").replace("+", "%20")
+        "$scheme://$userinfo$hp:$port#$encRem"
+    } catch (_: Throwable) {
+        null
+    }
+
+    /**
+     * AmneziaWG outbound (mihomo-стиль type=wireguard + amnezia-wg-option, либо
+     * явный protocol=amneziawg) -> awg:// ссылка, которую читает AmneziaFmt.
+     *
+     * ВАЖНО: конвертация в plain wireguard:// ПОТЕРЯЛА бы обфускацию
+     * (jc/jmin/jmax/s1-s4/h1-h4/i1-i5/version...) — сервер отверг бы такой
+     * туннель. Поэтому опции переносятся в query один-в-один теми же ключами,
+     * которые AmneziaFmt.parse читает регистронезависимо и нормализует.
+     * Ключи mihomo snake_case (header_protection_key) переводятся в
+     * kebab-case (header-protection-key), boolean-ключи random-trailers/
+     * disable-cookies — в spelling AmneziaFmt.
+     */
+    private fun buildAmnezia(ob: JSONObject, rem: String): String? = try {
+        // mihomo-поля верхнего уровня либо xray settings
+        val st = ob.optJSONObject("settings")
+        val secret = ob.optString("private-key",
+            ob.optString("private_key", st?.optString("secretKey", "").orEmpty()))
+        if (secret.isEmpty()) return null
+        val peer0 = st?.optJSONArray("peers")?.optJSONObject(0)
+        val pub = ob.optString("public-key",
+            ob.optString("public_key", ob.optString("peer_public_key",
+                peer0?.optString("publicKey", "").orEmpty())))
+        if (pub.isEmpty()) return null
+        var host = ob.optString("server", "")
+        var port = ob.optInt("port", ob.optInt("server_port", 0))
+        if (host.isEmpty() || port <= 0) {
+            val sp = splitEndpoint(peer0?.optString("endpoint", "").orEmpty()) ?: return null
+            host = sp.first; port = sp.second.toIntOrNull() ?: 0
+        }
+        if (host.isEmpty() || port <= 0) return null
+
+        val opts = ob.optJSONObject("amnezia-wg-option")
+            ?: ob.optJSONObject("amneziaOptions")
+            ?: st?.optJSONObject("amnezia-wg-option")
+        // Без опций это обычный wireguard: конвертируем как wireguard,
+        // не выдумывая awg-профиль с пустой обфускацией.
+        if (opts == null || opts.length() == 0) return null
+
+        val params = linkedMapOf<String, String>()
+        params["publickey"] = pub
+        ob.optString("pre-shared-key",
+            ob.optString("pre_shared_key", peer0?.optString("preSharedKey", "").orEmpty()))
+            .takeIf { it.isNotEmpty() }?.let { params["presharedkey"] = it }
+        // mihomo хранит ip/ipv6 БЕЗ маски, AmneziaWG-профиль ждёт CIDR:
+        // дополняем /32 и /128, иначе туннель поднимется с неверным адресом.
+        val ip = ob.optString("ip", "").let { if (it.isNotEmpty() && !it.contains("/")) "$it/32" else it }
+        val ip6 = ob.optString("ipv6", "").let { if (it.isNotEmpty() && !it.contains("/")) "$it/128" else it }
+        val addr = listOf(ip, ip6).filter { it.isNotEmpty() }.joinToString(",")
+        if (addr.isNotEmpty()) params["address"] = addr
+        else (st?.optJSONArray("address") ?: ob.optJSONArray("local_address"))?.let { a ->
+            if (a.length() > 0) params["address"] = (0 until a.length())
+                .mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }.joinToString(",")
+        }
+        (ob.optInt("mtu", 0).takeIf { it > 0 } ?: st?.optInt("mtu", 0)?.takeIf { it > 0 })
+            ?.let { params["mtu"] = it.toString() }
+        when (val r = ob.opt("reserved") ?: st?.opt("reserved")) {
+            is JSONArray -> if (r.length() > 0) params["reserved"] =
+                (0 until r.length()).map { r.opt(it).toString() }.joinToString(",")
+            is String -> r.takeIf { it.isNotEmpty() }?.let { params["reserved"] = it }
+            else -> {}
+        }
+
+        // version обязан быть числом: AmneziaFmt читает его toIntOrNull,
+        // нечисловой молча потерялся бы — отказываемся честно.
+        opts.opt("version")?.toString()?.takeIf { it.isNotEmpty() && it != "null" }?.let {
+            if (it.toIntOrNull() == null) return null
+        }
+        // Опции: ключи нормализуем к чтимому AmneziaFmt виду.
+        val boolKeys = mapOf(
+            "random-trailers" to "random-trailers", "randomtrailers" to "random-trailers",
+            "random_trailers" to "random-trailers",
+            "disable-cookies" to "disable-cookies", "disablecookies" to "disable-cookies",
+            "disable_cookies" to "disable-cookies",
+        )
+        opts.keys().forEach { k ->
+            val v = opts.opt(k)?.toString().orEmpty()
+            if (v.isEmpty() || v == "null") return@forEach
+            val lk = k.lowercase()
+            val boolKey = boolKeys[lk]
+            if (boolKey != null) {
+                params[boolKey] = if (v == "true" || v == "1") "true" else "false"
+            } else {
+                // header_protection_key -> header-protection-key; h1/jc как есть
+                params[lk.replace('_', '-')] = v
+            }
+        }
+        // %20 вместо '+': Utils.decodeURIComponent (им читает AmneziaFmt)
+        // трактует '+' как литеральный плюс, а j1/i1 содержат пробелы.
+        val q = params.toList().joinToString("&") {
+            "${it.first}=${URLEncoder.encode(it.second, "UTF-8").replace("+", "%20")}"
+        }
+        val hp = if (host.contains(':')) "[$host]" else host
+        val encRem = URLEncoder.encode(rem, "UTF-8").replace("+", "%20")
+        "awg://${URLEncoder.encode(secret, "UTF-8").replace("+", "%20")}@$hp:$port?$q#$encRem"
+    } catch (_: Throwable) {
+        null
+    }
+
+    /**
+     * Mimic outbound (xray-стиль settings{address,port,uuid/password} либо
+     * sing-box-стиль server/server_port/uuid) -> mimic:// ссылка (MimicFmt).
+     * Домены мимикрии — JSON-массив в ключе domains, как их хранит профиль.
+     */
+    private fun buildMimicCommon(
+        host: String, port: Int, uuid: String, domains: JSONArray?, rem: String
+    ): String? {
+        if (host.isEmpty() || port <= 0 || uuid.isEmpty()) return null
+        val hp = if (host.contains(':')) "[$host]" else host
+        val q = domains?.takeIf { it.length() > 0 }
+            ?.let { "?domains=${URLEncoder.encode(it.toString(), "UTF-8").replace("+", "%20")}" } ?: ""
+        val encRem = URLEncoder.encode(rem, "UTF-8").replace("+", "%20")
+        return "mimic://${URLEncoder.encode(uuid, "UTF-8").replace("+", "%20")}@$hp:$port$q#$encRem"
+    }
+
+    private fun buildXrayMimic(ob: JSONObject, rem: String): String? = try {
+        val st = ob.optJSONObject("settings") ?: return null
+        val host = st.optString("address", "")
+        val port = st.optInt("port", 0)
+        val uuid = st.optString("uuid", st.optString("password", ""))
+        val domains = st.optJSONArray("domains") ?: ob.optJSONArray("domains")
+        buildMimicCommon(host, port, uuid, domains, ob.optString("remarks", rem))
+    } catch (_: Throwable) {
+        null
+    }
+
+    private fun buildSbMimic(root: JSONObject, rem: String): String? = try {
+        val host = root.optString("server", "")
+        val port = root.optInt("server_port", 0)
+        val uuid = root.optString("uuid", root.optString("password", ""))
+        val domains = root.optJSONArray("domains")
+        buildMimicCommon(host, port, uuid, domains, rem)
+    } catch (_: Throwable) {
+        null
     }
 
     /** Accepted spellings of the certificate pin inside a custom JSON profile. */
@@ -398,7 +676,11 @@ object SubscriptionContentConverter {
         // AngConfigManager). Раньше wireguard-конфиг при включённом
         // «Кастомные в ссылки» молча оставался кастомным: протокол не
         // распознавался, processJsonAll возвращал пустой список.
-        "wireguard", "masque"
+        "wireguard", "masque",
+        // amneziawg/mimic собираются в awg:// и mimic:// (см. buildAmnezia/
+        // buildXrayMimic). fptn включён, чтобы отказ был ЯВНЫМ в логе
+        // («FPTN не выражается outbound-конфигом»), а не молчаливым пропуском.
+        "amneziawg", "awg", "mimic", "fptn"
     )
 
     /**
@@ -535,6 +817,15 @@ object SubscriptionContentConverter {
      */
     private fun buildWireguard(ob: JSONObject, rem: String, finalMaskJson: String? = null): String? = try {
         val st = ob.optJSONObject("settings") ?: return null
+        // AmneziaWG-опции внутри wireguard-outbound: конвертация в plain
+        // wireguard:// ПОТЕРЯЛА бы обфускацию. Пробуем awg-сборку; если она
+        // невозможна — отказ (конфиг останется кастомным), не plain.
+        val awgOpts = ob.optJSONObject("amnezia-wg-option")
+            ?: st?.optJSONObject("amnezia-wg-option")
+            ?: ob.optJSONObject("amneziaOptions")
+        if (awgOpts != null && awgOpts.length() > 0) {
+            return buildAmnezia(ob, rem)
+        }
         val secret = st.optString("secretKey", "")
         if (secret.isEmpty()) return null
         val peers = st.optJSONArray("peers")
@@ -565,9 +856,21 @@ object SubscriptionContentConverter {
         st.optString("remoteDNS", "").takeIf { it.isNotEmpty() }?.let { params["dns"] = it }
         // Шумовая защита от DPI: finalmask целиком (JSON), ключ fm читает
         // WireguardFmt.parse в ProfileItem.finalMask, а CoreOutboundBuilder
-        // кладёт его в streamSettings.finalmask.
-        finalMaskJson?.takeIf { it.isNotEmpty() }?.let { params["fm"] = it }
-        val q = params.toList().joinToString("&") { "${it.first}=${URLEncoder.encode(it.second, "UTF-8")}" }
+        // кладёт его в streamSettings.finalmask. Приоритет у поглощённой
+        // цепочки freedom-noises; если её нет, но у самого wireguard уже есть
+        // свой finalmask (например, конфиг, ранее собранный этим форком),
+        // переносим его без потери.
+        val ownFm = ob.optJSONObject("streamSettings")?.optJSONObject("finalmask")
+            ?.takeIf { it.length() > 0 }?.toString()
+        val fm = finalMaskJson?.takeIf { it.isNotEmpty() } ?: ownFm
+        fm?.let { params["fm"] = it }
+        // Явный список шумов — «весь контекст» отдельным ключом, чтобы поле
+        // шума в редакторе заполнилось даже у клиентов, читающих только noises.
+        // Кодируем с %20 для пробелов (decodeURIComponent трактует '+' как
+        // литеральный плюс) и добавляем хвостом к общему q-join.
+        val noisesParam = NoiseProfileUtil.extractNoises(fm)
+        val q = params.toList().joinToString("&") { "${it.first}=${URLEncoder.encode(it.second, "UTF-8")}" } +
+            (noisesParam?.let { "&noises=${URLEncoder.encode(it, "UTF-8").replace("+", "%20")}" } ?: "")
         val enc = URLEncoder.encode(rem, "UTF-8").replace("+", "%20")
         "wireguard://${URLEncoder.encode(secret, "UTF-8")}@$host:$port?$q#$enc"
     } catch (_: Throwable) {
@@ -614,6 +917,13 @@ object SubscriptionContentConverter {
      * pre_shared_key, mtu, reserved (массив или base64-строка).
      */
     private fun buildSbWireguard(root: JSONObject, rem: String): String? = try {
+        // AmneziaWG в sing-box-обёртке: обфускацию терять нельзя, plain-ссылка
+        // её не выражает. awg-сборщик понимает mihomo-имена; sing-box
+        // awg-поля (junk_packet_count и т.п.) не нормализованы — честный отказ.
+        val awgOpts = root.optJSONObject("amnezia-wg-option") ?: root.optJSONObject("amnezia")
+        if (awgOpts != null && awgOpts.length() > 0) {
+            return buildAmnezia(root, root.optString("tag", ""))
+        }
         val secret = root.optString("private_key", "")
         if (secret.isEmpty()) return null
         val host = root.optString("server", "")
@@ -1033,6 +1343,9 @@ object SubscriptionContentConverter {
         null
     }
 
+    // Не вызывается: парсер TUIC в форке отключён, конвертация даёт мёртвую
+    // ссылку (см. unsupportedProtocolReason). Сохранён для будущего включения.
+    @Suppress("unused")
     private fun buildTuic(ob: JSONObject, rem: String): String? = try {
         val address = ob.optString("server")
         val port = ob.optInt("server_port")

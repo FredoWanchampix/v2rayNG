@@ -13,6 +13,7 @@ import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
+import com.v2ray.ang.util.NoiseProfileUtil
 import com.v2ray.ang.util.Utils
 
 /**
@@ -326,10 +327,14 @@ object CoreOutboundBuilder {
             wireguard.reserved = profileItem.reserved?.takeIf { it.isNotBlank() }?.split(",")?.filter { it.isNotBlank() }?.map { it.trim().toInt() }
         }
 
-        if (!profileItem.finalMask.isNullOrBlank()) {
+        // Шум DPI-защиты: finalMask приоритетен, но если он пуст, а список
+        // шумов задан (noisesJson), собираем finalmask.udp noise из него.
+        // Так шум применяется даже у профилей, где заполнено только поле шума.
+        val effectiveFm = NoiseProfileUtil.effectiveFinalMask(profileItem.finalMask, profileItem.noisesJson)
+        if (!effectiveFm.isNullOrBlank()) {
             outboundBean?.streamSettings = OutboundBean.StreamSettingsBean()
             outboundBean?.streamSettings?.let {
-                updateOutboundFinalMask(it, profileItem)
+                updateOutboundFinalMask(it, profileItem.copy(finalMask = effectiveFm))
                 it.network = null
             }
         }

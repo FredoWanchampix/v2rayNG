@@ -142,6 +142,15 @@
     <string name="server_lab_xhttp_mode">XHTTP Rejimi</string>
     <string name="server_lab_xhttp_extra">XHTTP Əlavə xam JSON, format: { XHTTPObject }</string>
     <string name="server_lab_final_mask">finalMask xam JSON, format: { FinalMaskObject }</string>
+    <string name="noise_preset_none">Səs-küy yoxdur</string>
+    <string name="noise_preset_amnezia">AmneziaWG: 4 zibil paket 40-70</string>
+    <string name="noise_preset_quic">QUIC tipli səs-küy</string>
+    <string name="noise_preset_warp">WARP: hex + 8 təsadüfi paket 23-911</string>
+    <string name="server_lab_noise_preset">Səs-küy şablonu (DPI müdafiəsi)</string>
+    <string name="server_lab_noise_preset_hint">İstəyə bağlı. Aşağıdakı siyahını doldurur; WireGuard handshake-dən əvvəl göndərilir</string>
+    <string name="server_lab_noises">Səs-küy siyahısı (JSON massivi)</string>
+    <string name="server_lab_noises_hint">İstəyə bağlı: [{"rand":"23-911","delay":"1-3"}] və ya {"type":"hex|str|base64|exp","packet":"...","delay":"1-3"}</string>
+    <string name="server_lab_noises_placeholder">[{"rand":"23-911","delay":"1-3"}]</string>
     <string name="server_lab_ech_config_list" translatable="false">echConfigList</string>
     <string name="server_lab_verify_peer_cert_by_name">Qarşı tərəf sertifikatını ada görə doğrulayın</string>
     <string name="server_lab_pinned_ca256">Sertifikatın barmaq izi (SHA-256)</string>

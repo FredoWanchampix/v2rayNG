@@ -38,6 +38,8 @@ data class ProfileItem(
     var xhttpMode: String? = null,
     var xhttpExtra: String? = null,
     var finalMask: String? = null,
+    /** Список шумов DPI-защиты (JSON-массив finalmask-формата), синхронен с noise-частью finalMask. */
+    var noisesJson: String? = null,
 
     var security: String? = null,
     var sni: String? = null,

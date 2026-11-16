@@ -142,6 +142,15 @@
     <string name="server_lab_xhttp_mode">XHTTP 模式</string>
     <string name="server_lab_xhttp_extra">XHTTP Extra 原始 JSON，格式： { XHTTPObject }</string>
     <string name="server_lab_final_mask">finalMask 原始 JSON，格式：{ FinalMaskObject }</string>
+    <string name="noise_preset_none">無噪聲</string>
+    <string name="noise_preset_amnezia">AmneziaWG：4 個垃圾封包 40-70</string>
+    <string name="noise_preset_quic">類 QUIC 噪聲</string>
+    <string name="noise_preset_warp">WARP：hex + 8 個隨機封包 23-911</string>
+    <string name="server_lab_noise_preset">噪聲預設（DPI 防護）</string>
+    <string name="server_lab_noise_preset_hint">可選。填充下方噪聲清單；於 WireGuard 握手前傳送</string>
+    <string name="server_lab_noises">噪聲清單（JSON 陣列）</string>
+    <string name="server_lab_noises_hint">可選：[{"rand":"23-911","delay":"1-3"}] 或 {"type":"hex|str|base64|exp","packet":"...","delay":"1-3"}</string>
+    <string name="server_lab_noises_placeholder">[{"rand":"23-911","delay":"1-3"}]</string>
     <string name="server_lab_ech_config_list" translatable="false">echConfigList</string>
     <string name="server_lab_verify_peer_cert_by_name">Verify peer cert by name</string>
     <string name="server_lab_pinned_ca256">憑證指紋 (SHA-256)</string>

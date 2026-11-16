@@ -38,6 +38,7 @@ import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.QRCodeDecoder
 import com.v2ray.ang.util.SubscriptionContentConverter
+import com.v2ray.ang.util.NoiseProfileUtil
 import com.v2ray.ang.util.Utils
 import okhttp3.Headers
 import java.io.IOException
@@ -504,6 +505,17 @@ object AngConfigManager {
 
             if (config == null) {
                 return null
+            }
+
+            // Обратная совместимость: старые ссылки несут шум только в fm.
+            // Восстанавливаем явное поле шума, чтобы редактор показал его
+            // сразу после импорта (парсеры новых ссылок делают это сами).
+            if (config.noisesJson.isNullOrBlank() && !config.finalMask.isNullOrBlank()) {
+                runCatching {
+                    val (noises, fm) = NoiseProfileUtil.syncProfileFields(null, config.finalMask)
+                    config.noisesJson = noises
+                    config.finalMask = fm
+                }
             }
 
             // Apply filter

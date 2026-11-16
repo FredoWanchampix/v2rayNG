@@ -5,6 +5,7 @@ import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.NetworkType
 import com.v2ray.ang.extension.nullIfBlank
 import com.v2ray.ang.util.HttpUtil
+import com.v2ray.ang.util.NoiseProfileUtil
 import com.v2ray.ang.util.Utils
 import java.net.URI
 
@@ -71,6 +72,12 @@ open class FmtBase {
         config.xhttpMode = queryParam["mode"]
         config.xhttpExtra = queryParam["extra"]
         config.finalMask = queryParam["fm"]
+        // Шум DPI-защиты: явный ключ noises либо восстановление из fm.
+        // ТОЛЬКО чтение: fm у не-wireguard протоколов (vless/hy2/...) может
+        // нести fragment/tcp-маски, мутировать его здесь нельзя — полный
+        // merge делает wireguard-путь (WireguardFmt.parse / редактор).
+        config.noisesJson = NoiseProfileUtil.normalizeNoises(queryParam["noises"])
+            ?: NoiseProfileUtil.extractNoises(config.finalMask)
 
         config.security = queryParam["security"]
         if (config.security != AppConfig.TLS && config.security != AppConfig.REALITY) {
@@ -117,6 +124,11 @@ open class FmtBase {
         config.mldsa65Verify?.nullIfBlank()?.let { dicQuery["pqv"] = it }
         config.flow?.nullIfBlank()?.let { dicQuery["flow"] = it }
         config.finalMask?.nullIfBlank()?.let { dicQuery["fm"] = it }
+        // «Весь контекст»: явный список шумов рядом с fm (информационный ключ,
+        // fm остаётся первичным и не мутирует при экспорте).
+        (NoiseProfileUtil.normalizeNoises(config.noisesJson)
+            ?: NoiseProfileUtil.extractNoises(config.finalMask))
+            ?.let { dicQuery["noises"] = it }
         config.kcpMtu?.let { dicQuery["mtu"] = it.toString() }
         config.kcpTti?.let { dicQuery["tti"] = it.toString() }
         // Add two keys for compatibility: "insecure" and "allowInsecure"

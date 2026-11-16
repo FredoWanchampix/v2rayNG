@@ -18,6 +18,7 @@ import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.enums.NetworkType
 import com.v2ray.ang.extension.nullIfBlank
 import com.v2ray.ang.util.JsonUtil
+import com.v2ray.ang.util.NoiseProfileUtil
 
 class ServerUiState(
     configType: EConfigType,
@@ -55,6 +56,7 @@ class ServerUiState(
     headers: String = "",
     xhttpExtra: String = "",
     finalMask: String = "",
+    noisesJson: String = "",
     seed: String = "",
     kcpMtu: String = "",
     kcpTti: String = "",
@@ -143,6 +145,7 @@ class ServerUiState(
     var headers by mutableStateOf(headers)
     var xhttpExtra by mutableStateOf(xhttpExtra)
     var finalMask by mutableStateOf(finalMask)
+    var noisesJson by mutableStateOf(noisesJson)
     var seed by mutableStateOf(seed)
     var kcpMtu by mutableStateOf(kcpMtu)
     var kcpTti by mutableStateOf(kcpTti)
@@ -253,6 +256,7 @@ class ServerUiState(
             headers = if (isMasque) headers.nullIfBlank() else null,
             xhttpExtra = xhttpExtra.nullIfBlank(),
             finalMask = finalMask.nullIfBlank(),
+            noisesJson = if (isWireguard) noisesJson.nullIfBlank() else null,
             seed = seed.nullIfBlank(),
             kcpMtu = kcpMtu.toIntOrNull(),
             kcpTti = kcpTti.toIntOrNull(),
@@ -278,6 +282,21 @@ class ServerUiState(
             fptnToken = fptnToken.nullIfBlank(),
             amneziaOptions = buildAmneziaOptions().nullIfBlank()
         ).let { profile ->
+            // Шум DPI-защиты: вливаем явный список в noise-часть finalMask,
+            // не трогая прочие маски. ТОЛЬКО wireguard: у остальных протоколов
+            // fm первичен и может нести tcp/fragment-маски, которые нельзя
+            // перекладывать. Невалидный список не сохраняем молча: поля
+            // остаются рассинхронными, и validateCommonConfig покажет ошибку
+            // (лучше отказ, чем потеря защиты).
+            if (profile.configType == EConfigType.WIREGUARD) {
+                runCatching {
+                    val (noises, fm) = NoiseProfileUtil.syncProfileFields(profile.noisesJson, profile.finalMask)
+                    profile.copy(noisesJson = noises, finalMask = fm)
+                }.getOrDefault(profile)
+            } else {
+                profile
+            }
+        }.let { profile ->
             // Mimic is a Hysteria2 transport: the editor keeps one form, the
             // stored type follows the chosen transport.
             if (profile.configType == EConfigType.HYSTERIA2 && hy2Transport == "mimic") {
@@ -392,6 +411,16 @@ class ServerUiState(
                 headers = initialConfig.headers ?: "",
                 xhttpExtra = initialConfig.xhttpExtra ?: "",
                 finalMask = initialConfig.finalMask ?: "",
+                // Старые профили несут шум только в finalMask — показываем
+                // его в явном поле шума сразу при открытии редактора.
+                // Только UDP-протоколы (wireguard/masque): у остальных fm
+                // может нести tcp-шум глобального фрагмента, к полю шума
+                // профиля он отношения не имеет.
+                noisesJson = initialConfig.noisesJson
+                    ?: (if (initialConfig.configType == EConfigType.WIREGUARD ||
+                        initialConfig.configType == EConfigType.MASQUE
+                    ) NoiseProfileUtil.extractNoises(initialConfig.finalMask) else null)
+                    ?: "",
                 seed = initialConfig.seed ?: "",
                 kcpMtu = initialConfig.kcpMtu?.toString() ?: "",
                 kcpTti = initialConfig.kcpTti?.toString() ?: "",

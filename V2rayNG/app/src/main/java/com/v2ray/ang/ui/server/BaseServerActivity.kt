@@ -48,6 +48,7 @@ import com.v2ray.ang.ui.compose.NavigationBarsSpacer
 import com.v2ray.ang.ui.compose.SettingsSwitchItem
 import com.v2ray.ang.ui.compose.verticalScrollbar
 import com.v2ray.ang.util.JsonUtil
+import com.v2ray.ang.util.NoiseProfileUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -425,6 +426,10 @@ abstract class BaseServerActivity : BaseComponentActivity() {
         }
         if (!config.finalMask.isNullOrBlank() && JsonUtil.parseString(config.finalMask) == null) {
             toast(R.string.server_lab_final_mask)
+            return false
+        }
+        if (!config.noisesJson.isNullOrBlank() && NoiseProfileUtil.normalizeNoises(config.noisesJson) == null) {
+            toast(R.string.server_lab_noises)
             return false
         }
         return true

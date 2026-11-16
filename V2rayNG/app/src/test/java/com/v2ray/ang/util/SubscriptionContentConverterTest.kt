@@ -240,6 +240,48 @@ class SubscriptionContentConverterTest {
     }
 
     @Test
+    fun `warp noise link carries explicit noises key`() {
+        // «Весь контекст»: ссылка несёт и полный fm, и явный список шумов,
+        // чтобы поле шума в редакторе заполнилось сразу после импорта.
+        val out = SubscriptionContentConverter.convert(warpWithNoise, decodeBase64 = false, customToLinks = true)
+        assertTrue(out.startsWith("wireguard://"), out)
+        assertTrue(out.contains("noises="), "явный ключ noises обязан быть в ссылке: $out")
+        assertTrue(out.contains("fm="), "fm обязан остаться: $out")
+        // явный список — валидный finalmask-массив c rand 23-911
+        val q = out.substringAfter("?").substringBefore("#")
+            .split("&").associate { val (k, v) = it.split("=", limit = 2); k to java.net.URLDecoder.decode(v, "UTF-8") }
+        val noises = org.json.JSONArray(q["noises"]!!)
+        assertTrue(noises.length() >= 1)
+        assertEquals("23-911", noises.getJSONObject(0).getString("rand"))
+    }
+
+    @Test
+    fun `wireguard with own finalmask keeps it without chain`() {
+        // Конфиг, ранее собранный форком: шум уже в streamSettings.finalmask
+        // самого wireguard (без freedom-цепочки). Конвертер обязан перенести
+        // его в ссылку, а не потерять.
+        val cfg = """
+            {
+              "remarks": "WG own fm",
+              "outbounds": [
+                {
+                  "tag": "wg", "protocol": "wireguard",
+                  "settings": { "secretKey": "S=", "address": ["172.16.0.2/32"], "mtu": 1280,
+                    "peers": [ { "endpoint": "1.2.3.4:500", "publicKey": "P=", "allowedIPs": ["0.0.0.0/0", "::/0"] } ] },
+                  "streamSettings": { "finalmask": { "udp": [ { "type": "noise",
+                    "settings": { "noise": [ { "rand": "40-70", "delay": "10-20" } ] } } ] } }
+                }
+              ]
+            }
+        """.trimIndent()
+        val out = SubscriptionContentConverter.convert(cfg, decodeBase64 = false, customToLinks = true)
+        assertTrue(out.startsWith("wireguard://"), out)
+        assertTrue(out.contains("fm="), "собственный finalmask обязан попасть в fm: $out")
+        assertTrue(out.contains("noises="), "явный список обязан попасть в noises: $out")
+        assertTrue(out.contains("40-70"), "диапазон шума обязан сохраниться: $out")
+    }
+
+    @Test
     fun `keepBalancers keeps balancer config custom`() {
         val bal = """
             {
