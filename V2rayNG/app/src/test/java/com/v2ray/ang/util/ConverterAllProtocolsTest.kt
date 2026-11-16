@@ -180,16 +180,25 @@ class ConverterAllProtocolsTest {
 
     @Test
     fun `wireguard without amnezia options converts to plain wireguard`() {
-        // Опциональность обфускации: нет amnezia-wg-option — это plain
-        // wireguard, и ссылка обязана быть wireguard:// (не awg://).
-        val cfg = JSONObject(awgMihomo)
-        cfg.getJSONArray("outbounds").getJSONObject(0).remove("amnezia-wg-option")
-        val out = convert(cfg.toString())
+        // Опциональность обфускации: xray wireguard-outbound БЕЗ
+        // amnezia-wg-option — это plain wireguard, ссылка обязана быть
+        // wireguard:// (не awg://), профиль импортируется без обфускации.
+        val cfg = """
+            { "remarks": "WG plain", "outbounds": [ { "tag": "wg", "protocol": "wireguard",
+              "settings": { "secretKey": "PRIV=", "address": ["172.16.0.2/32"], "mtu": 1280,
+                "peers": [ { "endpoint": "1.2.3.4:51820", "publicKey": "PUB=",
+                  "allowedIPs": ["0.0.0.0/0", "::/0"] } ] } } ] }
+        """.trimIndent()
+        val out = convert(cfg)
         assertTrue(out.startsWith("wireguard://"), out)
+        assertFalse(out.startsWith("awg://"), out)
         val profile = WireguardFmt.parse(out)
         assertNotNull(profile)
         assertEquals("PRIV=", profile!!.secretKey)
+        assertEquals("PUB=", profile.publicKey)
         assertEquals(1280, profile.mtu)
+        assertNull(profile.amneziaOptions, "обфускации не было — её не должно появиться")
+        assertNull(profile.noisesJson, "шума не было — он не навязывается")
     }
 
     @Test
