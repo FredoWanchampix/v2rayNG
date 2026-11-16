@@ -823,16 +823,19 @@ object SubscriptionContentConverter {
      *   - цепочка dialerProxy (проверяется выше).
      */
     private fun buildWireguard(ob: JSONObject, rem: String, finalMaskJson: String? = null): String? = try {
-        val st = ob.optJSONObject("settings") ?: return null
-        // AmneziaWG-опции внутри wireguard-outbound: конвертация в plain
-        // wireguard:// ПОТЕРЯЛА бы обфускацию. Пробуем awg-сборку; если она
-        // невозможна — отказ (конфиг останется кастомным), не plain.
+        // AmneziaWG-опции (mihomo-формат верхнего уровня ИЛИ xray settings):
+        // конвертация в plain wireguard:// ПОТЕРЯЛА бы обфускацию. Проверяем
+        // ДО требования settings: mihomo-объект (type=wireguard + server/port/
+        // private-key + amnezia-wg-option) не имеет settings вовсе, и ранний
+        // return null делал awg-сборку недостижимой.
+        val stEarly = ob.optJSONObject("settings")
         val awgOpts = ob.optJSONObject("amnezia-wg-option")
-            ?: st?.optJSONObject("amnezia-wg-option")
+            ?: stEarly?.optJSONObject("amnezia-wg-option")
             ?: ob.optJSONObject("amneziaOptions")
         if (awgOpts != null && awgOpts.length() > 0) {
             return buildAmnezia(ob, rem)
         }
+        val st = stEarly ?: return null
         val secret = st.optString("secretKey", "")
         if (secret.isEmpty()) return null
         val peers = st.optJSONArray("peers")
