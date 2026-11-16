@@ -73,17 +73,37 @@ class WireguardFmtNoiseTest {
     }
 
     @Test
-    fun `parse rejects link with invalid noises`() {
-        // Битый явный список — отказ импорта, а не молчаливая потеря защиты.
-        assertNull(WireguardFmt.parse(link("noises=${enc("""[{"type":"bogus"}]""")}")))
+    fun `broken noises do not block import of a valid profile`() {
+        // ЖЁСТКАЯ ОПЦИОНАЛЬНОСТЬ: шум — надстройка. Битый ключ noises не может
+        // лишить владельца профиля: ссылка импортируется, fm хранится как есть,
+        // шум восстановится из fm, если fm валиден.
+        val profile = WireguardFmt.parse(link("noises=${enc("""[{"type":"bogus"}]""")}&fm=${enc(fmOf(noiseArr))}"))
+        assertNotNull(profile, "профиль обязан импортироваться несмотря на битый noises")
+        assertEquals("SECRET=", profile!!.secretKey)
+        assertEquals("162.159.195.1", profile.server)
+        // шум восстановлен из валидного fm
+        assertNotNull(profile.noisesJson)
+        assertEquals(2, JSONArray(profile.noisesJson!!).length())
+        // битый noises БЕЗ fm: профиль тоже импортируется, просто без шума
+        val noFm = WireguardFmt.parse(link("noises=${enc("""[{"type":"bogus"}]""")}"))
+        assertNotNull(noFm)
+        assertNull(noFm!!.noisesJson)
+        assertNull(noFm.finalMask)
     }
 
     @Test
     fun `parse link without noise leaves fields empty`() {
+        // Опциональность: профиль БЕЗ шума — полностью валидный профиль.
         val profile = WireguardFmt.parse(link(""))
         assertNotNull(profile)
         assertNull(profile!!.noisesJson)
         assertNull(profile.finalMask)
+        // и экспорт такого профиля не добавляет ни fm, ни noises
+        val uri = "wireguard://" + WireguardFmt.toUri(profile)
+        assertFalse(uri.contains("fm="), uri)
+        assertFalse(uri.contains("noises="), uri)
+        // и эффективный finalmask для конфига отсутствует
+        assertNull(NoiseProfileUtil.effectiveFinalMask(profile.finalMask, profile.noisesJson))
     }
 
     @Test

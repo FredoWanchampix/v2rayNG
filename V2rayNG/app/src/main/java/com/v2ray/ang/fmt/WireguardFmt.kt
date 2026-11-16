@@ -39,13 +39,24 @@ object WireguardFmt : FmtBase() {
         // Шум DPI-защиты: явный ключ noises приоритетнее noise-части fm; если
         // задан только fm, список шумов восстанавливается из него, чтобы поле
         // шума в редакторе было заполнено сразу после импорта из буфера.
+        // ОПЦИОНАЛЬНОСТЬ: битый явный noises НЕ может лишить владельца профиля.
+        // Шум — надстройка: если его список повреждён, импортируем профиль с
+        // fm как есть (шум восстановится из fm, если fm валиден), причину
+        // фиксируем в логе. Отказ импорта остаётся только для битой ссылки
+        // целиком (нет обязательных wireguard-полей).
         val rawNoises = queryParam["noises"]?.nullIfBlank()
         try {
             val (noises, fm) = NoiseProfileUtil.syncProfileFields(rawNoises, config.finalMask)
             config.noisesJson = noises
             config.finalMask = fm
         } catch (_: IllegalArgumentException) {
-            return null
+            runCatching {
+                com.v2ray.ang.util.LogUtil.w(
+                    "WireguardFmt",
+                    "ссылка несёт повреждённый ключ noises; профиль импортирован без явного списка шума (fm как есть)"
+                )
+            }
+            config.noisesJson = NoiseProfileUtil.extractNoises(config.finalMask)
         }
 
         return config

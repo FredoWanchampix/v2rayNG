@@ -179,6 +179,20 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
+    fun `wireguard without amnezia options converts to plain wireguard`() {
+        // Опциональность обфускации: нет amnezia-wg-option — это plain
+        // wireguard, и ссылка обязана быть wireguard:// (не awg://).
+        val cfg = JSONObject(awgMihomo)
+        cfg.getJSONArray("outbounds").getJSONObject(0).remove("amnezia-wg-option")
+        val out = convert(cfg.toString())
+        assertTrue(out.startsWith("wireguard://"), out)
+        val profile = WireguardFmt.parse(out)
+        assertNotNull(profile)
+        assertEquals("PRIV=", profile!!.secretKey)
+        assertEquals(1280, profile.mtu)
+    }
+
+    @Test
     fun `wireguard with amnezia options never degrades to plain`() {
         // awg-опции есть, но endpoint отсутствует: сборка невозможна.
         // Отказ, а не plain wireguard:// с потерей обфускации.
