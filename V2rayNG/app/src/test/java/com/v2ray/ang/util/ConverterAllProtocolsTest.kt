@@ -568,6 +568,31 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
+    fun `singbox ss obfs-local keeps plugin opts`() {
+        val sb = """
+            { "type": "shadowsocks", "tag": "s", "server": "ss.example.com", "server_port": 8388,
+              "method": "aes-256-gcm", "password": "pw",
+              "plugin": "obfs-local", "plugin_opts": "obfs=http;obfs-host=cdn.example.com" }
+        """.trimIndent()
+        val out = convert(sb)
+        assertTrue(out.startsWith("ss://"), out)
+        assertTrue(out.contains("plugin=obfs%3Dhttp"), "plugin_opts обязаны попасть в ссылку: $out")
+        val profile = ShadowsocksFmt.parse(out)
+        assertNotNull(profile)
+    }
+
+    @Test
+    fun `singbox ss with unsupported plugin stays custom`() {
+        val sb = """
+            { "type": "shadowsocks", "tag": "s", "server": "ss.example.com", "server_port": 8388,
+              "method": "aes-256-gcm", "password": "pw", "plugin": "v2ray-plugin" }
+        """.trimIndent()
+        val out = convert(sb)
+        assertFalse(out.startsWith("ss://"), "неподдерживаемый plugin нельзя терять молча: $out")
+        assertTrue(out.contains("\"shadowsocks\""), "конфиг сохранён кастомным: $out")
+    }
+
+    @Test
     fun `xray trojan round trip via TrojanFmt`() {
         val cfg = """
             { "remarks": "TJ", "outbounds": [ { "tag": "t", "protocol": "trojan",

@@ -495,6 +495,7 @@ object SubscriptionContentConverter {
                 else -> "amneziawg: нет обязательных полей (secretKey/publicKey/endpoint) или version не число"
             }
             "mimic" -> "mimic: нет uuid/адреса/порта"
+            "shadowsocks" -> "shadowsocks: plugin не поддерживается профилем форка (только obfs=http), профиль остаётся кастомным без потерь"
             "socks" -> "socks: settings.servers[] пуст или содержит более одного сервера"
             "http" -> "http: форк не импортирует http:// ссылки (схемы нет в карте парсеров); для приватного IP строка ушла бы в подписку — профиль остаётся кастомным"
             "hysteria", "hysteria2" -> {
@@ -1288,6 +1289,13 @@ object SubscriptionContentConverter {
             port = ob.getInt("server_port")
             method = ob.getString("method")
             password = ob.getString("password")
+            // sing-box ss plugin: профиль форка не имеет поля plugin, а
+            // ShadowsocksFmt понимает только obfs=http. obfs-local переносим
+            // через plugin_opts (формат "obfs=http;obfs-host=..."), любой
+            // другой plugin (v2ray-plugin, shadow-tls) молча потерялся бы —
+            // честный отказ, профиль остаётся кастомным.
+            val sbPlugin = ob.optString("plugin", "")
+            if (sbPlugin.isNotEmpty() && sbPlugin != "obfs-local") return null
         } else {
             val s = ob.optJSONObject("settings")?.optJSONArray("servers")?.getJSONObject(0) ?: return null
             address = s.getString("address")
@@ -1299,7 +1307,10 @@ object SubscriptionContentConverter {
         val ui = android.util.Base64.encodeToString(credentials.toByteArray(), android.util.Base64.NO_WRAP)
         val finalRem = ob.optString("remarks", rem)
         val encRem = URLEncoder.encode(finalRem, "UTF-8").replace("+", "%20")
-        val plugin = ob.optString("plugin")
+        // plugin: xray-стиль уже несёт готовую строку; sing-box obfs-local
+        // даёт opts в plugin_opts — их и кладём (ShadowsocksFmt ждёт obfs=http;...).
+        val plugin = ob.optString("plugin").takeIf { it.isNotEmpty() && it != "obfs-local" }
+            ?: ob.optString("plugin_opts", "")
         val pluginQ = if (plugin.isNullOrEmpty()) "" else "/?plugin=" + URLEncoder.encode(plugin, "UTF-8")
         "ss://$ui@$address:$port$pluginQ#$encRem"
     } catch (_: Exception) {
