@@ -324,11 +324,25 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
-    fun `custom protocol stays custom with reason`() {
-        val cfg = """{ "outbounds": [ { "tag": "c", "protocol": "custom", "settings": {} } ] }"""
+    fun `custom and custom_outbound protocols stay custom with reason`() {
+        for (proto in listOf("custom", "custom_outbound")) {
+            val cfg = """{ "outbounds": [ { "tag": "c", "protocol": "$proto", "settings": {} } ] }"""
+            val out = convert(cfg)
+            assertTrue(out.contains("\"$proto\""), "$proto сохраняется как есть: $out")
+            assertFalse(out.contains("://"), "ссылок из $proto быть не должно: $out")
+        }
+    }
+
+    @Test
+    fun `hysteria v1 stays custom because fork parser has no v1`() {
+        val cfg = """
+            { "remarks": "H1", "outbounds": [ { "tag": "h", "protocol": "hysteria",
+              "settings": { "address": "hy.example.com", "port": 443, "auth": "a" },
+              "streamSettings": { "hysteriaSettings": { "version": 1 } } } ] }
+        """.trimIndent()
         val out = convert(cfg)
-        assertTrue(out.contains("\"custom\""), "кастомный профиль сохраняется как есть: $out")
-        assertFalse(out.contains("://"), "ссылок из custom быть не должно: $out")
+        assertFalse(out.startsWith("hysteria://"), "v1 не поддерживается парсером: $out")
+        assertTrue(out.contains("\"hysteria\""), "конфиг сохранён: $out")
     }
 
     @Test
