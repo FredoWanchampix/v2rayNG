@@ -1540,6 +1540,12 @@ object SubscriptionContentConverter {
         transport?.optJSONObject("headers")?.optString("Host")?.takeIf { it.isNotEmpty() }?.let {
             query.append("&host=").append(URLEncoder.encode(it, "UTF-8"))
         }
+        // grpc: service_name обязателен, иначе поток не совпадёт с сервером
+        if (sbTransportType(root) == "grpc") {
+            transport?.optString("service_name")?.takeIf { it.isNotEmpty() }?.let {
+                query.append("&serviceName=").append(URLEncoder.encode(it, "UTF-8"))
+            }
+        }
         if (sbAlpn.isNotEmpty()) query.append("&alpn=").append(URLEncoder.encode(sbAlpn, "UTF-8"))
         if (sbInsec) query.append("&allowInsecure=1")
         val encRem = URLEncoder.encode(rem, "UTF-8").replace("+", "%20")

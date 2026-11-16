@@ -8,6 +8,7 @@ import com.v2ray.ang.fmt.Hysteria2Fmt
 import com.v2ray.ang.fmt.MasqueFmt
 import com.v2ray.ang.fmt.ShadowsocksFmt
 import com.v2ray.ang.fmt.TrojanFmt
+import com.v2ray.ang.fmt.VlessFmt
 import com.v2ray.ang.fmt.VmessFmt
 import com.v2ray.ang.fmt.FptnFmt
 import com.v2ray.ang.fmt.MimicFmt
@@ -433,6 +434,21 @@ class ConverterAllProtocolsTest {
         assertEquals("443", profile.serverPort)
         assertEquals("example.com", profile.sni)
         assertEquals(true, profile.insecure)
+    }
+
+    @Test
+    fun `singbox vless grpc keeps service name`() {
+        val sb = """
+            { "type": "vless", "tag": "v", "server": "g.example.com", "server_port": 443,
+              "uuid": "uuid-3", "flow": "", "transport": { "type": "grpc", "service_name": "grpcSvc" },
+              "tls": { "server_name": "g.example.com" } }
+        """.trimIndent()
+        val out = convert(sb)
+        assertTrue(out.startsWith("vless://"), out)
+        assertTrue(out.contains("serviceName=grpcSvc"), "service_name обязан попасть в ссылку: $out")
+        val profile = VlessFmt.parse(out)!!
+        assertEquals("grpcSvc", profile.serviceName)
+        assertEquals("grpc", profile.network)
     }
 
     @Test
