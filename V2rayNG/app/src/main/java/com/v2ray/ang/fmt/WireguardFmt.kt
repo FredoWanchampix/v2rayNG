@@ -161,14 +161,12 @@ object WireguardFmt : FmtBase() {
         if (config.remoteDNS != null) {
             dicQuery["dns"] = config.remoteDNS.removeWhiteSpace().orEmpty()
         }
-        // «Весь контекст»: экспортируем и полный fm, и явный список шумов.
-        // Инвариант (noisesJson == noise-часть fm) поддерживается при импорте
-        // и сохранении; здесь только экспорт, без мутации полей. Если профиль
-        // старый и noisesJson пуст — список восстанавливается из fm.
+        // «Весь контекст» несёт fm: он содержит noise-маску целиком, а импорт
+        // (parse) восстанавливает из fm явное поле шума — дублировать список
+        // ключом noises НЕЛЬЗЯ: ссылка с большим hex-пакетом удваивается и
+        // превышает ёмкость QR (2953 байта), из-за чего share2QRCode молча
+        // возвращал null. Чтение ключа noises при импорте сохранено.
         config.finalMask?.nullIfBlank()?.let { dicQuery["fm"] = it }
-        (NoiseProfileUtil.normalizeNoises(config.noisesJson)
-            ?: NoiseProfileUtil.extractNoises(config.finalMask))
-            ?.let { dicQuery["noises"] = it }
 
         return toUri(config, config.secretKey, dicQuery)
     }

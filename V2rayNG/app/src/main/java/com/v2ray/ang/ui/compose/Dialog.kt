@@ -16,6 +16,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.selection.TextSelectionColors
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -175,22 +177,50 @@ fun InputDialog(
     )
 }
 
+/**
+ * Диалог сегментированного QR-экспорта: HorizontalPager по списку QR,
+ * счётчик «n / всего» и подсказка сканировать по порядку. Каждый QR несёт
+ * целый кусок ссылки без сжатия и сокращений.
+ */
 @Composable
-fun QRCodeDialog(
-    bitmap: Bitmap?,
+fun QRCodePagerDialog(
+    bitmaps: List<Bitmap>,
     onDismiss: () -> Unit
 ) {
-    if (bitmap == null) return
+    if (bitmaps.isEmpty()) return
+    val pagerState = rememberPagerState(pageCount = { bitmaps.size })
     AlertDialog(
         onDismissRequest = onDismiss,
-        text = {
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = stringResource(R.string.acc_qr_code),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f)
+        title = {
+            Text(
+                stringResource(
+                    R.string.qr_segment_counter,
+                    pagerState.currentPage + 1,
+                    bitmaps.size
+                )
             )
+        },
+        text = {
+            Column {
+                if (bitmaps.size > 1) {
+                    Text(
+                        stringResource(R.string.qr_scan_hint_multi),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxWidth()
+                ) { page ->
+                    Image(
+                        bitmap = bitmaps[page].asImageBitmap(),
+                        contentDescription = stringResource(R.string.acc_qr_code),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(1f)
+                    )
+                }
+            }
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) }

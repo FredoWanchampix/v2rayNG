@@ -350,16 +350,17 @@ class NoiseProfileUtilTest {
                     .put(JSONObject().put("type", "rand").put("packet", "23-911").put("delay", "1-3"))))))
         val link = SubscriptionContentConverter.convert(cfg.toString(), decodeBase64 = false, customToLinks = true)
         assertTrue(link.startsWith("wireguard://"), link)
-        assertTrue(link.contains("noises="), "ссылка обязана нести явный ключ noises: $link")
-        assertTrue(link.contains("fm="), "ссылка обязана нести fm: $link")
+        assertTrue(link.contains("fm="), "ссылка обязана нести fm со всем шумом: $link")
+        assertFalse(link.contains("noises="), "дубликат noises запрещён: $link")
 
         // имитация WireguardFmt.parse: query-пары -> syncProfileFields
+        // (явного noises нет — поле восстанавливается из fm)
         val query = link.substringAfter("?").substringBefore("#")
             .split("&").associate {
                 val (k, v) = it.split("=", limit = 2)
                 k to java.net.URLDecoder.decode(v, "UTF-8")
             }
-        val (noises, fm) = NoiseProfileUtil.syncProfileFields(query["noises"], query["fm"])
+        val (noises, fm) = NoiseProfileUtil.syncProfileFields(null, query["fm"])
         assertNotNull(noises)
         val effective = NoiseProfileUtil.effectiveFinalMask(fm, noises)
         val noiseOut = JSONObject(effective!!).getJSONArray("udp").getJSONObject(0)

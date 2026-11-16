@@ -210,7 +210,9 @@ abstract class BaseServerActivity : BaseComponentActivity() {
                 FormTextField(
                     stringResource(R.string.server_lab_xhttp_extra),
                     state.xhttpExtra,
-                    { state.xhttpExtra = it }
+                    { state.xhttpExtra = it },
+                    supportingText = stringResource(R.string.server_lab_xhttp_extra_hint),
+                    maxLines = 10
                 )
             }
             if (state.network == NetworkType.KCP.type) {
@@ -235,7 +237,9 @@ abstract class BaseServerActivity : BaseComponentActivity() {
             FormTextField(
                 stringResource(R.string.server_lab_final_mask),
                 state.finalMask,
-                { state.finalMask = it }
+                { state.finalMask = it },
+                supportingText = stringResource(R.string.server_lab_final_mask_hint),
+                maxLines = 10
             )
             if (state.network == NetworkType.WS.type || state.network == NetworkType.XHTTP.type) {
                 FormDropdownField(
@@ -425,7 +429,7 @@ abstract class BaseServerActivity : BaseComponentActivity() {
             return false
         }
         if (!config.finalMask.isNullOrBlank() && JsonUtil.parseString(config.finalMask) == null) {
-            toast(R.string.server_lab_final_mask)
+            toast(R.string.toast_invalid_final_mask)
             return false
         }
         if (!config.noisesJson.isNullOrBlank() && NoiseProfileUtil.normalizeNoises(config.noisesJson) == null) {

@@ -36,7 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.ui.compose.LocalDarkTheme
-import com.v2ray.ang.ui.compose.QRCodeDialog
+import com.v2ray.ang.ui.compose.QRCodePagerDialog
 import com.v2ray.ang.extension.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -55,7 +55,7 @@ fun MainScreen(
     val selectedGuid = uiState.selectedGuid
     val doubleColumnDisplay = uiState.doubleColumnDisplay
     val confirmRemove = uiState.confirmRemove
-    val shareQRCodeBitmap = uiState.shareQRCodeBitmap
+    val shareQRCodeBitmaps = uiState.shareQRCodeBitmaps
 
     val isDarkTheme = LocalDarkTheme.current
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -171,8 +171,11 @@ fun MainScreen(
             onRemove = removeServer,
         )
     }
-    if (shareQRCodeBitmap != null) {
-        QRCodeDialog(bitmap = shareQRCodeBitmap, onDismiss = { onAction(MainAction.DismissQRCodeDialog) })
+    if (shareQRCodeBitmaps.isNotEmpty()) {
+        QRCodePagerDialog(
+            bitmaps = shareQRCodeBitmaps,
+            onDismiss = { onAction(MainAction.DismissQRCodeDialog) }
+        )
     }
 
     ModalNavigationDrawer(

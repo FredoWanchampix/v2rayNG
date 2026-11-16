@@ -57,7 +57,7 @@ interface MainDataSource : Closeable {
     fun updateConfigViaSub(subscriptionCache: SubscriptionCache): SubscriptionUpdateResult
 
     fun shareNonCustomConfigsToClipboard(guids: List<String>): Int
-    fun share2QRCode(guid: String): android.graphics.Bitmap?
+    fun share2QRCode(guid: String): List<android.graphics.Bitmap>
     fun share2Clipboard(guid: String): Boolean
 
     fun sendMsg2Service(msgId: Int, content: String)

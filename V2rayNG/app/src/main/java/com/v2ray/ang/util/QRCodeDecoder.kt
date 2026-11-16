@@ -40,6 +40,17 @@ object QRCodeDecoder {
     }
 
     /**
+     * QR-экспорт ЛЮБОЙ длины без сжатия и сокращений: ссылка режется на
+     * сегменты протокола [QrSegmentCodec] (каждый — целый читаемый кусок),
+     * каждый сегмент кодируется отдельным QR. Короткая ссылка даёт один
+     * обычный QR без префикса (совместимо со сторонними сканерами).
+     *
+     * @return список битмапов; пустой, если ни один сегмент не закодирован.
+     */
+    fun createQRCodeList(text: String, size: Int = 800): List<Bitmap> =
+        QrSegmentCodec.split(text).mapNotNull { createQRCode(it, size) }
+
+    /**
      * Decodes a QR code from a local image file. This method is time-consuming and should be called in a background thread.
      *
      * @param picturePath The local path of the image file to decode.

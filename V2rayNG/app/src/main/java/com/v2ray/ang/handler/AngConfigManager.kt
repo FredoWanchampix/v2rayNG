@@ -135,17 +135,19 @@ object AngConfigManager {
      * @param guid The GUID of the configuration.
      * @return The QR code bitmap.
      */
-    fun share2QRCode(guid: String): Bitmap? {
+    fun share2QRCode(guid: String): List<Bitmap> {
         try {
             val conf = shareConfig(guid)
             if (TextUtils.isEmpty(conf)) {
-                return null
+                return emptyList()
             }
-            return QRCodeDecoder.createQRCode(conf)
+            // Сегментированный экспорт: длинная ссылка (шум, маски) режется на
+            // целые куски, каждый — отдельный QR; ничего не урезается.
+            return QRCodeDecoder.createQRCodeList(conf)
 
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to share config as QR code", e)
-            return null
+            return emptyList()
         }
     }
 

@@ -123,12 +123,9 @@ open class FmtBase {
         config.spiderX?.nullIfBlank()?.let { dicQuery["spx"] = it }
         config.mldsa65Verify?.nullIfBlank()?.let { dicQuery["pqv"] = it }
         config.flow?.nullIfBlank()?.let { dicQuery["flow"] = it }
+        // fm несёт весь контекст шума; явное поле восстанавливается из fm при
+        // импорте. Ключ noises не дублируем: удвоение payload ломает QR-ёмкость.
         config.finalMask?.nullIfBlank()?.let { dicQuery["fm"] = it }
-        // «Весь контекст»: явный список шумов рядом с fm (информационный ключ,
-        // fm остаётся первичным и не мутирует при экспорте).
-        (NoiseProfileUtil.normalizeNoises(config.noisesJson)
-            ?: NoiseProfileUtil.extractNoises(config.finalMask))
-            ?.let { dicQuery["noises"] = it }
         config.kcpMtu?.let { dicQuery["mtu"] = it.toString() }
         config.kcpTti?.let { dicQuery["tti"] = it.toString() }
         // Add two keys for compatibility: "insecure" and "allowInsecure"

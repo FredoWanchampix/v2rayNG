@@ -210,7 +210,7 @@ class MainRepository(
     override fun shareNonCustomConfigsToClipboard(guids: List<String>): Int =
         AngConfigManager.shareNonCustomConfigsToClipboard(app, guids)
 
-    override fun share2QRCode(guid: String): android.graphics.Bitmap? =
+    override fun share2QRCode(guid: String): List<android.graphics.Bitmap> =
         AngConfigManager.share2QRCode(guid)
 
     override fun share2Clipboard(guid: String): Boolean =

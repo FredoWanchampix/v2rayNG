@@ -240,17 +240,17 @@ class SubscriptionContentConverterTest {
     }
 
     @Test
-    fun `warp noise link carries explicit noises key`() {
-        // «Весь контекст»: ссылка несёт и полный fm, и явный список шумов,
-        // чтобы поле шума в редакторе заполнилось сразу после импорта.
+    fun `warp noise link carries the whole noise in fm`() {
+        // «Весь контекст» несёт fm (noise-маска целиком); дубликат noises
+        // запрещён (удвоение payload ломает экспорт), поле шума редактора
+        // восстанавливается из fm при импорте (WireguardFmt.parse).
         val out = SubscriptionContentConverter.convert(warpWithNoise, decodeBase64 = false, customToLinks = true)
         assertTrue(out.startsWith("wireguard://"), out)
-        assertTrue(out.contains("noises="), "явный ключ noises обязан быть в ссылке: $out")
-        assertTrue(out.contains("fm="), "fm обязан остаться: $out")
-        // явный список — валидный finalmask-массив c rand 23-911
+        assertTrue(out.contains("fm="), "fm обязан нести весь шум: $out")
+        assertFalse(out.contains("noises="), "дубликат noises запрещён: $out")
         val q = out.substringAfter("?").substringBefore("#")
             .split("&").associate { val (k, v) = it.split("=", limit = 2); k to java.net.URLDecoder.decode(v, "UTF-8") }
-        val noises = org.json.JSONArray(q["noises"]!!)
+        val noises = org.json.JSONArray(NoiseProfileUtil.extractNoises(q["fm"])!!)
         assertTrue(noises.length() >= 1)
         assertEquals("23-911", noises.getJSONObject(0).getString("rand"))
     }
@@ -277,7 +277,7 @@ class SubscriptionContentConverterTest {
         val out = SubscriptionContentConverter.convert(cfg, decodeBase64 = false, customToLinks = true)
         assertTrue(out.startsWith("wireguard://"), out)
         assertTrue(out.contains("fm="), "собственный finalmask обязан попасть в fm: $out")
-        assertTrue(out.contains("noises="), "явный список обязан попасть в noises: $out")
+        assertFalse(out.contains("noises="), "дубликат noises запрещён: $out")
         assertTrue(out.contains("40-70"), "диапазон шума обязан сохраниться: $out")
     }
 

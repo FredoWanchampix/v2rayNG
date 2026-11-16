@@ -95,7 +95,9 @@ class ServerWireguardActivity : BaseServerActivity() {
                     it.isBlank() -> state.noisesJson = ""
                     runCatching { org.json.JSONObject(it) }.isSuccess -> state.noisesJson = ""
                 }
-            }
+            },
+            supportingText = stringResource(R.string.server_lab_final_mask_hint),
+            maxLines = 10
         )
 
         FormTextField(
@@ -123,9 +125,15 @@ class ServerWireguardActivity : BaseServerActivity() {
             stringResource(R.string.noise_preset_amnezia),
             stringResource(R.string.noise_preset_quic),
             stringResource(R.string.noise_preset_warp),
+            stringResource(R.string.noise_preset_custom),
         )
-        val presetKeys = listOf("", NoiseProfileUtil.PRESET_AMNEZIA, NoiseProfileUtil.PRESET_QUIC, NoiseProfileUtil.PRESET_WARP)
-        var selectedPreset by rememberSaveable { mutableStateOf("") }
+        val presetKeys = listOf("", NoiseProfileUtil.PRESET_AMNEZIA, NoiseProfileUtil.PRESET_QUIC, NoiseProfileUtil.PRESET_WARP, PRESET_CUSTOM)
+        // Состояние списка обязано отражать ФАКТ: если шум уже заполнен
+        // (импорт из буфера/подписки) и не равен ни одному пресету —
+        // показываем «Свой список», а не «Без шума».
+        var selectedPreset by rememberSaveable {
+            mutableStateOf(initialPresetFor(state.noisesJson))
+        }
         FormDropdownField(
             label = stringResource(R.string.server_lab_noise_preset),
             value = presetLabels.getOrElse(presetKeys.indexOf(selectedPreset)) { presetLabels[0] },
@@ -158,5 +166,20 @@ class ServerWireguardActivity : BaseServerActivity() {
         runCatching {
             state.finalMask = NoiseProfileUtil.mergeNoisesIntoFinalMask(state.finalMask, noises).orEmpty()
         }
+    }
+
+    /** Маркер «свой список»: не совпадает ни с одним пресетом. */
+    private const val PRESET_CUSTOM = "custom"
+
+    /**
+     * Пресет, которому СООТВЕТСТВУЕТ текущий список шума: точное совпадение
+     * канонических JSON; пустой список — «Без шума»; иначе «Свой список».
+     */
+    private fun initialPresetFor(noisesJson: String?): String {
+        val canonical = NoiseProfileUtil.normalizeNoises(noisesJson) ?: return ""
+        for (key in listOf(NoiseProfileUtil.PRESET_AMNEZIA, NoiseProfileUtil.PRESET_QUIC, NoiseProfileUtil.PRESET_WARP)) {
+            if (NoiseProfileUtil.presetJson(key) == canonical) return key
+        }
+        return PRESET_CUSTOM
     }
 }

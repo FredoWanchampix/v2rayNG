@@ -108,20 +108,18 @@ class WireguardFmtNoiseTest {
     }
 
     @Test
-    fun `toUri exports full context fm and noises`() {
+    fun `toUri exports full context in fm and restores noise on import`() {
+        // «Весь контекст» несёт fm (noise-маска целиком). Дублировать список
+        // ключом noises НЕЛЬЗЯ: ссылка с большим hex-пакетом удваивается, а
+        // импорт восстанавливает поле шума из fm сам (parse).
         val profile = WireguardFmt.parse(link("noises=${enc(noiseArr)}"))!!
         val uri = "wireguard://" + WireguardFmt.toUri(profile)
-        assertTrue(uri.contains("fm="), "экспорт обязан нести fm: $uri")
-        assertTrue(uri.contains("noises="), "экспорт обязан нести noises: $uri")
-        // round-trip: повторный импорт даёт те же поля
+        assertTrue(uri.contains("fm="), "экспорт обязан нести fm со всем шумом: $uri")
+        assertFalse(uri.contains("noises="), "дубликат noises запрещён: $uri")
+        // round-trip: повторный импорт восстанавливает поле шума ИЗ fm
         val again = WireguardFmt.parse(uri)
         assertNotNull(again)
-        // Сравниваем структуры, а не строки: порядок ключей org.json на JVM
-        // не гарантирован спецификацией.
-        assertEquals(
-            JSONArray(profile.noisesJson!!).toString(),
-            JSONArray(again!!.noisesJson!!).toString()
-        )
+        assertTrue(TestJson.similar(JSONArray(profile.noisesJson!!), JSONArray(again!!.noisesJson!!)))
         assertTrue(
             TestJson.similar(JSONObject(profile.finalMask!!), JSONObject(again.finalMask!!)),
             "finalMask обязан совпадать структурно"
@@ -134,14 +132,16 @@ class WireguardFmtNoiseTest {
     }
 
     @Test
-    fun `toUri of legacy profile restores noises from fm`() {
+    fun `toUri of legacy profile keeps noise in fm and import restores field`() {
         // Профиль, сохранённый старой версией: noisesJson отсутствует.
+        // Экспорт несёт fm (шум внутри), импорт восстанавливает поле шума.
         val profile = WireguardFmt.parse(link("fm=${enc(fmOf(noiseArr))}"))!!
         profile.noisesJson = null
         val uri = "wireguard://" + WireguardFmt.toUri(profile)
-        assertTrue(uri.contains("noises="), "список обязан восстановиться из fm при экспорте: $uri")
+        assertTrue(uri.contains("fm="), uri)
+        assertFalse(uri.contains("noises="), uri)
         val again = WireguardFmt.parse(uri)!!
-        assertNotNull(again.noisesJson)
+        assertNotNull(again.noisesJson, "поле шума обязано восстановиться из fm")
         assertEquals(2, JSONArray(again.noisesJson!!).length())
     }
 

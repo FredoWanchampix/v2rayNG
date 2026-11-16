@@ -874,13 +874,10 @@ object SubscriptionContentConverter {
             ?.takeIf { it.length() > 0 }?.toString()
         val fm = finalMaskJson?.takeIf { it.isNotEmpty() } ?: ownFm
         fm?.let { params["fm"] = it }
-        // Явный список шумов — «весь контекст» отдельным ключом, чтобы поле
-        // шума в редакторе заполнилось даже у клиентов, читающих только noises.
-        // Кодируем с %20 для пробелов (decodeURIComponent трактует '+' как
-        // литеральный плюс) и добавляем хвостом к общему q-join.
-        val noisesParam = NoiseProfileUtil.extractNoises(fm)
-        val q = params.toList().joinToString("&") { "${it.first}=${URLEncoder.encode(it.second, "UTF-8")}" } +
-            (noisesParam?.let { "&noises=${URLEncoder.encode(it, "UTF-8").replace("+", "%20")}" } ?: "")
+        // Шум целиком несёт fm; поле шума при импорте восстанавливается из fm
+        // (WireguardFmt.parse). Отдельный ключ noises не пишем: удвоение
+        // payload с большим hex-пакетом превышает ёмкость QR-кода.
+        val q = params.toList().joinToString("&") { "${it.first}=${URLEncoder.encode(it.second, "UTF-8")}" }
         val enc = URLEncoder.encode(rem, "UTF-8").replace("+", "%20")
         "wireguard://${URLEncoder.encode(secret, "UTF-8")}@$host:$port?$q#$enc"
     } catch (_: Throwable) {

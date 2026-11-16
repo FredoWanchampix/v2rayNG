@@ -69,6 +69,7 @@ import com.v2ray.ang.ui.base.HelperBaseComponentActivity
 import com.v2ray.ang.ui.compose.AppTopBar
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.QRCodeDecoder
+import com.v2ray.ang.util.QrSegmentCodec
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -77,6 +78,12 @@ import android.util.Size as TargetSize
 private val qrReader = MultiFormatReader()
 
 class ScannerActivity : HelperBaseComponentActivity() {
+
+    /** Сборщик сегментированного QR-экспорта (серия V2NGQR1). */
+    private val segmentAssembler = QrSegmentCodec.Assembler()
+
+    /** Последний обработанный текст: камера видит один QR много кадров подряд. */
+    private var lastScanText: String? = null
 
     private val uiState = mutableStateOf(ScannerUiState.IDLE)
 
@@ -93,7 +100,7 @@ class ScannerActivity : HelperBaseComponentActivity() {
             onSelectPhoto = { showFileChooser() },
             onStartScan = { startScan() },
             onStopScan = { stopScan() },
-            onScanResult = { text -> finished(text) }
+            onScanResult = { text -> handleScan(text) }
         )
     }
 
@@ -114,6 +121,30 @@ class ScannerActivity : HelperBaseComponentActivity() {
         finish()
     }
 
+    /**
+     * Обрабатывает распознанный текст. true — сканирование завершено (полная
+     * ссылка получена), false — это сегмент серии, сканирование продолжается.
+     * Сегменты принимаются в любом порядке; чужая серия сбрасывает накопленное.
+     */
+    private fun handleScan(text: String): Boolean {
+        // Вызывается из analysis-executor (нет Looper): все UI-эффекты
+        // (toast, finish) только через runOnUiThread.
+        if (text == lastScanText) return false
+        lastScanText = text
+        if (!QrSegmentCodec.isSegment(text)) {
+            runOnUiThread { finished(text) }
+            return true
+        }
+        val payload = segmentAssembler.offer(text)
+        if (payload != null) {
+            runOnUiThread { finished(payload) }
+            return true
+        }
+        val (got, total) = segmentAssembler.progress()
+        runOnUiThread { toast(getString(R.string.qr_scan_progress, got, total)) }
+        return false
+    }
+
     private fun showFileChooser() {
         launchFileChooser("image/*") { uri ->
             if (uri == null) return@launchFileChooser
@@ -124,8 +155,9 @@ class ScannerActivity : HelperBaseComponentActivity() {
                 val text = QRCodeDecoder.syncDecodeQRCode(bitmap)
                 if (text.isNullOrEmpty()) {
                     toast(R.string.toast_decoding_failed)
-                } else {
-                    finished(text)
+                } else if (!handleScan(text)) {
+                    // сегмент серии: предлагаем выбрать следующий файл
+                    showFileChooser()
                 }
             } catch (e: Exception) {
                 LogUtil.e(AppConfig.TAG, "Failed to decode QR code from file", e)
@@ -147,7 +179,7 @@ fun ScannerScreen(
     onSelectPhoto: () -> Unit,
     onStartScan: () -> Unit,
     onStopScan: () -> Unit,
-    onScanResult: (String) -> Unit
+    onScanResult: (String) -> Boolean
 ) {
     val isScanning = uiState == ScannerUiState.ACTIVE
     var cameraControl by remember { mutableStateOf<CameraControl?>(null) }
@@ -332,7 +364,7 @@ fun ScannerOverlay() {
 
 @Composable
 fun CameraXPreview(
-    onScanResult: (String) -> Unit,
+    onScanResult: (String) -> Boolean,
     onCameraReady: (CameraControl, CameraInfo) -> Unit
 ) {
     val context = LocalContext.current
@@ -409,7 +441,7 @@ fun CameraXPreview(
 private fun processImageProxy(
     imageProxy: ImageProxy,
     foundResult: AtomicBoolean,
-    onResult: (String) -> Unit
+    onResult: (String) -> Boolean
 ) {
     if (foundResult.get()) {
         imageProxy.close()
@@ -433,8 +465,11 @@ private fun processImageProxy(
         )
         val result = qrReader.decode(binaryBitmap, hints)
         val text = result.text
-        if (!text.isNullOrEmpty() && foundResult.compareAndSet(false, true)) {
-            onResult(text)
+        if (text.isNullOrEmpty()) return
+        // onResult=false (сегмент серии): не ставим foundResult, анализ
+        // продолжается — владелец сканирует следующий QR той же серии.
+        if (onResult(text)) {
+            foundResult.compareAndSet(false, true)
         }
     } catch (_: Exception) {
         // do nothing

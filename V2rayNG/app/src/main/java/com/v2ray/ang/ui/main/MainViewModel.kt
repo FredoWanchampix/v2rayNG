@@ -212,12 +212,15 @@ class MainViewModel(
             is MainAction.ImportBatchConfig -> importBatchConfig(action.configText)
             is MainAction.LocateHandled -> consumeLocateTarget()
             is MainAction.ShareQRCode -> {
-                val bitmap = dataSource.share2QRCode(action.guid)
-                _uiState.update { it.copy(shareQRCodeBitmap = bitmap) }
+                val bitmaps = dataSource.share2QRCode(action.guid)
+                if (bitmaps.isEmpty()) {
+                    toastError(R.string.toast_qr_create_failed)
+                }
+                _uiState.update { it.copy(shareQRCodeBitmaps = bitmaps) }
             }
 
             MainAction.DismissQRCodeDialog -> {
-                _uiState.update { it.copy(shareQRCodeBitmap = null) }
+                _uiState.update { it.copy(shareQRCodeBitmaps = emptyList()) }
             }
 
             MainAction.ToggleService,

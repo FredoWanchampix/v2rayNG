@@ -559,6 +559,114 @@ class ConverterAllProtocolsTest {
         assertEquals("1.1.1.1", profile.remoteDNS)
     }
 
+    // --- Реальные конфиги владельца: перенос БЕЗ потерь ---
+
+    private val ownerWarpHex = "c90000000108b0dd8456e7cebf5a000044d2c1c8da18f9ce0f94e5fa499a43609d7738d0cd"
+
+    private val ownerWarpConfig = """
+        {
+          "remarks": "🇪🇺 WARP",
+          "outbounds": [
+            {
+              "tag": "warp", "protocol": "wireguard",
+              "settings": {
+                "mtu": 1280,
+                "peers": [ { "endpoint": "162.159.195.1:500", "keepAlive": 5,
+                  "publicKey": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+                  "allowedIPs": ["0.0.0.0/0", "::/0"] } ],
+                "address": ["172.16.0.2/32", "2606:4700:110:84f0:6de9:eb1f:cb41:ce39/128"],
+                "secretKey": "aN6cG/eAT+l8u+Y0hF/0nmSZ0D7iMBtE8Yj+7swbukI="
+              },
+              "streamSettings": { "sockopt": { "dialerProxy": "noise-out" } }
+            },
+            {
+              "tag": "noise-out", "protocol": "freedom",
+              "settings": { "noises": [
+                { "type": "hex", "delay": "1-2", "packet": "HEXPLACEHOLDER" },
+                { "type": "rand", "delay": "1-3", "packet": "23-911" },
+                { "type": "rand", "delay": "1-3", "packet": "23-911" },
+                { "type": "rand", "delay": "1-3", "packet": "23-911" },
+                { "type": "rand", "delay": "1-3", "packet": "23-911" },
+                { "type": "rand", "delay": "1-3", "packet": "23-911" },
+                { "type": "rand", "delay": "1-3", "packet": "23-911" },
+                { "type": "rand", "delay": "1-3", "packet": "23-911" },
+                { "type": "rand", "delay": "1-3", "packet": "23-911" }
+              ], "domainStrategy": "AsIs" }
+            }
+          ]
+        }
+    """.trimIndent().replace("HEXPLACEHOLDER", ownerWarpHex)
+
+    @Test
+    fun `owner warp config converts with the whole hex noise intact`() {
+        // Доказательство переноса: весь hex-пакет (не обрезанный) и все 9
+        // элементов шума доходят до ссылки, а из ссылки — в поля профиля.
+        val out = convert(ownerWarpConfig)
+        assertTrue(out.startsWith("wireguard://"), out)
+        assertTrue(out.contains(ownerWarpHex), "hex-пакет обязан дойти целиком: ${out.take(200)}")
+        val q = out.substringAfter("?").substringBefore("#")
+            .split("&").associate { val (k, v) = it.split("=", limit = 2); k to java.net.URLDecoder.decode(v, "UTF-8") }
+        val fm = JSONObject(q["fm"]!!)
+        val noise = fm.getJSONArray("udp").getJSONObject(0)
+            .getJSONObject("settings").getJSONArray("noise")
+        assertEquals(9, noise.length())
+        assertEquals(ownerWarpHex, noise.getJSONObject(0).getString("packet"))
+        assertEquals("1-2", noise.getJSONObject(0).getString("delay"))
+        assertEquals("23-911", noise.getJSONObject(8).getString("rand"))
+        // профиль из ссылки: поле шума заполнено, fm совпадает структурно
+        val profile = WireguardFmt.parse(out)!!
+        assertNotNull(profile.noisesJson)
+        val pn = JSONArray(profile.noisesJson!!)
+        assertEquals(9, pn.length())
+        assertEquals(ownerWarpHex, pn.getJSONObject(0).getString("packet"))
+        assertEquals("bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=", profile.publicKey)
+        assertEquals("172.16.0.2/32,2606:4700:110:84f0:6de9:eb1f:cb41:ce39/128", profile.localAddress)
+    }
+
+    @Test
+    fun `owner vless xhttp config keeps finalmask xrayJson and extra`() {
+        // finalmask формата xrayJson (op/set) и xhttp extra — НЕ шум; они
+        // обязаны переехать в ссылку как есть (fm и extra), а не потеряться.
+        val cfg = """
+            {
+              "remarks": "🇫🇷 Франция [xHTTP]",
+              "outbounds": [
+                {
+                  "tag": "proxy", "protocol": "vless",
+                  "settings": { "address": "138.124.254.68", "port": 8443,
+                    "encryption": "none", "id": "ca382fc9-d753-45fa-a10d-835478ab4199" },
+                  "streamSettings": {
+                    "network": "xhttp", "security": "tls",
+                    "finalmask": { "base64": [], "mihomo": [], "xrayJson": [
+                      { "op": "set", "to": "streamSettings.xhttpSettings.mode", "value": "stream-up" },
+                      { "op": "set", "to": "streamSettings.xhttpSettings.extra.xPaddingBytes", "value": "100-1600" }
+                    ] },
+                    "tlsSettings": { "serverName": "river-4-416.rtbcdn.ru", "alpn": ["h2"],
+                      "fingerprint": "firefox",
+                      "pinnedPeerCertSha256": "69103e5ff502314fad6345ce7f208d70574e65968462dd6168e227055ed294d6" },
+                    "xhttpSettings": { "mode": "stream-up", "path": "/hls/vod/",
+                      "extra": { "xPaddingBytes": "64-2048", "scStreamUpServerSecs": "15-40" } }
+                  }
+                }
+              ]
+            }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertTrue(out.startsWith("vless://"), out)
+        assertTrue(out.contains("fm="), "finalmask xrayJson обязан попасть в fm: $out")
+        assertTrue(out.contains("extra="), "xhttp extra обязан попасть в extra: $out")
+        assertTrue(out.contains("stream-up"), out)
+        assertTrue(out.contains("xPaddingBytes"), out)
+        assertTrue(out.contains("69103e5ff502314fad6345ce7f208d70574e65968462dd6168e227055ed294d6"), "pin обязан дойти: $out")
+        // fm в ссылке — тот же xrayJson, без потерь
+        val q = out.substringAfter("?").substringBefore("#")
+            .split("&").associate { val (k, v) = it.split("=", limit = 2); k to java.net.URLDecoder.decode(v, "UTF-8") }
+        val fm = JSONObject(q["fm"]!!)
+        assertEquals(2, fm.getJSONArray("xrayJson").length())
+        assertEquals("streamSettings.xhttpSettings.extra.xPaddingBytes",
+            fm.getJSONArray("xrayJson").getJSONObject(1).getString("to"))
+    }
+
     @Test
     fun `wireguard round trip via WireguardFmt with noise`() {
         val cfg = """
