@@ -168,8 +168,6 @@ class ServerWireguardActivity : BaseServerActivity() {
         }
     }
 
-    /** Маркер «свой список»: не совпадает ни с одним пресетом. */
-    private const val PRESET_CUSTOM = "custom"
 
     /**
      * Пресет, которому СООТВЕТСТВУЕТ текущий список шума: точное совпадение
@@ -181,5 +179,10 @@ class ServerWireguardActivity : BaseServerActivity() {
             if (NoiseProfileUtil.presetJson(key) == canonical) return key
         }
         return PRESET_CUSTOM
+    }
+
+    companion object {
+        /** Маркер «свой список»: не совпадает ни с одним пресетом. */
+        private const val PRESET_CUSTOM = "custom"
     }
 }
