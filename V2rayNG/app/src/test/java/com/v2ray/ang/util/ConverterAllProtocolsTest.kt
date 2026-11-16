@@ -260,14 +260,25 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
-    fun `xray http outbound without auth converts`() {
+    fun `xray http outbound stays custom because fork cannot import http links`() {
+        // http:// ссылки форк не импортирует (схемы нет в configFmtParsers), а
+        // для приватного IP строка ещё и ушла бы в подписку (isValidSubUrl).
+        // Мёртвая/подменённая ссылка недопустима — честный отказ.
         val cfg = """
             { "remarks": "H", "outbounds": [ { "tag": "h", "protocol": "http",
               "settings": { "servers": [ { "address": "5.6.7.8", "port": 8080 } ] } } ] }
         """.trimIndent()
         val out = convert(cfg)
-        assertTrue(out.startsWith("http://"), out)
-        assertTrue(out.contains("5.6.7.8:8080"), out)
+        assertFalse(out.startsWith("http://"), "мёртвая ссылка недопустима: $out")
+        assertTrue(out.contains("\"http\""), "конфиг сохранён кастомным: $out")
+    }
+
+    @Test
+    fun `singbox http outbound stays custom too`() {
+        val sb = """{ "type": "http", "server": "5.6.7.8", "server_port": 8080 }"""
+        val out = convert(sb)
+        assertFalse(out.startsWith("http://"), out)
+        assertTrue(out.contains("\"http\""), out)
     }
 
     @Test

@@ -311,7 +311,8 @@ object SubscriptionContentConverter {
                 // TUIC: парсер форка отключён, ссылка была бы мёртвой.
                 "tuic" -> null
                 "socks" -> buildUserPassLink("socks", root, rem)
-                "http" -> buildUserPassLink("http", root, rem)
+                // http:// не импортируется форком — мёртвая ссылка запрещена
+                "http" -> null
                 "wireguard" -> buildSbWireguard(root, rem)
                 "naive" -> buildSbNaive(root, rem)
                 "openconnect" -> buildSbOpenconnect(root, rem)
@@ -435,7 +436,11 @@ object SubscriptionContentConverter {
         "tuic" -> null
         "wireguard" -> buildWireguard(ob, rem, noiseFm)
         "masque" -> buildMasque(ob, rem)
-        "socks", "http" -> buildXrayUserPass(p, ob, rem)
+        // http:// ссылки форк НЕ импортирует (схемы нет в configFmtParsers),
+        // а для приватного IP строка ещё и ушла бы в подписку (isValidSubUrl).
+        // Честный отказ; socks:// парсер есть — собираем.
+        "socks" -> buildXrayUserPass(p, ob, rem)
+        "http" -> null
         "amneziawg", "awg" -> buildAmnezia(ob, rem)
         "mimic" -> buildXrayMimic(ob, rem)
         else -> if (isShadowsocks(ob)) buildShadowsocks(ob, rem) else null
@@ -487,7 +492,8 @@ object SubscriptionContentConverter {
                 else -> "amneziawg: нет обязательных полей (secretKey/publicKey/endpoint) или version не число"
             }
             "mimic" -> "mimic: нет uuid/адреса/порта"
-            "socks", "http" -> "$p: settings.servers[] пуст или содержит более одного сервера"
+            "socks" -> "socks: settings.servers[] пуст или содержит более одного сервера"
+            "http" -> "http: форк не импортирует http:// ссылки (схемы нет в карте парсеров); для приватного IP строка ушла бы в подписку — профиль остаётся кастомным"
             "hysteria", "hysteria2" -> "hysteria: версия 1 не поддерживается парсером форка либо нет адреса/порта"
             else -> "$p: обязательные поля outbound отсутствуют или формат не распознан"
         }
