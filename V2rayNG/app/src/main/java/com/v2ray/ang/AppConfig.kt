@@ -283,6 +283,32 @@ object AppConfig {
     // hev-socks5-tunnel run as a standalone root binary (reuses the same project already
     // bundled for the VPN hev path; distinct filename from the JNI lib to avoid collision).
     const val ROOT_TUN2SOCKS_BIN = "libhevsockstun.so"
+
+    /**
+     * Сайдкар-движки, упакованные как lib*.so в libs/<abi>/.
+     *
+     * Почему именно lib*.so и nativeLibraryDir: на Android 10+ SELinux (W^X)
+     * запрещает untrusted_app исполнять файлы из app_data_file (filesDir) и
+     * shell_data_file (/data/local/tmp). Единственное разрешённое для
+     * исполнения расположение - nativeLibraryDir (контекст apk_data_file):
+     * установщик сам извлекает туда lib*.so из APK, потому что
+     * packaging.jniLibs.useLegacyPackaging=true (extractNativeLibs=true).
+     * Тот же паттерн форк уже использует для [ROOT_TUN2SOCKS_BIN]
+     * (см. RootProxyManager.buildTun2socksSetup).
+     *
+     * ВАЖНО: копировать движки из assets в filesDir и исполнять оттуда
+     * НЕЛЬЗЯ - execve вернёт EACCES на Android 10+. Все обращения обязаны
+     * идти через SidecarEngineManager.engineBinary(context, engine).
+     *
+     * Имя файла обязано начинаться с "lib" и заканчиваться на ".so", иначе
+     * PackageManager не извлечёт его в nativeLibraryDir.
+     */
+    const val ENGINE_MIHOMO_BIN = "libmihomo.so"
+    const val ENGINE_SINGBOX_BIN = "libsingbox.so"
+    const val ENGINE_MIMIC_BIN = "libmimicclient.so"
+    const val ENGINE_FPTN_BIN = "libfptnclient.so"
+    const val ENGINE_DNSPROXY_BIN = "libdnsproxy.so"
+    const val ENGINE_SPEEDPROBE_BIN = "libspeedprobe.so"
     const val ROOT_FWD_CHAIN = "CORE_FWD"   // FORWARD chain for LAN/tethering sharing
     const val ROOT_DNS_CHAIN = "CORE_DNS"   // nat chain for tethered-client DNS DNAT
     const val ROOT_DNS_OUT_CHAIN = "CORE_DNS_OUT"  // nat chain for device DNS DNAT (root mode)

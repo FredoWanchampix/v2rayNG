@@ -255,19 +255,21 @@ internal object FptnProbeRunner {
             LogUtil.w(AppConfig.TAG, "FptnProbe: нет root-доступа, измерение FPTN невозможно")
             return false
         }
-        // Бинарники берутся штатным механизмом форка: ensureBinaryPublic копирует
-        // файл из assets ТЕКУЩЕГО APK (context.assets) в filesDir/engines. Абсолютный
-        // путь к APK не используется нигде - он меняется при каждом обновлении.
-        if (SidecarEngineManager.ensureBinaryPublic(context, "fptn-client") == null) {
-            LogUtil.e(AppConfig.TAG, "FptnProbe: бинарь fptn-client отсутствует в сборке")
+        // Бинарники исполняются из nativeLibraryDir (lib*.so, извлечённые
+        // установщиком из APK): SELinux на Android 10+ запрещает execve из
+        // filesDir, поэтому копий в data-каталоге больше нет. Абсолютный путь к
+        // APK не используется нигде - он меняется при каждом обновлении, а
+        // nativeLibraryDir всегда указывает на актуальную установку.
+        if (SidecarEngineManager.engineBinary(context, SidecarEngineManager.ENGINE_FPTN) == null) {
+            LogUtil.e(AppConfig.TAG, "FptnProbe: бинарь fptn-client отсутствует в сборке для этого ABI")
             return false
         }
-        if (SidecarEngineManager.ensureBinaryPublic(context, "dnsproxy") == null) {
-            LogUtil.e(AppConfig.TAG, "FptnProbe: бинарь dnsproxy отсутствует в сборке")
+        if (SidecarEngineManager.engineBinary(context, SidecarEngineManager.ENGINE_DNSPROXY) == null) {
+            LogUtil.e(AppConfig.TAG, "FptnProbe: бинарь dnsproxy отсутствует в сборке для этого ABI")
             return false
         }
-        if (SidecarEngineManager.ensureBinaryPublic(context, "speedprobe") == null) {
-            LogUtil.e(AppConfig.TAG, "FptnProbe: бинарь speedprobe отсутствует в сборке")
+        if (SidecarEngineManager.engineBinary(context, SidecarEngineManager.ENGINE_SPEEDPROBE) == null) {
+            LogUtil.e(AppConfig.TAG, "FptnProbe: бинарь speedprobe отсутствует в сборке для этого ABI")
             return false
         }
         if (profile.fptnToken.isNullOrBlank()) {
@@ -708,9 +710,14 @@ internal object FptnProbeRunner {
         val dnsPidFile = "$probeDir/dnsproxy.pid"
         val nsFile = "$probeDir/ns.inode"
 
-        val clientBinary = "$filesDir/engines/fptn-client"
-        val dnsBinary = "$filesDir/engines/dnsproxy"
-        val probeBinary = "$filesDir/engines/speedprobe"
+        // Бинарники берутся из nativeLibraryDir: SELinux на Android 10+
+        // запрещает исполнять файлы из filesDir (контекст app_data_file), а
+        // из nativeLibraryDir (apk_data_file) разрешено и root-домену ksu,
+        // под которым работает весь скрипт пробы.
+        val nativeDir = context.applicationInfo.nativeLibraryDir.replace("'", "")
+        val clientBinary = "$nativeDir/${AppConfig.ENGINE_FPTN_BIN}"
+        val dnsBinary = "$nativeDir/${AppConfig.ENGINE_DNSPROXY_BIN}"
+        val probeBinary = "$nativeDir/${AppConfig.ENGINE_SPEEDPROBE_BIN}"
         val token = profile.fptnToken.orEmpty().replace("'", "")
         val mtu = SettingsManager.getVpnMtu()
         val preferred = profile.server?.trim()?.takeIf { it.isNotBlank() && !it.contains('\'') }
@@ -750,8 +757,8 @@ internal object FptnProbeRunner {
             appendLine("PRIO_SUB=8990")
             appendLine("PRIO_MARK=9000")
             appendLine("PROBE_DIR='$probeDir'")
-            // Путь к бинарнику speedprobe. Берётся из filesDir/engines, куда его
-            // штатно извлекает SidecarEngineManager из assets ТЕКУЩЕГО APK, поэтому
+            // Путь к бинарнику speedprobe. Берётся из nativeLibraryDir - его
+            // заполняет установщик из lib/<abi>/ ТЕКУЩЕГО APK, поэтому
             // переустановка приложения со сменой пути /data/app/... ничего не ломает.
             appendLine("SPEEDPROBE='$probeBinary'")
             appendLine("CLIENT_PIDF='$clientPidFile'")

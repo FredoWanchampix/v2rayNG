@@ -34,9 +34,12 @@ object FptnRootRunner {
 
     fun start(context: Context, profile: ProfileItem): Boolean {
         stop(context)
-        val binary = SidecarEngineManager.ensureBinaryPublic(context, "fptn-client")
+        // Бинарник исполняется из nativeLibraryDir (libfptnclient.so): SELinux
+        // на Android 10+ запрещает запускать файлы из filesDir, поэтому копий в
+        // data-каталоге больше нет. PID- и лог-файлы (ДАННЫЕ) остаются в filesDir.
+        val binary = SidecarEngineManager.engineBinary(context, SidecarEngineManager.ENGINE_FPTN)
         if (binary == null) {
-            LogUtil.e(AppConfig.TAG, "FptnRootRunner: fptn-client binary is not bundled")
+            LogUtil.e(AppConfig.TAG, "FptnRootRunner: fptn-client binary is not available for this ABI")
             return false
         }
         val token = profile.fptnToken.orEmpty()

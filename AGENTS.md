@@ -105,6 +105,24 @@ incompatible actions; every other root rule remains active.
 - `AndroidLibXrayLite` is native-core source. `V2rayNG/app/libs/libv2ray.aar` and the HEV libraries
   are generated inputs; do not modify or commit them unless task scope upgrades a native dependency.
   Such a PR must identify the source revision and verify every app-declared ABI.
+- Sidecar engine binaries live in the same staging directory as `lib*.so` files under
+  `V2rayNG/app/libs/<abi>/` (`libmihomo.so`, `libsingbox.so`, `libmimicclient.so`,
+  `libfptnclient.so`, `libdnsproxy.so`, `libspeedprobe.so`). They are generated inputs produced by
+  `.github/actions/bundle-sidecar-engines` plus the `dnsproxy`/`speedprobe`/`fptn` reusable
+  workflows; do not commit or hand-edit them.
+  The `lib*.so` name and this directory are load-bearing, not cosmetic: SELinux on Android 10+
+  forbids the `untrusted_app` domain from executing files labelled `app_data_file` (`filesDir`) or
+  `shell_data_file` (`/data/local/tmp`), so an engine copied out of `assets/` into `filesDir` fails
+  `execve` with `EACCES`. Only `nativeLibraryDir` (label `apk_data_file`) is executable, and the
+  PackageManager extracts files there only when the name starts with `lib` and ends with `.so`.
+  Resolution goes through `SidecarEngineManager.engineBinary(context, engine)`; never rebuild the
+  path by hand and never reintroduce an `assets/engines/` copy.
+  Because `binary.parentFile` is now read-only, engines that take a working directory (mihomo `-d`)
+  must receive `filesDir/engines` explicitly. Configs, logs, and pid files stay in `filesDir`:
+  writing there is allowed, only execution is not.
+  `build.gradle.kts` must keep `jniLibs.srcDirs("libs")` and `packaging.jniLibs.useLegacyPackaging =
+  true`. Setting the latter to `false` leaves the libraries uncompressed inside the APK, and a
+  separate process can no longer be started from them.
 
 ## Build and validation
 

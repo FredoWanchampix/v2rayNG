@@ -10,23 +10,42 @@ name: DNSProxy Android build
 #     - форвардит запросы на upstream из НАСТРОЕК ПОЛЬЗОВАТЕЛЯ
 #       (udp/tcp/tls/https/quic/sdns - все пять транспортов);
 #     - не подменяет DNS никаким hardcoded-провайдером.
-#   dnsproxy (AdGuardTeam) - проверенный форвардер с Apache-2.0 лицензией,
-#   чистый Go без cgo (CGO_ENABLED=0), поэтому кросс-компилируется под
-#   android/arm64 так же, как mimic-client (тоже без NEEDED-зависимостей).
+#   dnsproxy (AdGuardTeam) - проверенный форвардер с Apache-2.0 лицензией.
 #
 # Почему отдельный workflow, а не шаг в build.yml:
 #   dnsproxy v0.86.0 требует Go 1.26.8, а build.yml использует Go 1.25 для
 #   sing-box/mimic (проверено рабочей сборкой). Отдельный workflow со своей
 #   версией Go изолирует риск: Go 1.26.8 для dnsproxy НЕ затрагивает уже
-#   работающие сборки sing-box/mimic на Go 1.25. Именно поэтому выбрана
-#   актуальная стабильная версия dnsproxy, а не устаревшая под старый Go.
+#   работающие сборки sing-box/mimic на Go 1.25.
 #
-# Hard-gate: build.yml НЕ соберёт APK, если dnsproxy не собран или его SHA не совпал.
+# MULTI-ABI (доказано CI-экспериментом, run 43777193468 в ветке abi-probe):
+#   * arm64      -> CGO_ENABLED=0 собирается и даёт бинарник БЕЗ записей NEEDED
+#                   (чистый Go). Это рабочий эталон master, он сохранён как есть.
+#   * arm/386/amd64 -> CGO_ENABLED=0 ОТВЕРГАЕТСЯ самим Go:
+#                   "android/<arch> requires external (cgo) linking, but cgo is
+#                   not enabled" (internal/platform/supported.go:
+#                   MustLinkExternal("android", goarch, false) == true при
+#                   goarch != arm64). Поэтому для этих ABI сборка идёт с
+#                   CGO_ENABLED=1 и явным NDK-clang; результат имеет NEEDED
+#                   ровно {liblog.so, libdl.so, libc.so} - все три являются
+#                   частью bionic и присутствуют на любом Android.
+#   * ELF-класс зависит от ABI: arm64/x86_64 -> ELF64, armeabi-v7a/x86 -> ELF32.
+#     Проверки ниже поэтому ABI-зависимые, а не «всегда ELF64».
+#   * libc++_shared.so не линкуется ни в одном варианте (проверено).
+#   * PT_INTERP (/system/bin/linker[64]) присутствует всегда - это норма для
+#     GOOS=android, а не признак динамической линковки.
+#
+# Hard-gate: build.yml НЕ соберёт APK, если хотя бы один ABI отсутствует или его
+#   SHA256 не совпал с манифестом продюсера.
 
 on:
   workflow_dispatch:
   workflow_call:
     outputs:
+      # Контрольные суммы arm64-сборки. Оставлены для обратной совместимости с
+      # уже работающим вызовом в build.yml и для перекрёстной сверки: outputs
+      # идут отдельным каналом от артефакта, поэтому их расхождение с
+      # SHA256SUMS.txt выявило бы подмену артефакта.
       sha256:
         value: ${{ jobs.build-dnsproxy-android.outputs.sha256 }}
       size:
@@ -39,10 +58,16 @@ concurrency:
   group: dnsproxy-android-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  DNSPROXY_REF: v0.86.0
+  # 24 = minSdk приложения. Для cgo-сборок это же уровень API NDK-clang.
+  API_LEVEL: "24"
+  NDK_VERSION: "30.0.16248370"
+
 jobs:
   build-dnsproxy-android:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     outputs:
       sha256: ${{ steps.stage.outputs.sha256 }}
       size: ${{ steps.stage.outputs.size }}
@@ -51,8 +76,26 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: AdGuardTeam/dnsproxy
-          ref: v0.86.0
+          ref: ${{ env.DNSPROXY_REF }}
           fetch-depth: 1
+
+      - name: Setup Android SDK cmdline-tools
+        uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: "14742923"
+          packages: "platform-tools"
+
+      - name: Install Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          # NDK нужен как источник clang для внешней линковки arm/386/amd64
+          # (см. MULTI-ABI в шапке файла).
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            --channel=0 --install "ndk;${NDK_VERSION}"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -60,76 +103,198 @@ jobs:
           go-version: '1.26.8'
           cache: true
 
-      - name: Build dnsproxy for android/arm64
+      - name: Build dnsproxy for every Android ABI
         shell: bash
         run: |
-          set -euo pipefail
-          # Чистый Go без cgo: CGO_ENABLED=0 гарантирует статический бинарник
-          # без зависимостей от bionic libc, как у mimic-client.
-          # GOOS=android GOARCH=arm64 - целевая платформа устройства.
-          CGO_ENABLED=0 GOOS=android GOARCH=arm64 \
-            go build -trimpath -buildvcs=false \
-            -ldflags="-s -w" \
-            -o dnsproxy .
+          set -uo pipefail
+          NDK_BIN="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          mkdir -p out
 
-      - name: Verify and stage the binary
+          # build <abi> <goarch> <goarm|-> <clang-triple>
+          #
+          # GitHub Actions выполняет run-блоки как `bash -e -o pipefail`, поэтому
+          # строка `set -uo pipefail` флаг -e НЕ снимает. Ожидаемый отказ arm64-
+          # ветки cgo1 (её просто нет) и любые иные контролируемые исходы ловим
+          # через явный `set +e`/rc, иначе шаг оборвался бы на первой неудаче.
+          build() {
+            abi="$1"; goarch="$2"; goarm="$3"; triple="$4"
+            dest="out/$abi"
+            mkdir -p "$dest"
+            genv=(GOOS=android GOARCH="$goarch")
+            [ "$goarm" = "-" ] || genv+=(GOARM="$goarm")
+
+            if [ "$abi" = "arm64-v8a" ]; then
+              # Эталон master: чистый Go без cgo, бинарник без NEEDED.
+              set +e
+              env "${genv[@]}" CGO_ENABLED=0 \
+                go build -trimpath -buildvcs=false -ldflags="-s -w" \
+                -o "$dest/dnsproxy" . > /tmp/d.log 2>&1
+              rc=$?
+              set -e
+              if [ "$rc" -ne 0 ]; then
+                echo "::error::dnsproxy arm64 (CGO_ENABLED=0) не собрался, rc=$rc"
+                tail -30 /tmp/d.log
+                return 1
+              fi
+            else
+              # Внешняя линковка обязательна; clang берём из NDK.
+              CC="$NDK_BIN/${triple}${API_LEVEL}-clang"
+              CXX="$NDK_BIN/${triple}${API_LEVEL}-clang++"
+              if [ ! -x "$CC" ]; then
+                echo "::error::NDK clang не найден: $CC"
+                ls "$NDK_BIN" | grep -iE 'clang$' | head -20 || true
+                return 1
+              fi
+              set +e
+              env "${genv[@]}" CGO_ENABLED=1 CC="$CC" CXX="$CXX" \
+                go build -trimpath -buildvcs=false -ldflags="-s -w" \
+                -o "$dest/dnsproxy" . > /tmp/d.log 2>&1
+              rc=$?
+              set -e
+              if [ "$rc" -ne 0 ]; then
+                echo "::error::dnsproxy $abi (CGO_ENABLED=1) не собрался, rc=$rc"
+                tail -30 /tmp/d.log
+                return 1
+              fi
+            fi
+            echo "built $abi: $(stat -c%s "$dest/dnsproxy") bytes"
+          }
+
+          set -e
+          build arm64-v8a   arm64 -  aarch64-linux-android
+          build armeabi-v7a arm   7  armv7a-linux-androideabi
+          build x86         386   -  i686-linux-android
+          build x86_64      amd64 -  x86_64-linux-android
+
+      - name: Verify every ABI binary
         id: stage
         shell: bash
         run: |
-          set -euo pipefail
-          # Объективная проверка через readelf (не эвристика `file`):
+          set -uo pipefail
+          
+          NDK_BIN="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          READELF="$NDK_BIN/llvm-readelf"
+          [ -x "$READELF" ] || READELF="$(command -v readelf || true)"
+          fail=0
+
+          # ДВЕ ловушки, из-за которых проверка обязана быть устроена именно так
+          # (обе воспроизведены и доказаны):
           #
-          # 1. ELF-заголовок: класс ELF64, машина AArch64 (0xB7) - целевая
-          #    архитектура устройства, а не x86-64 хоста.
-          # 2. ОТСУТСТВИЕ записей NEEDED - это и есть корректный признак чистой
-          #    Go-сборки без cgo на Android. Проверено на эталоне: mimic-client
-          #    (собранный в build.yml с CGO_ENABLED=0 GOOS=android) НЕ имеет NEEDED,
-          #    тогда как sing-box (CGO_ENABLED=1) имеет liblog/libdl/libm/libandroid/libc.
+          # 1) llvm-readelf -h печатает "Class: 64-bit", а GNU readelf печатает
+          #    "Class: ELF64". Паттерн "Class:.*ELF64" поэтому не совпадает с
+          #    выводом llvm-readelf — так упали все четыре ноги matrix-запуска
+          #    43780792438 на корректных бинарниках. Класс и машина читаются
+          #    НАПРЯМУЮ ИЗ БАЙТОВ ELF-заголовка: e_ident[4] (смещение 4) и
+          #    e_machine (смещение 18, 2 байта little-endian). Метод проверен
+          #    на реальных бинарниках всех четырёх ABI.
           #
-          # ВАЖНО про PT_INTERP: для GOOS=android Go ВСЕГДА добавляет интерпретатор
-          #    /system/bin/linker64 даже при CGO_ENABLED=0 (особенность Android-таргета,
-          #    подтверждено на mimic-client). Поэтому наличие PT_INTERP НЕ является
-          #    признаком динамической линковки и НЕ должно ронять сборку. Ранняя
-          #    проверка `file ... dynamically linked` ошибочно падала именно на этом.
-          #    Единственный надёжный критерий "чистый Go без cgo" - отсутствие NEEDED.
+          # 2) `cmd | grep -q X` под `-e -o pipefail` (GitHub Actions ставит эти
+          #    флаги всегда) даёт rc=141 вместо 0, когда писатель большой: grep -q
+          #    закрывает пайп после первого совпадения, писатель получает SIGPIPE,
+          #    pipefail объявляет упавшим весь конвейер. Проверка становится
+          #    плавающей — работает или нет в зависимости от объёма вывода.
+          #    Поэтому вывод сначала пишется в файл/переменную, и только потом
+          #    разбирается без конвейеров.
+          elf_class_machine() {
+            f="$1"
+            cls="$(dd if="$f" bs=1 skip=4 count=1 2>/dev/null | od -An -tu1 | tr -d ' \n')"
+            machhex="$(dd if="$f" bs=1 skip=18 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+            case "$cls" in
+              1) cls_name=ELF32 ;;
+              2) cls_name=ELF64 ;;
+              *) cls_name="UNKNOWN($cls)" ;;
+            esac
+            case "$machhex" in
+              2800) mach_name=ARM ;;
+              b700) mach_name=AArch64 ;;
+              0300) mach_name='Intel 80386' ;;
+              3e00) mach_name='Advanced Micro Devices X86-64' ;;
+              *)    mach_name="UNKNOWN($machhex)" ;;
+            esac
+            printf '%s|%s' "$cls_name" "$mach_name"
+          }
 
-          echo "=== ELF-заголовок ==="
-          readelf -h dnsproxy | grep -E "Class|Machine|Type"
+          # verify <abi> <ожидаемый класс> <ожидаемая машина> <ожидаемый NEEDED|NONE>
+          #
+          # arm64 собирается с CGO_ENABLED=0 и НЕ имеет NEEDED вовсе — это
+          # рабочий эталон master. arm/386/amd64 требуют внешней линковки
+          # (Go отвергает CGO_ENABLED=0 для android при goarch != arm64), поэтому
+          # у них NEEDED = bionic-тройка, присутствующая на любом Android.
+          verify() {
+            abi="$1"; want_cls="$2"; want_mach="$3"; want_needed="$4"
+            bin="out/$abi/dnsproxy"
+            echo "===== $abi ====="
+            if [ ! -s "$bin" ]; then
+              echo "::error::dnsproxy отсутствует или пуст: $bin"; fail=1; return
+            fi
 
-          # Класс и архитектура: ELF64 + AArch64 (arm64), а не x86-64 хоста.
-          readelf -h dnsproxy | grep -q "Class:.*ELF64" \
-            || { echo "::error::dnsproxy is not ELF64"; exit 1; }
-          readelf -h dnsproxy | grep -qiE "Machine:.*AArch64" \
-            || { echo "::error::dnsproxy is not AArch64/arm64"; exit 1; }
+            got="$(elf_class_machine "$bin")"
+            want="$want_cls|$want_mach"
+            if [ "$got" != "$want" ]; then
+              echo "::error::dnsproxy/$abi: заголовок факт [$got], ожидалось [$want]"
+              file "$bin" || true
+              [ -n "$READELF" ] && "$READELF" -h "$bin" 2>&1 | head -20 || true
+              fail=1
+            fi
 
-          # Чистый Go без cgo: нет NEEDED-зависимостей от bionic-библиотек.
-          if readelf -d dnsproxy 2>/dev/null | grep -q "NEEDED"; then
-            echo "::error::dnsproxy has NEEDED shared libraries; expected none for a CGO_ENABLED=0 Go binary"
-            readelf -d dnsproxy | grep "NEEDED" || true
+            if [ -n "$READELF" ]; then
+              "$READELF" -d "$bin" > /tmp/dyn-$abi.txt 2>/dev/null || true
+            else
+              : > /tmp/dyn-$abi.txt
+            fi
+            actual="$(sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' /tmp/dyn-$abi.txt | sort -u | tr '\n' ' ' | sed 's/ *$//')"
+            if [ "$want_needed" = "NONE" ]; then expected=""
+            else expected="$(printf '%s' "$want_needed" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/ *$//')"; fi
+            echo "NEEDED: факт [${actual:-нет}], ожидалось [${expected:-нет}]"
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::dnsproxy/$abi: NEEDED не совпал"; fail=1
+            fi
+            case "$actual" in
+              *libc++_shared.so*) echo "::error::dnsproxy/$abi линкует libc++_shared.so"; fail=1 ;;
+            esac
+            [ "$fail" -eq 0 ] && printf '%s: %s байт  %s\n' "$bin" "$(stat -c%s "$bin")" "$(sha256sum "$bin" | cut -c1-12)"
+          }
+
+          verify arm64-v8a   ELF64 'AArch64'                    NONE
+          verify armeabi-v7a ELF32 'ARM'                        'libc.so libdl.so liblog.so'
+          verify x86         ELF32 'Intel 80386'                'libc.so libdl.so liblog.so'
+          verify x86_64      ELF64 'Advanced Micro Devices X86-64' 'libc.so libdl.so liblog.so'
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Проверка ELF-инвариантов DNSProxy провалена"
             exit 1
           fi
 
-          echo "dnsproxy is a static AArch64 ELF (no NEEDED shared libraries)."
+          ( cd out && sha256sum */dnsproxy | sort -k2 > SHA256SUMS.txt )
+          echo "----- SHA256SUMS.txt -----"
+          cat out/SHA256SUMS.txt
 
-          SHA="$(sha256sum dnsproxy | cut -d' ' -f1)"
-          SIZE="$(stat -c%s dnsproxy)"
-          echo "dnsproxy sha256=$SHA size=$SIZE"
-          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
-          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+          ARM64_SHA="$(sha256sum out/arm64-v8a/dnsproxy | cut -d' ' -f1)"
+          ARM64_SIZE="$(stat -c%s out/arm64-v8a/dnsproxy)"
+          echo "sha256=$ARM64_SHA" >> "$GITHUB_OUTPUT"
+          echo "size=$ARM64_SIZE" >> "$GITHUB_OUTPUT"
+
           {
-            echo "## DNSProxy (android/arm64)"
+            echo "## DNSProxy (все Android ABI)"
+            echo
+            echo "- Go $(go version | cut -d' ' -f3), NDK ${NDK_VERSION}, API ${API_LEVEL}"
+            echo "- arm64-v8a: CGO_ENABLED=0 (без NEEDED); arm/386/amd64: CGO_ENABLED=1 + NDK clang"
+            echo "- класс/машина определены по байтам ELF-заголовка, NEEDED — по DT_NEEDED"
+            echo
             echo '```'
-            readelf -h dnsproxy | grep -E "Class|Machine|Type"
-            echo "static: no NEEDED (pure Go, CGO_ENABLED=0)"
-            echo "sha256: $SHA"
-            echo "size:   $SIZE bytes"
+            cat out/SHA256SUMS.txt
             echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload dnsproxy artifact
+      - name: Upload dnsproxy artifact (all ABIs)
         uses: actions/upload-artifact@v7
         with:
-          name: dnsproxy-android-arm64
-          path: dnsproxy
+          name: dnsproxy-android
+          path: |
+            out/arm64-v8a/dnsproxy
+            out/armeabi-v7a/dnsproxy
+            out/x86/dnsproxy
+            out/x86_64/dnsproxy
+            out/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 7

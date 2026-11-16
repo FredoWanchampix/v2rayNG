@@ -1,8 +1,10 @@
 package com.v2ray.ang.core
 
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.enums.EConfigType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -41,9 +43,10 @@ class SidecarEngineManagerTest {
 
     @Test
     fun `all four bundled engines are mapped`() {
-        // Именно четыре движка собираются в CI и кладутся в assets/engines:
-        // fptn-client, mihomo, mimic-client, sing-box. Три из них обслуживаются
-        // через SidecarEngineManager, четвёртый (fptn-client) - через FptnRootRunner.
+        // Три движка обслуживаются через SidecarEngineManager (mihomo, sing-box,
+        // mimic-client). Остальные три из упакованных в CI (fptn-client, dnsproxy,
+        // speedprobe) не сопоставлены типу профиля: fptn-client стартует через
+        // FptnRootRunner, а dnsproxy/speedprobe - служебные бинарники пробы FPTN.
         val engines = EConfigType.entries
             .mapNotNull { SidecarEngineManager.engineFor(it) }
             .distinct()
@@ -101,6 +104,76 @@ class SidecarEngineManagerTest {
                 SidecarEngineManager.cannotMeasureInTempCore(type),
                 "$type должен быть измерим временным ядром",
             )
+        }
+    }
+
+    // --- Упаковка движков как lib*.so (перенос из assets/engines) ---
+    //
+    // Зачем эти тесты. На Android 10+ SELinux (W^X) запрещает untrusted_app
+    // исполнять файлы из filesDir, поэтому движки обязаны лежать в libs/<abi>/
+    // как lib*.so и запускаться из nativeLibraryDir. Два инварианта защищают от
+    // регрессии, которую иначе невозможно заметить в unit-тестах:
+    //   1) имя файла обязано начинаться с "lib" и заканчиваться на ".so" -
+    //      иначе PackageManager вообще не извлечёт его из APK в nativeLibraryDir;
+    //   2) каждому упакованному движку обязано соответствовать ровно одно
+    //      lib-имя, и все lib-имена различны - иначе два движка легли бы в один
+    //      файл и один из них молча исчез бы из сборки.
+
+    @Test
+    fun `every engine maps to its own lib name`() {
+        val expected = mapOf(
+            SidecarEngineManager.ENGINE_MIHOMO to AppConfig.ENGINE_MIHOMO_BIN,
+            SidecarEngineManager.ENGINE_SINGBOX to AppConfig.ENGINE_SINGBOX_BIN,
+            SidecarEngineManager.ENGINE_MIMIC to AppConfig.ENGINE_MIMIC_BIN,
+            SidecarEngineManager.ENGINE_FPTN to AppConfig.ENGINE_FPTN_BIN,
+            SidecarEngineManager.ENGINE_DNSPROXY to AppConfig.ENGINE_DNSPROXY_BIN,
+            SidecarEngineManager.ENGINE_SPEEDPROBE to AppConfig.ENGINE_SPEEDPROBE_BIN,
+        )
+        assertEquals(expected.keys.toList(), SidecarEngineManager.ALL_ENGINES)
+        for ((engine, lib) in expected) {
+            assertEquals(lib, SidecarEngineManager.libNameFor(engine), "маппинг $engine")
+        }
+    }
+
+    @Test
+    fun `engine lib names are valid jniLibs file names`() {
+        // Инвариант извлечения в nativeLibraryDir: lib*.so.
+        for (engine in SidecarEngineManager.ALL_ENGINES) {
+            val lib = SidecarEngineManager.libNameFor(engine)
+            assertNotNull(lib, "у $engine обязано быть lib-имя")
+            assertTrue(lib!!.startsWith("lib"), "$lib должен начинаться с 'lib'")
+            assertTrue(lib.endsWith(".so"), "$lib должен заканчиваться на '.so'")
+        }
+        // Так же и для hev-бинарника root-режима (тот же механизм).
+        assertTrue(AppConfig.ROOT_TUN2SOCKS_BIN.startsWith("lib"))
+        assertTrue(AppConfig.ROOT_TUN2SOCKS_BIN.endsWith(".so"))
+    }
+
+    @Test
+    fun `engine lib names are unique`() {
+        val names = SidecarEngineManager.ALL_ENGINES.mapNotNull { SidecarEngineManager.libNameFor(it) }
+        assertEquals(
+            names.distinct().sorted(),
+            names.sorted(),
+            "два движка не могут претендовать на один lib*.so",
+        )
+    }
+
+    @Test
+    fun `unknown engine has no lib name`() {
+        assertNull(SidecarEngineManager.libNameFor("mihomo2"))
+        assertNull(SidecarEngineManager.libNameFor(""))
+        assertNull(SidecarEngineManager.libNameFor("xray"))
+    }
+
+    @Test
+    fun `engineFor always yields a bundled engine`() {
+        // Каждое имя, которое может вернуть engineFor, обязано быть в ALL_ENGINES
+        // и иметь lib-имя: иначе профиль запросил бы движок, которого нет в APK.
+        for (type in EConfigType.entries) {
+            val engine = SidecarEngineManager.engineFor(type) ?: continue
+            assertTrue(engine in SidecarEngineManager.ALL_ENGINES, "$engine ($type) не упакован")
+            assertNotNull(SidecarEngineManager.libNameFor(engine), "у $engine нет lib-имени")
         }
     }
 }

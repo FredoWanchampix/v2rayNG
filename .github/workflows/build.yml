@@ -317,204 +317,26 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Setup Go for sidecar engines
-        uses: actions/setup-go@v6
+      # Бандлинг всех сайдкар-движков вынесен в ОДНО composite-действие.
+      #
+      # Зачем: build.yml и build-upstream-master.yml содержали собственные копии
+      # этих шагов, и они уже разошлись - sync-workflow бандлил только четыре
+      # движка (без dnsproxy и speedprobe), то есть APK из sync-сборки и из
+      # release-сборки получались несовместимыми. Общее действие делает
+      # расхождение невозможным в принципе.
+      #
+      # Движки укладываются в V2rayNG/app/libs/<abi>/lib*.so, откуда gradle
+      # (jniLibs.srcDirs("libs")) кладёт их в lib/<abi>/ APK, а установщик
+      # извлекает в nativeLibraryDir. Исполнение из filesDir на Android 10+
+      # запрещено SELinux, поэтому assets/engines больше не используется.
+      - name: Bundle sidecar engines (all ABIs)
+        id: engines
+        uses: ./.github/actions/bundle-sidecar-engines
         with:
-          go-version: "1.25"
-          cache: false
-
-      - name: Fetch and build sidecar engine binaries
-        shell: bash
-        env:
-          MIHOMO_TAG: v1.19.33
-          MIHOMO_SHA256: cfa0be78846bfef7272fe5a73089f8cf0e1f15a6ffb601f5cc809f457f712f67
-          SINGBOX_TAG: v1.14.4
-        run: |
-          set -euo pipefail
-          mkdir -p V2rayNG/app/src/main/assets/engines
-
-          # mihomo: official prebuilt android-arm64 binary (AmneziaWG 3.x/1.x).
-          curl -fsSL --retry 4 -o /tmp/mihomo.gz \
-            "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_TAG}/mihomo-android-arm64-v8-${MIHOMO_TAG}.gz"
-          gunzip -f /tmp/mihomo.gz
-          # The pin covers the unpacked binary: gz wrappers differ per upload.
-          echo "${MIHOMO_SHA256}  /tmp/mihomo" | sha256sum -c -
-          install -m 0755 /tmp/mihomo V2rayNG/app/src/main/assets/engines/mihomo
-
-          # sing-box: official releases ship no naive outbound, so build from
-          # source with the documented tag; openconnect endpoint is in core.
-          git clone --depth 1 --branch "${SINGBOX_TAG}" https://github.com/SagerNet/sing-box /tmp/sing-box
-          cd /tmp/sing-box
-          # The naive outbound imports cronet-go, whose android_arm64 package is
-          # cgo-only: CGO_ENABLED=0 excludes all of its files. Cross-compile with
-          # the NDK clang instead. gvisor is not needed (the sidecar runs without
-          # a tun inbound), so keep the tag set minimal.
-          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          GOOS=android GOARCH=arm64 CGO_ENABLED=1 \
-            CC="$NDK_BIN/aarch64-linux-android24-clang" \
-            CXX="$NDK_BIN/aarch64-linux-android24-clang++" \
-            go build -trimpath -buildvcs=false -tags with_naive_outbound \
-            -ldflags="-s -w -X github.com/sagernet/sing-box/constant.Version=${SINGBOX_TAG}" \
-            -o sing-box ./cmd/sing-box
-          cd -
-          install -m 0755 /tmp/sing-box/sing-box V2rayNG/app/src/main/assets/engines/sing-box
-
-          # Mimic: Hysteria2-family transport (MTP + TLS mimicry) Go client,
-          # cross-compiled here, never on the phone.
-          git clone --depth 1 https://github.com/Locon213/Mimic-Protocol /tmp/mimic
-          cd /tmp/mimic
-          GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
-            go build -trimpath -ldflags="-s -w" -o mimic-client ./cmd/client
-          cd -
-          install -m 0755 /tmp/mimic/mimic-client V2rayNG/app/src/main/assets/engines/mimic-client
-
-          ls -la V2rayNG/app/src/main/assets/engines/
-          echo "## Sidecar engines" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          sha256sum V2rayNG/app/src/main/assets/engines/* >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Download FPTN client (hard gate)
-        uses: actions/download-artifact@v8
-        with:
-          name: fptn-client-arm64-v8a
-          path: fptn-in
-
-      - name: Bundle FPTN client into assets
-        shell: bash
-        env:
-          FPTN_SHA256: ${{ needs.fptn.outputs.sha256 }}
-          FPTN_SIZE: ${{ needs.fptn.outputs.size }}
-        run: |
-          set -euo pipefail
-          # FPTN is a hard gate. The `fptn` job (reusable fptn-android workflow)
-          # cross-compiles the client with Conan+NDK and uploads it; this step
-          # refuses to proceed unless the binary is present, non-empty, matches
-          # the producer's SHA256 and is a bionic arm64 ELF. There is no
-          # continue-on-error fallback any more: a release without fptn-client
-          # must fail, not ship a broken engine.
-          SRC="fptn-in/fptn-client"
-          if [ ! -f "$SRC" ]; then
-            echo "::error::FPTN client artifact is missing (fptn-in/fptn-client)"
-            ls -la fptn-in 2>/dev/null || true
-            exit 1
-          fi
-          ACTUAL_SHA="$(sha256sum "$SRC" | cut -d' ' -f1)"
-          ACTUAL_SIZE="$(stat -c%s "$SRC")"
-          echo "fptn-client sha256=$ACTUAL_SHA size=$ACTUAL_SIZE"
-          echo "expected    sha256=$FPTN_SHA256 size=$FPTN_SIZE"
-          if [ -n "$FPTN_SHA256" ] && [ "$ACTUAL_SHA" != "$FPTN_SHA256" ]; then
-            echo "::error::FPTN client checksum mismatch"; exit 1
-          fi
-          file "$SRC" | grep -qi "ELF" || { echo "::error::fptn-client is not an ELF"; exit 1; }
-          file "$SRC" | grep -qiE "ARM aarch64|arm64" || { echo "::error::fptn-client is not arm64"; exit 1; }
-          install -m 0755 "$SRC" V2rayNG/app/src/main/assets/engines/fptn-client
-          echo "FPTN client bundled: $(sha256sum V2rayNG/app/src/main/assets/engines/fptn-client)"
-
-      - name: Download dnsproxy (hard gate)
-        uses: actions/download-artifact@v8
-        with:
-          name: dnsproxy-android-arm64
-          path: dnsproxy-in
-
-      - name: Bundle dnsproxy into assets
-        shell: bash
-        env:
-          DNSPROXY_SHA256: ${{ needs.dnsproxy.outputs.sha256 }}
-          DNSPROXY_SIZE: ${{ needs.dnsproxy.outputs.size }}
-        run: |
-          set -euo pipefail
-          # dnsproxy - hard gate, как и FPTN. Job `dnsproxy` (reusable workflow)
-          # собирает форвардер под android/arm64 и выгружает его; этот шаг не
-          # пропустит сборку, если бинарник отсутствует, пуст, не совпал по SHA256
-          # с продюсером или не является статическим arm64 ELF (без NEEDED -
-          # признак чистой Go-сборки без cgo, как у mimic-client).
-          SRC="dnsproxy-in/dnsproxy"
-          if [ ! -f "$SRC" ]; then
-            echo "::error::dnsproxy artifact is missing (dnsproxy-in/dnsproxy)"
-            ls -la dnsproxy-in 2>/dev/null || true
-            exit 1
-          fi
-          ACTUAL_SHA="$(sha256sum "$SRC" | cut -d' ' -f1)"
-          ACTUAL_SIZE="$(stat -c%s "$SRC")"
-          echo "dnsproxy   sha256=$ACTUAL_SHA size=$ACTUAL_SIZE"
-          echo "expected   sha256=$DNSPROXY_SHA256 size=$DNSPROXY_SIZE"
-          if [ -n "$DNSPROXY_SHA256" ] && [ "$ACTUAL_SHA" != "$DNSPROXY_SHA256" ]; then
-            echo "::error::dnsproxy checksum mismatch"; exit 1
-          fi
-          # ELF64 + AArch64. PT_INTERP для GOOS=android обязателен и НЕ является
-          # признаком динамической линковки, поэтому проверяем не его, а отсутствие
-          # NEEDED (единственный корректный критерий "чистый Go без cgo").
-          readelf -h "$SRC" | grep -q "Class:.*ELF64" || { echo "::error::dnsproxy is not ELF64"; exit 1; }
-          readelf -h "$SRC" | grep -qiE "Machine:.*AArch64" || { echo "::error::dnsproxy is not arm64"; exit 1; }
-          if readelf -d "$SRC" 2>/dev/null | grep -q "NEEDED"; then
-            echo "::error::dnsproxy has NEEDED libs; expected a static CGO_ENABLED=0 Go binary"; exit 1
-          fi
-          install -m 0755 "$SRC" V2rayNG/app/src/main/assets/engines/dnsproxy
-          echo "dnsproxy bundled: $(sha256sum V2rayNG/app/src/main/assets/engines/dnsproxy)"
-
-      - name: Download speedprobe (hard gate)
-        uses: actions/download-artifact@v8
-        with:
-          name: speedprobe-android-arm64
-          path: speedprobe-in
-
-      - name: Bundle speedprobe into assets
-        shell: bash
-        env:
-          SPEEDPROBE_SHA256: ${{ needs.speedprobe.outputs.sha256 }}
-          SPEEDPROBE_SIZE: ${{ needs.speedprobe.outputs.size }}
-        run: |
-          set -euo pipefail
-          # speedprobe - hard gate. Job `speedprobe` собирает измеритель под
-          # android/arm64; шаг не пропустит сборку, если бинарник отсутствует,
-          # пуст, не совпал по SHA256 или не является статическим arm64 ELF.
-          SRC="speedprobe-in/speedprobe"
-          if [ ! -f "$SRC" ]; then
-            echo "::error::speedprobe artifact is missing (speedprobe-in/speedprobe)"
-            ls -la speedprobe-in 2>/dev/null || true
-            exit 1
-          fi
-          ACTUAL_SHA="$(sha256sum "$SRC" | cut -d' ' -f1)"
-          ACTUAL_SIZE="$(stat -c%s "$SRC")"
-          echo "speedprobe sha256=$ACTUAL_SHA size=$ACTUAL_SIZE"
-          echo "expected   sha256=$SPEEDPROBE_SHA256 size=$SPEEDPROBE_SIZE"
-          if [ -n "$SPEEDPROBE_SHA256" ] && [ "$ACTUAL_SHA" != "$SPEEDPROBE_SHA256" ]; then
-            echo "::error::speedprobe checksum mismatch"; exit 1
-          fi
-          readelf -h "$SRC" | grep -q "Class:.*ELF64" || { echo "::error::speedprobe is not ELF64"; exit 1; }
-          readelf -h "$SRC" | grep -qiE "Machine:.*AArch64" || { echo "::error::speedprobe is not arm64"; exit 1; }
-          if readelf -d "$SRC" 2>/dev/null | grep -q "NEEDED"; then
-            echo "::error::speedprobe has NEEDED libs; expected a static Go binary"; exit 1
-          fi
-          install -m 0755 "$SRC" V2rayNG/app/src/main/assets/engines/speedprobe
-          echo "speedprobe bundled: $(sha256sum V2rayNG/app/src/main/assets/engines/speedprobe)"
-
-      - name: Verify all sidecar engines are bundled
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Hard gate: every engine the fork advertises must physically be in the
-          # assets before any APK is built. This is what previously slipped by -
-          # fptn-client was silently missing from shipped releases.
-          D="V2rayNG/app/src/main/assets/engines"
-          missing=0
-          # dnsproxy включён в обязательный список: без него FPTN-профили нельзя
-          # измерить в netns (см. FptnProbeRunner). Отсутствие любого движка -
-          # ошибка сборки, а не тихий пропуск.
-          for e in mihomo sing-box mimic-client fptn-client dnsproxy speedprobe; do
-            if [ -f "$D/$e" ]; then
-              printf '%s\n' "$D/$e: $(stat -c%s "$D/$e") bytes  $(sha256sum "$D/$e" | cut -c1-16)"
-            else
-              echo "::error::missing engine: $D/$e"; missing=1
-            fi
-          done
-          [ "$missing" -eq 0 ] || exit 1
-          echo "## Bundled sidecar engines" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          ls -la "$D" >> "$GITHUB_STEP_SUMMARY"
-          sha256sum "$D"/* >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          ndk_home: ${{ env.ANDROID_NDK_HOME }}
+          fptn_sha256: ${{ needs.fptn.outputs.sha256 }}
+          dnsproxy_sha256_arm64: ${{ needs.dnsproxy.outputs.sha256 }}
+          speedprobe_sha256_arm64: ${{ needs.speedprobe.outputs.sha256 }}
 
       - name: Detect signing material
         id: signing

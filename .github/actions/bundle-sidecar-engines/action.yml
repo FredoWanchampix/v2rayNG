@@ -1,0 +1,539 @@
+name: Bundle sidecar engines
+
+# ЕДИНСТВЕННЫЙ источник правды по упаковке сайдкар-движков.
+#
+# Зачем composite-action, а не шаги в каждом workflow:
+#   build.yml и build-upstream-master.yml исторически содержали СОБСТВЕННЫЕ
+#   копии шагов бандлинга, и они уже разошлись: sync-workflow бандлил только
+#   четыре движка (без dnsproxy и speedprobe), то есть APK из sync-сборки и APK
+#   из release-сборки были несовместимы. Когда движки лежат в одном действии,
+#   расхождение становится невозможным в принципе.
+#
+# Что делает:
+#   1. скачивает готовые бинарники mihomo под четыре Android ABI;
+#   2. собирает sing-box (cgo, naive outbound) и mimic-client под четыре ABI;
+#   3. принимает артефакты fptn-client, dnsproxy и speedprobe от продюсеров;
+#   4. проверяет каждый бинарник жёсткими ELF-инвариантами;
+#   5. раскладывает их в V2rayNG/app/libs/<abi>/lib<name>.so.
+#
+# Почему libs/<abi>/lib*.so, а не assets/engines/:
+#   SELinux на Android 10+ запрещает домену untrusted_app исполнять файлы с
+#   контекстом app_data_file (filesDir) и shell_data_file (/data/local/tmp) -
+#   execve вернёт EACCES. nativeLibraryDir имеет контекст apk_data_file,
+#   исполнение оттуда разрешено и приложению, и root. Установщик сам извлекает
+#   lib*.so из APK потому, что packaging.jniLibs.useLegacyPackaging=true
+#   (extractNativeLibs=true). Тот же паттерн форк уже использует для
+#   libhevsockstun.so в root-режиме (AppConfig.ROOT_TUN2SOCKS_BIN).
+#   Имя файла ОБЯЗАНО начинаться с "lib" и заканчиваться на ".so", иначе
+#   PackageManager не извлечёт его в nativeLibraryDir.
+#
+# ELF-инварианты подтверждены экспериментально (CI runs 43777193468 и
+# 43779836265 в ветке abi-probe, Go 1.25/NDK 30/API 24):
+#   * arm64 собирается с CGO_ENABLED=0 и НЕ имеет NEEDED (чистый Go);
+#   * arm/386/amd64 при CGO_ENABLED=0 ОТВЕРГАЮТСЯ самим Go
+#     ("android/<arch> requires external (cgo) linking, but cgo is not
+#     enabled", internal/platform/supported.go), поэтому собираются с
+#     CGO_ENABLED=1 + NDK-clang и имеют NEEDED из bionic-библиотек;
+#   * класс ELF зависит от ABI: arm64/x86_64 -> ELF64, armeabi-v7a/x86 -> ELF32;
+#   * libc++_shared.so не линкуется ни в одном варианте.
+
+description: >-
+  Downloads, cross-builds and verifies all sidecar engines for every Android
+  ABI, then stages them into V2rayNG/app/libs/<abi>/lib*.so.
+
+inputs:
+  ndk_home:
+    description: "Absolute path to the Android NDK (provides clang and llvm-readelf)"
+    required: true
+  go_version:
+    description: "Версия Go для кросс-сборки sing-box и mimic-client"
+    required: false
+    default: "1.25"
+  api_level:
+    description: "Уровень Android API в именах NDK-clang (minSdk приложения)"
+    required: false
+    default: "24"
+  fptn_sha256:
+    description: "SHA256 of the fptn-client artifact reported by its producer"
+    required: false
+    default: ""
+  dnsproxy_sha256_arm64:
+    description: "SHA256 of the arm64 dnsproxy reported by its producer"
+    required: false
+    default: ""
+  speedprobe_sha256_arm64:
+    description: "SHA256 of the arm64 speedprobe reported by its producer"
+    required: false
+    default: ""
+  target_dir:
+    description: "Where to stage the engines (relative to the repository root)"
+    required: false
+    default: "V2rayNG/app/libs"
+
+outputs:
+  summary:
+    description: "Human readable list of staged engines"
+    value: ${{ steps.verify.outputs.summary }}
+
+runs:
+  using: composite
+  steps:
+    # Go ставится ВНУТРИ действия, чтобы оно было самодостаточным: вызывающий
+    # workflow не обязан помнить, какая версия Go нужна sing-box и mimic.
+    # Версия 1.25 - та, на которой проверены рабочие сборки master.
+    - name: Setup Go for sidecar engines
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ inputs.go_version }}
+        cache: false
+
+    # --------------------------------------------------------------- mihomo
+    - name: Download mihomo for every ABI
+      shell: bash
+      env:
+        MIHOMO_TAG: v1.19.33
+        # SHA256 РАСПАКОВАННЫХ бинарников. gz-обёртки различаются между
+        # загрузками, поэтому пин ставится на содержимое, а не на архив.
+        # Значение для arm64 совпадает с тем, что уже было запинено в build.yml
+        # до переноса, то есть релиз тот же. Остальные три сняты скачиванием
+        # ассетов того же релиза и разбором их ELF-заголовков.
+        SHA_ARM64: cfa0be78846bfef7272fe5a73089f8cf0e1f15a6ffb601f5cc809f457f712f67
+        SHA_ARMV7: 2fbf5e623a6b7b095768bfab1e7f48180045b7bd6b67e36daf8423f81272bedb
+        SHA_X86: efcc4989e2ef6fac0c0f22e82b97e6c1fee6623c0a0769328c6e5c41a08cbed5
+        SHA_X86_64: fd1fb2773a0b723dbdc7d5f7e81aec8358b43d2674f689edc8f87d453e8687c7
+      run: |
+        set -euo pipefail
+        API_LEVEL="${{ inputs.api_level }}"
+        # fetch <abi> <имя ассета> <ожидаемый SHA256 распакованного файла>
+        #
+        # Имя ассета в релизе MetaCubeX не совпадает с именем Android-ABI:
+        # arm64-v8a -> android-arm64-v8, armeabi-v7a -> android-armv7,
+        # x86 -> android-386, x86_64 -> android-amd64. Соответствие задано
+        # явно, а не выводится, чтобы опечатка не превратилась в тихую подмену
+        # бинарника чужой архитектуры.
+        fetch() {
+          abi="$1"; asset="$2"; want="$3"
+          tmp="/tmp/mihomo-$abi.gz"
+          curl -fsSL --retry 4 -o "$tmp" \
+            "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_TAG}/${asset}-${MIHOMO_TAG}.gz"
+          gunzip -f "$tmp"
+          bin="/tmp/mihomo-$abi"
+          printf '%s  %s\n' "$want" "$bin" | sha256sum -c -
+          mkdir -p "${{ inputs.target_dir }}/$abi"
+          install -m 0755 "$bin" "${{ inputs.target_dir }}/$abi/libmihomo.so"
+          echo "mihomo/$abi: $(stat -c%s "$bin") байт"
+        }
+        fetch arm64-v8a   mihomo-android-arm64-v8 "$SHA_ARM64"
+        fetch armeabi-v7a mihomo-android-armv7      "$SHA_ARMV7"
+        fetch x86         mihomo-android-386        "$SHA_X86"
+        fetch x86_64      mihomo-android-amd64      "$SHA_X86_64"
+
+    # ------------------------------------------------------------- sing-box
+    - name: Cross-build sing-box for every ABI
+      shell: bash
+      env:
+        SINGBOX_TAG: v1.14.4
+      run: |
+        set -euo pipefail
+        NDK_BIN="${{ inputs.ndk_home }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+        API_LEVEL="${{ inputs.api_level }}"
+        git clone --depth 1 --branch "${SINGBOX_TAG}" https://github.com/SagerNet/sing-box /tmp/sing-box
+
+        # Официальные релизы sing-box не содержат naive outbound, поэтому
+        # собираем из исходников с документированным тегом. Naive outbound тянет
+        # cronet-go, android-пакеты которого cgo-only (в go.mod sing-box есть
+        # lib/android_arm, android_386, android_amd64, android_arm64), то есть
+        # CGO_ENABLED=1 обязателен для ВСЕХ четырёх ABI, включая arm64. Именно
+        # так sing-box собирается в master сейчас.
+        #
+        # Рецепт идентичен проверенному CI-экспериментом (run 43779836265):
+        # тот же вход в каталог исходников субшеллом, те же флаги. Размер
+        # собранного arm64-бинарника совпал с опубликованным в APK байт в байт
+        # (48 971 160), что подтверждает совпадение рецепта.
+        #
+        # gvisor не нужен: сайдкар работает без tun inbound, поэтому набор тегов
+        # минимальный.
+        build() {
+          abi="$1"; goarch="$2"; goarm="$3"; triple="$4"
+          echo "=== sing-box $abi ==="
+          out="/tmp/sing-box-$abi"
+          genv=(GOOS=android GOARCH="$goarch" CGO_ENABLED=1)
+          [ "$goarm" = "-" ] || genv+=(GOARM="$goarm")
+          ( cd /tmp/sing-box && env "${genv[@]}" \
+              CC="$NDK_BIN/${triple}${API_LEVEL}-clang" \
+              CXX="$NDK_BIN/${triple}${API_LEVEL}-clang++" \
+              go build -trimpath -buildvcs=false -tags with_naive_outbound \
+              -ldflags="-s -w -X github.com/sagernet/sing-box/constant.Version=${SINGBOX_TAG}" \
+              -o "$out" ./cmd/sing-box )
+          mkdir -p "${{ inputs.target_dir }}/$abi"
+          install -m 0755 "$out" "${{ inputs.target_dir }}/$abi/libsingbox.so"
+          echo "sing-box/$abi: $(stat -c%s "$out") байт"
+        }
+
+        build arm64-v8a   arm64 -  aarch64-linux-android
+        build armeabi-v7a arm   7  armv7a-linux-androideabi
+        build x86         386   -  i686-linux-android
+        build x86_64      amd64 -  x86_64-linux-android
+
+    # --------------------------------------------------------- mimic-client
+    - name: Cross-build mimic-client for every ABI
+      shell: bash
+      run: |
+        set -euo pipefail
+        NDK_BIN="${{ inputs.ndk_home }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+        API_LEVEL="${{ inputs.api_level }}"
+        git clone --depth 1 https://github.com/Locon213/Mimic-Protocol /tmp/mimic
+
+        # Mimic - чистый Go без cgo. Для arm64 это даёт статический бинарник без
+        # NEEDED (эталон master, CGO_ENABLED=0). Для arm/386/amd64 Go требует
+        # внешнюю линковку, поэтому там CGO_ENABLED=1 и NDK-clang; результат
+        # линкует только bionic-библиотеки, которые есть на любом Android.
+        # Подтверждено CI-экспериментом (run 43779836265).
+        build() {
+          abi="$1"; goarch="$2"; goarm="$3"; triple="$4"
+          echo "=== mimic-client $abi ==="
+          out="/tmp/mimic-client-$abi"
+          if [ "$abi" = "arm64-v8a" ]; then
+            ( cd /tmp/mimic && CGO_ENABLED=0 GOOS=android GOARCH=arm64 \
+                go build -trimpath -ldflags="-s -w" -o "$out" ./cmd/client )
+          else
+            genv=(GOOS=android GOARCH="$goarch" CGO_ENABLED=1)
+            [ "$goarm" = "-" ] || genv+=(GOARM="$goarm")
+            ( cd /tmp/mimic && env "${genv[@]}" \
+                CC="$NDK_BIN/${triple}${API_LEVEL}-clang" \
+                CXX="$NDK_BIN/${triple}${API_LEVEL}-clang++" \
+                go build -trimpath -ldflags="-s -w" -o "$out" ./cmd/client )
+          fi
+          mkdir -p "${{ inputs.target_dir }}/$abi"
+          install -m 0755 "$out" "${{ inputs.target_dir }}/$abi/libmimicclient.so"
+          echo "mimic-client/$abi: $(stat -c%s "$out") байт"
+        }
+
+        build arm64-v8a   arm64 -  aarch64-linux-android
+        build armeabi-v7a arm   7  armv7a-linux-androideabi
+        build x86         386   -  i686-linux-android
+        build x86_64      amd64 -  x86_64-linux-android
+
+    # ---------------------------------------------------------- fptn-client
+    - name: Download fptn-client artifact (all ABIs)
+      uses: actions/download-artifact@v8
+      with:
+        name: fptn-client-android
+        path: fptn-in
+
+    - name: Stage fptn-client for every ABI
+      shell: bash
+      env:
+        FPTN_SHA256_ARM64: ${{ inputs.fptn_sha256 }}
+      run: |
+        set -euo pipefail
+        # FPTN - hard gate. Продюсер (reusable workflow fptn-android-probe.yml)
+        # кросс-собирает клиент через Conan+NDK matrix'ем по четырём ABI и
+        # выгружает ОДИН общий артефакт с манифестом сумм. Этот шаг не пропустит
+        # сборку, если бинарник отсутствует, пуст или не совпал по SHA256.
+        # Никакого continue-on-error: релиз без fptn-client обязан упасть, а не
+        # выйти с нерабочим движком.
+        #
+        # Ранее fptn-client собирался только под arm64: граф зависимостей
+        # (Conan + Boost.Process + libtuntap + BoringSSL + camouflagetls)
+        # считался непроверяемым для 32-бит и x86. Это опровергнуто
+        # экспериментом: CI run 43786437111 собрал все четыре ABI, NEEDED у всех
+        # одинаковый {libc, libdl, liblog, libm}, libc++_shared.so нет.
+        if [ ! -s "fptn-in/SHA256SUMS.txt" ]; then
+          echo "::error::fptn-in/SHA256SUMS.txt отсутствует"
+          ls -R fptn-in 2>/dev/null || true
+          exit 1
+        fi
+        ( cd fptn-in && sha256sum -c SHA256SUMS.txt )
+
+        for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+          SRC="fptn-in/$abi/fptn-client"
+          if [ ! -s "$SRC" ]; then
+            echo "::error::fptn-client отсутствует для $abi ($SRC)"; exit 1
+          fi
+          # ELF-класс и машина каждого ABI уже проверены продюсером по байтам
+          # заголовка; здесь достаточно контроля, что это вообще ELF.
+          FILEOUT="$(file "$SRC")"
+          case "$FILEOUT" in
+            *ELF*) : ;;
+            *) echo "::error::fptn-client/$abi не ELF: $FILEOUT"; exit 1 ;;
+          esac
+          mkdir -p "${{ inputs.target_dir }}/$abi"
+          install -m 0755 "$SRC" "${{ inputs.target_dir }}/$abi/libfptnclient.so"
+          echo "fptn-client/$abi: $(stat -c%s "$SRC") байт"
+        done
+
+        # Перекрёстная сверка arm64 с outputs продюсера: артефакт и outputs идут
+        # разными каналами, поэтому их расхождение означало бы подмену.
+        if [ -n "$FPTN_SHA256_ARM64" ]; then
+          ACTUAL="$(sha256sum fptn-in/arm64-v8a/fptn-client | cut -d' ' -f1)"
+          if [ "$ACTUAL" != "$FPTN_SHA256_ARM64" ]; then
+            echo "::error::fptn-client arm64: артефакт $ACTUAL не совпал с outputs продюсера $FPTN_SHA256_ARM64"
+            exit 1
+          fi
+        fi
+
+    # ------------------------------------------------------------- dnsproxy
+    - name: Download dnsproxy artifact (all ABIs)
+      uses: actions/download-artifact@v8
+      with:
+        name: dnsproxy-android
+        path: dnsproxy-in
+
+    - name: Stage dnsproxy for every ABI
+      shell: bash
+      env:
+        DNSPROXY_SHA256_ARM64: ${{ inputs.dnsproxy_sha256_arm64 }}
+      run: |
+        set -euo pipefail
+        # dnsproxy - DNS-форвардер для измерения FPTN-профилей в изолированном
+        # netns: системный resolver там возвращает fake-IP активного VPN, а DNS
+        # пользователя может быть DoQ/DoT/DoH, который resolv.conf не понимает.
+        # Продюсер собирает его под четыре ABI и прикладывает манифест сумм.
+        if [ ! -s "dnsproxy-in/SHA256SUMS.txt" ]; then
+          echo "::error::dnsproxy-in/SHA256SUMS.txt отсутствует"; ls -R dnsproxy-in || true; exit 1
+        fi
+        # Сверка манифеста ловит порчу артефакта при передаче.
+        ( cd dnsproxy-in && sha256sum -c SHA256SUMS.txt )
+        # Перекрёстная сверка с outputs продюсера: артефакт и outputs идут
+        # разными каналами, поэтому их расхождение означало бы подмену.
+        if [ -n "$DNSPROXY_SHA256_ARM64" ]; then
+          ACTUAL="$(sha256sum dnsproxy-in/arm64-v8a/dnsproxy | cut -d' ' -f1)"
+          if [ "$ACTUAL" != "$DNSPROXY_SHA256_ARM64" ]; then
+            echo "::error::dnsproxy arm64: артефакт $ACTUAL не совпал с outputs продюсера $DNSPROXY_SHA256_ARM64"
+            exit 1
+          fi
+        fi
+        for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+          SRC="dnsproxy-in/$abi/dnsproxy"
+          [ -s "$SRC" ] || { echo "::error::dnsproxy отсутствует для $abi"; exit 1; }
+          mkdir -p "${{ inputs.target_dir }}/$abi"
+          install -m 0755 "$SRC" "${{ inputs.target_dir }}/$abi/libdnsproxy.so"
+        done
+
+    # ----------------------------------------------------------- speedprobe
+    - name: Download speedprobe artifact (all ABIs)
+      uses: actions/download-artifact@v8
+      with:
+        name: speedprobe-android
+        path: speedprobe-in
+
+    - name: Stage speedprobe for every ABI
+      shell: bash
+      env:
+        SPEEDPROBE_SHA256_ARM64: ${{ inputs.speedprobe_sha256_arm64 }}
+      run: |
+        set -euo pipefail
+        # speedprobe - собственный измеритель скорости/задержки. Системный curl
+        # использовать нельзя: он не входит в toybox и появился только с
+        # Android 8.0, тогда как minSdk приложения - 24.
+        if [ ! -s "speedprobe-in/SHA256SUMS.txt" ]; then
+          echo "::error::speedprobe-in/SHA256SUMS.txt отсутствует"; ls -R speedprobe-in || true; exit 1
+        fi
+        ( cd speedprobe-in && sha256sum -c SHA256SUMS.txt )
+        if [ -n "$SPEEDPROBE_SHA256_ARM64" ]; then
+          ACTUAL="$(sha256sum speedprobe-in/arm64-v8a/speedprobe | cut -d' ' -f1)"
+          if [ "$ACTUAL" != "$SPEEDPROBE_SHA256_ARM64" ]; then
+            echo "::error::speedprobe arm64: артефакт $ACTUAL не совпал с outputs продюсера $SPEEDPROBE_SHA256_ARM64"
+            exit 1
+          fi
+        fi
+        for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+          SRC="speedprobe-in/$abi/speedprobe"
+          [ -s "$SRC" ] || { echo "::error::speedprobe отсутствует для $abi"; exit 1; }
+          mkdir -p "${{ inputs.target_dir }}/$abi"
+          install -m 0755 "$SRC" "${{ inputs.target_dir }}/$abi/libspeedprobe.so"
+        done
+
+    # ------------------------------------------------------- общий hard gate
+    - name: Verify all sidecar engines are bundled
+      id: verify
+      shell: bash
+      run: |
+        set -uo pipefail
+        D="${{ inputs.target_dir }}"
+        READELF="${{ inputs.ndk_home }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+        [ -x "$READELF" ] || READELF="$(command -v readelf || true)"
+        fail=0
+
+        # -------------------------------------------------------------- методы
+        #
+        # ДВЕ НАЙДЕННЫЕ И ДОКАЗАННЫЕ ЛОВУШКИ, из-за которых проверка обязана
+        # быть устроенной именно так:
+        #
+        # 1) `cmd | grep -q X` под `-e -o pipefail` (GitHub Actions ставит эти
+        #    флаги ВСЕГДА) даёт rc=141, а не 0, если писатель большой: grep -q
+        #    закрывает пайп сразу после первого совпадения, писатель получает
+        #    SIGPIPE, и pipefail объявляет упавшим весь конвейер. Воспроизведено
+        #    локально: короткий вывод -> rc=0, вывод 400 тыс. строк -> rc=141.
+        #    То есть такая проверка РАБОТАЕТ ИЛИ НЕТ В ЗАВИСИМОСТИ ОТ ОБЪЁМА
+        #    ВЫВОДА - это плавающий отказ. Поэтому: вывод сначала захватывается
+        #    в переменную, сопоставление делается без конвейеров (case/glob).
+        #
+        # 2) Разбор текста `readelf -h` привязан к формату конкретного инструмента
+        #    и его локали. Класс и машина читаются НАПРЯМУЮ ИЗ БАЙТОВ
+        #    ELF-заголовка: e_ident[4] (смещение 4) = EI_CLASS, e_machine
+        #    (смещение 18, 2 байта little-endian). Метод проверен на реальных
+        #    бинарниках всех четырёх ABI (mihomo из релиза, fptn-client/sing-box/
+        #    mimic-client из установленного APK) и на отрицательных контролях.
+        elf_class_machine() { # $1=файл -> "ELF32|ARM" и т.п.
+          f="$1"
+          cls="$(dd if="$f" bs=1 skip=4 count=1 2>/dev/null | od -An -tu1 | tr -d ' \n')"
+          machhex="$(dd if="$f" bs=1 skip=18 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+          case "$cls" in
+            1) cls_name=ELF32 ;;
+            2) cls_name=ELF64 ;;
+            *) cls_name="UNKNOWN($cls)" ;;
+          esac
+          case "$machhex" in
+            2800) mach_name=ARM ;;
+            b700) mach_name=AArch64 ;;
+            0300) mach_name='Intel 80386' ;;
+            3e00) mach_name='Advanced Micro Devices X86-64' ;;
+            *)    mach_name="UNKNOWN($machhex)" ;;
+          esac
+          printf '%s|%s' "$cls_name" "$mach_name"
+        }
+
+        # Точная таблица ожиданий: <abi>|<lib-имя>|<класс>|<машина>|<NEEDED>.
+        #
+        # Каждое значение получено фактом, а не выводом:
+        #   * mihomo    - разобран DT_NEEDED скачанных бинарников релиза v1.19.33;
+        #   * sing-box, mimic, speedprobe, dnsproxy - CI-пробы 43777193468 и
+        #                 43779836265 (ветка abi-probe, Go 1.25 / NDK 30);
+        #   * fptn-client - DT_NEEDED бинарника из установленного APK.
+        #
+        # Обратите внимание: mihomo под armeabi-v7a и x86 НЕ линкует libdl.so,
+        # тогда как под arm64-v8a и x86_64 линкует. Ожидание задано построчно,
+        # а не «одинаково для всех 32-битных».
+        #
+        # NONE = записей NEEDED быть не должно: признак чистой Go-сборки с
+        # CGO_ENABLED=0, которая возможна только для arm64 (для android/arm,
+        # android/386 и android/amd64 Go требует внешнюю линковку).
+        EXPECT='
+        arm64-v8a|libmihomo.so|ELF64|AArch64|libc.so libdl.so liblog.so
+        arm64-v8a|libsingbox.so|ELF64|AArch64|libandroid.so libc.so libdl.so liblog.so libm.so
+        arm64-v8a|libmimicclient.so|ELF64|AArch64|NONE
+        arm64-v8a|libdnsproxy.so|ELF64|AArch64|NONE
+        arm64-v8a|libspeedprobe.so|ELF64|AArch64|NONE
+        arm64-v8a|libfptnclient.so|ELF64|AArch64|libc.so libdl.so liblog.so libm.so
+        armeabi-v7a|libfptnclient.so|ELF32|ARM|libc.so libdl.so liblog.so libm.so
+        armeabi-v7a|libmihomo.so|ELF32|ARM|libc.so liblog.so
+        armeabi-v7a|libsingbox.so|ELF32|ARM|libandroid.so libc.so libdl.so liblog.so libm.so
+        armeabi-v7a|libmimicclient.so|ELF32|ARM|libc.so libdl.so liblog.so
+        armeabi-v7a|libdnsproxy.so|ELF32|ARM|libc.so libdl.so liblog.so
+        armeabi-v7a|libspeedprobe.so|ELF32|ARM|libc.so libdl.so liblog.so
+        x86|libfptnclient.so|ELF32|Intel 80386|libc.so libdl.so liblog.so libm.so
+        x86|libmihomo.so|ELF32|Intel 80386|libc.so liblog.so
+        x86|libsingbox.so|ELF32|Intel 80386|libandroid.so libc.so libdl.so liblog.so libm.so
+        x86|libmimicclient.so|ELF32|Intel 80386|libc.so libdl.so liblog.so
+        x86|libdnsproxy.so|ELF32|Intel 80386|libc.so libdl.so liblog.so
+        x86|libspeedprobe.so|ELF32|Intel 80386|libc.so libdl.so liblog.so
+        x86_64|libfptnclient.so|ELF64|Advanced Micro Devices X86-64|libc.so libdl.so liblog.so libm.so
+        x86_64|libmihomo.so|ELF64|Advanced Micro Devices X86-64|libc.so libdl.so liblog.so
+        x86_64|libsingbox.so|ELF64|Advanced Micro Devices X86-64|libandroid.so libc.so libdl.so liblog.so libm.so
+        x86_64|libmimicclient.so|ELF64|Advanced Micro Devices X86-64|libc.so libdl.so liblog.so
+        x86_64|libdnsproxy.so|ELF64|Advanced Micro Devices X86-64|libc.so libdl.so liblog.so
+        x86_64|libspeedprobe.so|ELF64|Advanced Micro Devices X86-64|libc.so libdl.so liblog.so
+        '
+
+        checked=0
+        while IFS='|' read -r abi lib want_cls want_mach want_needed; do
+          # Строки таблицы в heredoc несут ведущие пробелы (это требование
+          # отступа YAML внутри run-блока), а read кладёт их в первое поле.
+          # Без обрезки путь стал бы "libs/        arm64-v8a/libmihomo.so" и
+          # проверка сообщила бы «движок отсутствует», хотя файл на месте.
+          # Доказано локально: до обрезки abi=[        arm64-v8a], после -
+          # abi=[arm64-v8a], при этом значимые пробелы в списке NEEDED целы.
+          # Обрезаем ТОЛЬКО первое поле: в последнем пробелы разделяют имена
+          # библиотек.
+          abi="${abi#"${abi%%[![:space:]]*}"}"
+          [ -n "$abi" ] || continue
+          f="$D/$abi/$lib"
+          if [ ! -s "$f" ]; then
+            echo "::error::отсутствует движок: $f"
+            fail=1
+            continue
+          fi
+          checked=$((checked+1))
+          bad=""
+
+          # --- класс и машина: по байтам ELF-заголовка ---
+          got="$(elf_class_machine "$f")"
+          want="$want_cls|$want_mach"
+          if [ "$got" != "$want" ]; then
+            bad="$bad заголовок: факт [$got], ожидалось [$want];"
+          fi
+
+          # --- NEEDED: вывод readelf захватываем в переменную, затем сортируем
+          # БЕЗ конвейера в grep -q. sort/uniq работают по файлу, поэтому SIGPIPE
+          # невозможен.
+          if [ -n "$READELF" ]; then
+            "$READELF" -d "$f" > /tmp/dyn.txt 2>/dev/null || true
+          else
+            : > /tmp/dyn.txt
+          fi
+          actual="$(sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' /tmp/dyn.txt | sort -u | tr '\n' ' ' | sed 's/ *$//')"
+          if [ "$want_needed" = "NONE" ]; then expected=""
+          else expected="$(printf '%s' "$want_needed" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/ *$//')"; fi
+          if [ "$actual" != "$expected" ]; then
+            bad="$bad NEEDED: факт [${actual:-нет}], ожидалось [${expected:-нет}];"
+          fi
+
+          # --- libc++_shared.so недопустим: движок исполняется как отдельный
+          # процесс, а не грузится динамическим линковщиком из APK, поэтому
+          # подставить ему libc++_shared.so некому.
+          case "$actual" in
+            *libc++_shared.so*) bad="$bad линкует libc++_shared.so;" ;;
+          esac
+
+          if [ -n "$bad" ]; then
+            echo "::error::$f ->$bad"
+            # При неудаче печатаем ФАКТИЧЕСКИЙ вывод инструмента: без этого
+            # причину придётся угадывать (так было в run 43780792438, где
+            # четыре ноги упали на корректных бинарниках).
+            echo "----- фактический заголовок $f -----"
+            if [ -n "$READELF" ]; then "$READELF" -h "$f" 2>&1 | head -20 || true; fi
+            file "$f" || true
+            fail=1
+          else
+            printf 'OK  %-46s %-6s %-26s %10s байт  %s\n' \
+              "$f" "$want_cls" "${actual:-нет}" "$(stat -c%s "$f")" \
+              "$(sha256sum "$f" | cut -c1-12)"
+          fi
+        done <<EOF
+        $EXPECT
+        EOF
+
+        # Все четыре ABI обязаны получить ровно 6 движков (24 файла). Проверка
+        # числа ловит потерю файла, которая иначе прошла бы мимо: отсутствующая
+        # строка таблицы просто не проверилась бы.
+        expect_total=$((6 * 4))
+        if [ "$checked" -ne "$expect_total" ]; then
+          echo "::error::проверено $checked файлов, ожидалось $expect_total"
+          fail=1
+        fi
+
+        if [ "$fail" -ne 0 ]; then
+          echo "::error::Проверка сайдкар-движков провалена: см. строки выше"
+          exit 1
+        fi
+
+        {
+          echo "## Сайдкар-движки (libs/<abi>/lib*.so)"
+          echo
+          echo "Проверено файлов: $checked из $expect_total. ELF-инварианты соблюдены."
+          echo
+          echo '```'
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            echo "--- $abi ---"
+            ls -la "$D/$abi" 2>/dev/null | grep -E '\.so$' || true
+          done
+          echo '```'
+        } | tee -a "$GITHUB_STEP_SUMMARY"
+
+        SUMMARY="$(for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+                     printf '%s:%s; ' "$abi" "$(ls "$D/$abi" 2>/dev/null | tr '\n' ',')"
+                   done)"
+        echo "summary=$SUMMARY" >> "$GITHUB_OUTPUT"
+        echo "Все сайдкар-движки на месте и прошли ELF-проверки ($checked файлов)."

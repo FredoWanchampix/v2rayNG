@@ -1,8 +1,14 @@
 name: FPTN Android client build
 
-# Reusable workflow that cross-compiles the real FPTN CLI client for Android
-# arm64. Kept separate from the release build so toolchain problems can be
-# iterated on in minutes instead of burning a full APK build each time.
+# ЭКСПЕРИМЕНТ (ветка-полигон fptn-multiabi, в master не попадает).
+#
+# Копия fptn-android-probe.yml, переведённая на matrix по четырём Android ABI.
+# Цель - фактами ответить, собирается ли fptn-client (Conan + Boost.Process +
+# libtuntap + camouflagetls + BoringSSL) под armeabi-v7a, x86 и x86_64, а не
+# только под arm64. Это самый рискованный элемент multi-ABI переноса движков:
+# Go-движки кросс-собираются тривиально, а здесь тяжёлый C++-граф зависимостей.
+#
+# Ниже сохранён исходный разбор, почему используется Conan.
 #
 # Why Conan (and not a bare NDK cmake invocation):
 #   The previous attempt `cmake -DCMAKE_TOOLCHAIN_FILE=android.toolchain.cmake
@@ -21,8 +27,9 @@ name: FPTN Android client build
 #
 # Deviations from the upstream desktop recipe, all deliberate:
 #   1. libcxx=c++_static so the binary does not need libc++_shared.so at
-#      runtime: it is shipped in assets/ and executed directly, there is no
-#      APK lib path for the dynamic loader to find.
+#      runtime: the binary is executed as a separate process (ProcessBuilder /
+#      RootShell), never loaded by the dynamic linker, so nothing would
+#      resolve libc++_shared.so for it.
 #   2. src/fptn-server and src/fptn-passwd are not configured, and the
 #      prometheus-cpp requirement they alone need is dropped from the recipe.
 #      Only fptn-client-cli is shipped; this saves a large part of the build.
@@ -46,15 +53,18 @@ on:
         default: "0.4.6"
         type: string
     outputs:
+      # Отдаются контрольные суммы arm64-сборки. При matrix outputs отдельной
+      # ноги недетерминированы, поэтому их снимает ОТДЕЛЬНЫЙ собирающий job
+      # (bundle) с одного общего артефакта, а не matrix-job.
       sha256:
-        description: "SHA256 of the produced fptn-client binary"
-        value: ${{ jobs.build-fptn-android.outputs.sha256 }}
+        description: "SHA256 of the arm64-v8a fptn-client binary"
+        value: ${{ jobs.bundle.outputs.sha256 }}
       size:
-        description: "Size in bytes of the stripped fptn-client binary"
-        value: ${{ jobs.build-fptn-android.outputs.size }}
+        description: "Size in bytes of the stripped arm64-v8a fptn-client"
+        value: ${{ jobs.bundle.outputs.size }}
       artifact_id:
-        description: "Actions artifact id of the fptn-client-arm64-v8a artifact"
-        value: ${{ jobs.build-fptn-android.outputs.artifact_id }}
+        description: "Actions artifact id of the fptn-client-android artifact"
+        value: ${{ jobs.bundle.outputs.artifact_id }}
 
 permissions:
   contents: read
@@ -75,11 +85,40 @@ env:
 jobs:
   build-fptn-android:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
-    outputs:
-      sha256: ${{ steps.stage.outputs.sha256 }}
-      size: ${{ steps.stage.outputs.size }}
-      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    timeout-minutes: 240
+    # fail-fast=false ОБЯЗАТЕЛЕН: цель эксперимента - увидеть поведение ВСЕХ
+    # ABI, а не только первого упавшего. Иначе 32-битный провал скрыл бы
+    # результат x86_64.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            conan_arch: armv8
+            triple: aarch64-linux-android
+            file_regex: 'ARM aarch64|arm64'
+            elf_class: ELF64
+            machine: AArch64
+          - abi: armeabi-v7a
+            conan_arch: armv7
+            triple: armv7a-linux-androideabi
+            file_regex: 'ARM, EABI5|ARM,'
+            elf_class: ELF32
+            machine: ARM
+          - abi: x86
+            conan_arch: x86
+            triple: i686-linux-android
+            file_regex: 'Intel i386|Intel 80386'
+            elf_class: ELF32
+            machine: Intel 80386
+          - abi: x86_64
+            conan_arch: x86_64
+            triple: x86_64-linux-android
+            file_regex: 'x86-64|X86-64'
+            elf_class: ELF64
+            machine: Advanced Micro Devices X86-64
+    env:
+      ABI: ${{ matrix.abi }}
 
     steps:
       - name: Setup Android SDK cmdline-tools
@@ -122,16 +161,16 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.conan2/p
-          key: fptn-conan-ndk${{ env.NDK_VERSION }}-${{ inputs.fptn_tag || github.event.inputs.fptn_tag || '0.4.6' }}-armv8-v3
+          key: fptn-conan-ndk${{ env.NDK_VERSION }}-${{ inputs.fptn_tag || github.event.inputs.fptn_tag || '0.4.6' }}-${{ matrix.conan_arch }}-v3
           restore-keys: |
-            fptn-conan-ndk${{ env.NDK_VERSION }}-
+            fptn-conan-ndk${{ env.NDK_VERSION }}-${{ inputs.fptn_tag || github.event.inputs.fptn_tag || '0.4.6' }}-
 
       - name: Write the Android host profile
         shell: bash
         run: |
           set -euo pipefail
           NDK_BIN="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          CC="$NDK_BIN/aarch64-linux-android${API_LEVEL}-clang"
+          CC="$NDK_BIN/${{ matrix.triple }}${API_LEVEL}-clang"
           [ -x "$CC" ] || { echo "::error::NDK clang not found at $CC"; exit 1; }
           CC_VER="$("$CC" -dumpversion | cut -d. -f1)"
           echo "NDK clang major version: $CC_VER"
@@ -143,7 +182,7 @@ jobs:
             echo "[settings]"
             echo "os=Android"
             echo "os.api_level=${API_LEVEL}"
-            echo "arch=armv8"
+            echo "arch=${{ matrix.conan_arch }}"
             echo "compiler=clang"
             echo "compiler.version=${CC_VER}"
             echo "compiler.cppstd=20"
@@ -152,7 +191,7 @@ jobs:
             echo
             echo "[conf]"
             echo "tools.android:ndk_path=${NDK_HOME}"
-            echo "tools.build:compiler_executables={'c': '${NDK_BIN}/aarch64-linux-android${API_LEVEL}-clang', 'cpp': '${NDK_BIN}/aarch64-linux-android${API_LEVEL}-clang++', 'ar': '${NDK_BIN}/llvm-ar', 'ranlib': '${NDK_BIN}/llvm-ranlib', 'strip': '${NDK_BIN}/llvm-strip'}"
+            echo "tools.build:compiler_executables={'c': '${NDK_BIN}/${{ matrix.triple }}${API_LEVEL}-clang', 'cpp': '${NDK_BIN}/${{ matrix.triple }}${API_LEVEL}-clang++', 'ar': '${NDK_BIN}/llvm-ar', 'ranlib': '${NDK_BIN}/llvm-ranlib', 'strip': '${NDK_BIN}/llvm-strip'}"
           } > ~/.conan2/profiles/android
           echo "----- host profile -----"
           cat ~/.conan2/profiles/android
@@ -207,7 +246,7 @@ jobs:
           grep -rn 'Boost::process' src CMakeLists.txt 2>/dev/null || echo "  none"
           grep -nE "prometheus-cpp|add_subdirectory\((src/fptn-|tests)|enable_testing|install\(TARGETS|CMAKE_COMPILE_WARNING_AS_ERROR|-Werror" CMakeLists.txt conanfile.py | head -30
 
-      - name: Conan install for Android arm64
+      - name: Conan install for Android ${{ matrix.abi }}
         shell: bash
         working-directory: /tmp/fptn
         run: |
@@ -249,7 +288,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ~/.conan2/p
-          key: fptn-conan-ndk${{ env.NDK_VERSION }}-${{ inputs.fptn_tag || github.event.inputs.fptn_tag || '0.4.6' }}-armv8-v3
+          key: fptn-conan-ndk${{ env.NDK_VERSION }}-${{ inputs.fptn_tag || github.event.inputs.fptn_tag || '0.4.6' }}-${{ matrix.conan_arch }}-v3
 
       - name: Resolve Boost.Process for Android
         shell: bash
@@ -457,16 +496,79 @@ jobs:
             exit 1
           fi
           STRIP="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
-          echo "Built: $BIN"; file "$BIN"; ls -la "$BIN"
-          file "$BIN" | grep -qi "ELF" || { echo "::error::not an ELF"; exit 1; }
-          file "$BIN" | grep -qiE "ARM aarch64|arm64" || { echo "::error::not arm64"; exit 1; }
-          # It must be a bionic (Android) binary, not a glibc/musl host one.
           READELF="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
-          "$READELF" -d "$BIN" | head -40
-          if "$READELF" -d "$BIN" | grep -q "libc\+\+_shared\.so"; then
-            echo "::error::binary links libc++_shared.so; profile must use c++_static"
+          echo "Built: $BIN"; file "$BIN"; ls -la "$BIN"
+
+          # ТРИ ловушки, из-за которых прошлый matrix-запуск (43780792438) упал
+          # 4/4 на КОРРЕКТНЫХ бинарниках. Все три устранены конструктивно:
+          #
+          # 1) llvm-readelf -h печатает "Class: 64-bit", тогда как GNU readelf
+          #    печатает "Class: ELF64". Паттерн "Class:.*ELF64" поэтому не мог
+          #    совпасть ни на одном ABI. Класс и машина читаются НАПРЯМУЮ ИЗ
+          #    БАЙТОВ ELF-заголовка (e_ident[4], e_machine на смещении 18 LE) -
+          #    метод не зависит от инструмента и его формата вывода. Проверен
+          #    локально на реальных ELF всех четырёх ABI + fptn/sing-box/mimic
+          #    из установленного APK.
+          #
+          # 2) `cmd | grep -q X` под `-e -o pipefail` (GitHub Actions ставит
+          #    всегда) даёт rc=141 (SIGPIPE) при большом выводе писателя, то
+          #    есть работает или нет в зависимости от объёма вывода. Вывод
+          #    захватывается в переменные, сопоставление - через case/glob и
+          #    [[ =~ ]] с паттерном В ПЕРЕМЕННОЙ (нецитированный литерал с
+          #    пробелом "ARM aarch64|arm64" - синтаксическая ошибка bash).
+          #
+          # 3) `file` для x86 печатает "Intel i386", а не "Intel 80386" -
+          #    паттерн в matrix исправлен, плюс ниже остаётся дублирующий
+          #    байтовый контроль машины.
+          FILEOUT="$(file "$BIN")"
+          cls_byte="$(dd if="$BIN" bs=1 skip=4 count=1 2>/dev/null | od -An -tu1 | tr -d ' \n')"
+          mach_hex="$(dd if="$BIN" bs=1 skip=18 count=2 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+          case "$cls_byte" in
+            1) GOT_CLS=ELF32 ;;
+            2) GOT_CLS=ELF64 ;;
+            *) GOT_CLS="UNKNOWN($cls_byte)" ;;
+          esac
+          case "$mach_hex" in
+            2800) GOT_MACH=ARM ;;
+            b700) GOT_MACH=AArch64 ;;
+            0300) GOT_MACH="Intel 80386" ;;
+            3e00) GOT_MACH="Advanced Micro Devices X86-64" ;;
+            *)    GOT_MACH="UNKNOWN($mach_hex)" ;;
+          esac
+          echo "байты ELF: class=$GOT_CLS machine=$GOT_MACH (e_ident[4]=$cls_byte, e_machine=0x$mach_hex)"
+
+          case "$FILEOUT" in
+            *ELF*) : ;;
+            *) echo "::error::not an ELF: $FILEOUT"; exit 1 ;;
+          esac
+          FILE_RE='${{ matrix.file_regex }}'
+          shopt -s nocasematch
+          if [[ ! $FILEOUT =~ $FILE_RE ]]; then
+            echo "::error::строка file не соответствует ABI ${{ matrix.abi }}: $FILEOUT"
             exit 1
           fi
+          shopt -u nocasematch
+          if [ "$GOT_CLS" != "${{ matrix.elf_class }}" ]; then
+            echo "::error::ожидался ${{ matrix.elf_class }} для ${{ matrix.abi }}, факт $GOT_CLS"
+            exit 1
+          fi
+          if [ "$GOT_MACH" != "${{ matrix.machine }}" ]; then
+            echo "::error::ожидалась машина ${{ matrix.machine }} для ${{ matrix.abi }}, факт $GOT_MACH"
+            exit 1
+          fi
+
+          # bionic-бинарник, не glibc/musl; libc++_shared.so недопустим: движок
+          # исполняется как отдельный процесс, подставить ему эту библиотеку
+          # некому. Вывод readelf захвачен в переменную - без пайпов в grep -q.
+          DYN="$("$READELF" -d "$BIN" 2>/dev/null || true)"
+          printf '%s\n' "$DYN" > /tmp/fptn-dyn.txt
+          head -40 /tmp/fptn-dyn.txt || true
+          case "$DYN" in
+            *libc++_shared.so*)
+              echo "::error::binary links libc++_shared.so; profile must use c++_static"
+              exit 1 ;;
+          esac
+
           "$STRIP" "$BIN" || true
           mkdir -p "$GITHUB_WORKSPACE/fptn-out"
           install -m 0755 "$BIN" "$GITHUB_WORKSPACE/fptn-out/fptn-client"
@@ -474,25 +576,148 @@ jobs:
           sha256sum "$GITHUB_WORKSPACE/fptn-out/fptn-client" | tee "$GITHUB_WORKSPACE/fptn-out/SHA256SUMS.txt"
           echo "sha256=$(sha256sum "$GITHUB_WORKSPACE/fptn-out/fptn-client" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
           echo "size=$(stat -c%s "$GITHUB_WORKSPACE/fptn-out/fptn-client")" >> "$GITHUB_OUTPUT"
+
+          # ELF-факты ПОСЛЕ strip - именно это попадёт в APK. NEEDED печатаем
+          # полностью: это недостающий факт для hard-gate таблицы в
+          # bundle-sidecar-engines (сейчас там заполнен только arm64).
+          DYN2="$("$READELF" -d "$GITHUB_WORKSPACE/fptn-out/fptn-client" 2>/dev/null || true)"
+          printf '%s\n' "$DYN2" > /tmp/fptn-dyn2.txt
+          HDR2="$("$READELF" -h "$GITHUB_WORKSPACE/fptn-out/fptn-client" 2>/dev/null || true)"
+          printf '%s\n' "$HDR2" > /tmp/fptn-hdr2.txt
+          echo "----- ELF facts (${{ matrix.abi }}, после strip) -----"
+          echo "байты: class=$GOT_CLS machine=$GOT_MACH"
+          echo "NEEDED:"
+          grep 'NEEDED' /tmp/fptn-dyn2.txt || echo '  (нет)'
+          echo "PT_INTERP:"
+          # Заголовки программы пишутся в файл, затем grep читает ФАЙЛ (а не
+          # пайп) - при таком порядке SIGPIPE невозможен в принципе.
+          "$READELF" -l "$GITHUB_WORKSPACE/fptn-out/fptn-client" > /tmp/fptn-phdr.txt 2>/dev/null || true
+          grep -A1 'INTERP' /tmp/fptn-phdr.txt || echo '  (нет)'
           {
-            echo "## FPTN Android probe"
+            echo "## FPTN Android probe — ${{ matrix.abi }}"
             echo
             echo "- FPTN tag: \`${FPTN_TAG}\`"
-            echo "- NDK: \`${NDK_VERSION}\`, API level ${API_LEVEL}, arch armv8, libcxx c++_static"
+            echo "- NDK: \`${NDK_VERSION}\`, API ${API_LEVEL}, arch ${{ matrix.conan_arch }}, libcxx c++_static"
+            echo "- размер после strip: $(stat -c%s "$GITHUB_WORKSPACE/fptn-out/fptn-client") байт"
+            echo "- класс/машина (байты ELF): $GOT_CLS / $GOT_MACH"
             echo
             echo '```'
             file "$GITHUB_WORKSPACE/fptn-out/fptn-client"
-            ls -la "$GITHUB_WORKSPACE/fptn-out/fptn-client"
             cat "$GITHUB_WORKSPACE/fptn-out/SHA256SUMS.txt"
+            echo "NEEDED:"
+            grep 'NEEDED' /tmp/fptn-dyn2.txt || echo '(нет)'
             echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload fptn-client artifact
+      - name: Upload fptn-client artifact (${{ matrix.abi }})
         id: upload
         uses: actions/upload-artifact@v7
         with:
-          name: fptn-client-arm64-v8a
+          name: fptn-client-${{ matrix.abi }}
           path: |
             fptn-out/fptn-client
             fptn-out/SHA256SUMS.txt
           if-no-files-found: error
+
+  # Собирающий job. Он нужен по двум причинам:
+  #   1) outputs workflow_call должны быть детерминированными, а у matrix-job
+  #      outputs берутся из одной произвольной ноги;
+  #   2) потребителю (bundle-sidecar-engines) удобнее ОДИН артефакт со всеми
+  #      ABI и общим манифестом сумм, чем четыре отдельных.
+  #
+  # Жёсткий гейт: если хотя бы одна нога matrix не загрузила артефакт, сборка
+  # останавливается здесь, а не выпускает APK с отсутствующим движком.
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-fptn-android
+    outputs:
+      sha256: ${{ steps.collect.outputs.sha256 }}
+      size: ${{ steps.collect.outputs.size }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      # Каждый ABI скачивается ОТДЕЛЬНЫМ шагом с явным именем артефакта и явным
+      # путём назначения. Намеренно НЕ используется download-artifact с
+      # `pattern:`: при нём каждый артефакт распаковывается в подкаталог, имя
+      # которого повторяет имя артефакта, то есть итоговая раскладка зависит от
+      # семантики действия, а не от нашего кода. Явные шаги делают структуру
+      # fptn-all/<abi>/fptn-client гарантированной и проверяемой.
+      - name: Download fptn-client (arm64-v8a)
+        uses: actions/download-artifact@v8
+        with:
+          name: fptn-client-arm64-v8a
+          path: fptn-all/arm64-v8a
+
+      - name: Download fptn-client (armeabi-v7a)
+        uses: actions/download-artifact@v8
+        with:
+          name: fptn-client-armeabi-v7a
+          path: fptn-all/armeabi-v7a
+
+      - name: Download fptn-client (x86)
+        uses: actions/download-artifact@v8
+        with:
+          name: fptn-client-x86
+          path: fptn-all/x86
+
+      - name: Download fptn-client (x86_64)
+        uses: actions/download-artifact@v8
+        with:
+          name: fptn-client-x86_64
+          path: fptn-all/x86_64
+
+      - name: Assemble the combined artifact
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail=0
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            # Каждый ABI скачан ОТДЕЛЬНЫМ шагом в fptn-all/<abi>/ (см. шаги
+            # загрузки выше). Внутри артефакта лежит плоский fptn-client:
+            # upload-artifact берёт наименьший общий предок перечисленных путей
+            # как корень, поэтому префикс fptn-out/ в архив не попадает. Это
+            # проверено на реальном артефакте (path tools/speedprobe/speedprobe
+            # -> внутри zip просто speedprobe).
+            SRC="fptn-all/$abi/fptn-client"
+            if [ ! -s "$SRC" ]; then
+              echo "::error::артефакт fptn-client отсутствует для $abi"
+              fail=1
+              continue
+            fi
+            mkdir -p "out/$abi"
+            install -m 0755 "$SRC" "out/$abi/fptn-client"
+          done
+          [ "$fail" -eq 0 ] || exit 1
+
+          # Манифест сумм: потребитель сверит его через sha256sum -c, поэтому
+          # порча артефакта при передаче будет обнаружена.
+          ( cd out && sha256sum */fptn-client | sort -k2 > SHA256SUMS.txt )
+          cat out/SHA256SUMS.txt
+
+          ARM64_SHA="$(sha256sum out/arm64-v8a/fptn-client | cut -d' ' -f1)"
+          ARM64_SIZE="$(stat -c%s out/arm64-v8a/fptn-client)"
+          echo "sha256=$ARM64_SHA" >> "$GITHUB_OUTPUT"
+          echo "size=$ARM64_SIZE" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## FPTN Android client — все ABI"
+            echo
+            echo '```'
+            cat out/SHA256SUMS.txt
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload combined fptn-client artifact
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: fptn-client-android
+          path: |
+            out/arm64-v8a/fptn-client
+            out/armeabi-v7a/fptn-client
+            out/x86/fptn-client
+            out/x86_64/fptn-client
+            out/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
