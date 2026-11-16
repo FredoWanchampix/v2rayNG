@@ -47,7 +47,7 @@ import com.v2ray.ang.ui.compose.AppTopBar
 import com.v2ray.ang.ui.compose.DeleteConfirmDialog
 import com.v2ray.ang.ui.compose.ItemDivider
 import com.v2ray.ang.ui.compose.NavigationBarsBottomPadding
-import com.v2ray.ang.ui.compose.QRCodeDialog
+import com.v2ray.ang.ui.compose.QRCodePagerDialog
 import com.v2ray.ang.ui.compose.ReorderableListItem
 import com.v2ray.ang.ui.compose.SelectListDialog
 import com.v2ray.ang.ui.compose.SettingsSwitchItem
@@ -119,7 +119,7 @@ fun SubSettingScreen(
     val confirmRemove = MmkvManager.decodeSettingsBool(AppConfig.PREF_CONFIRM_REMOVE, false)
 
     var shareTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
-    val qrCodeBitmap by viewModel.qrCode.collectAsStateWithLifecycle()
+    val qrCodeBitmaps by viewModel.qrCode.collectAsStateWithLifecycle()
 
     val lazyListState = rememberLazyListState()
     val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
@@ -262,10 +262,10 @@ fun SubSettingScreen(
         )
     }
 
-    // QR Code Dialog
-    if (qrCodeBitmap != null) {
-        QRCodeDialog(
-            bitmap = qrCodeBitmap,
+    // QR Code Dialog (сегментированный: пейджер «QR n из N»)
+    if (qrCodeBitmaps.isNotEmpty()) {
+        QRCodePagerDialog(
+            bitmaps = qrCodeBitmaps,
             onDismiss = viewModel::dismissQRCode
         )
     }

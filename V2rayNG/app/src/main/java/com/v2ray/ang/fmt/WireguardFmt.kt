@@ -69,8 +69,6 @@ object WireguardFmt : FmtBase() {
      * @return the parsed ProfileItem object, or null if parsing fails
      */
     fun parseWireguardConfFile(str: String): ProfileItem {
-        val config = ProfileItem.create(EConfigType.WIREGUARD)
-
         val interfaceParams: MutableMap<String, String> = mutableMapOf()
         val peerParams: MutableMap<String, String> = mutableMapOf()
 
@@ -101,6 +99,37 @@ object WireguardFmt : FmtBase() {
                 }
             }
         }
+
+        // AmneziaWG .conf: секция [Interface] несёт ключи обфускации
+        // (Jc/Jmin/Jmax/S1-S4/H1-H4/I1-I5/J1-J3/...), панели пишут их в
+        // CamelCase. Молча потерять их нельзя (инвариант опциональности
+        // обфускации работает в обе стороны): при наличии ключей профиль
+        // создаётся как AMNEZIAWG с amneziaOptions, иначе — WIREGUARD.
+        val ciInterface = interfaceParams.entries.associate { it.key.lowercase() to it.value }
+        val awgOpts = org.json.JSONObject()
+        val intKeys = listOf("jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "itime", "version")
+        val strKeys = listOf(
+            "h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4", "i5", "j1", "j2", "j3",
+            "header-protection-key", "content-padding-addition", "rekey-after-time",
+            "rekey-timeout", "reject-after-time", "keepalive-timeout", "max-handshake-attempts"
+        )
+        val boolKeys = listOf("random-trailers", "disable-cookies")
+        fun ciGet(canonical: String): String? =
+            ciInterface[canonical] ?: ciInterface[canonical.replace("-", "")]
+        ciGet("version")?.toIntOrNull()?.let { awgOpts.put("version", it) }
+        intKeys.filter { it != "version" }.forEach { k -> ciGet(k)?.toIntOrNull()?.let { awgOpts.put(k, it) } }
+        strKeys.forEach { k -> ciGet(k)?.takeIf { it.isNotBlank() }?.let { awgOpts.put(k, it) } }
+        boolKeys.forEach { k ->
+            ciGet(k)?.let { raw ->
+                when (raw.trim().lowercase()) {
+                    "true", "1", "yes" -> awgOpts.put(k, true)
+                    "false", "0", "no" -> awgOpts.put(k, false)
+                }
+            }
+        }
+        val isAwg = awgOpts.length() > 0
+        val config = ProfileItem.create(if (isAwg) EConfigType.AMNEZIAWG else EConfigType.WIREGUARD)
+        if (isAwg) config.amneziaOptions = awgOpts.toString()
 
         config.secretKey = interfaceParams["privatekey"].orEmpty()
         config.remarks = System.currentTimeMillis().toString()

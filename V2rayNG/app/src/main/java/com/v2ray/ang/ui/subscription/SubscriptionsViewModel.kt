@@ -28,7 +28,7 @@ import kotlinx.coroutines.withContext
 
 class SubscriptionsViewModel(application: Application) : BaseViewModel(application) {
     private var qrCodeJob: Job? = null
-    private val _qrCode = MutableStateFlow<Bitmap?>(null)
+    private val _qrCode = MutableStateFlow<List<Bitmap>>(emptyList())
     internal val qrCode = _qrCode.asStateFlow()
     private val subscriptions: MutableList<SubscriptionCache> =
         MmkvManager.decodeSubscriptions().toMutableList()
@@ -66,16 +66,18 @@ class SubscriptionsViewModel(application: Application) : BaseViewModel(applicati
     internal fun shareQRCode(url: String) {
         dismissQRCode()
         qrCodeJob = viewModelScope.launch {
-            val bitmap = withContext(Dispatchers.Default) { QRCodeDecoder.createQRCode(url) }
-            if (bitmap == null) toastError(R.string.toast_failure)
-            _qrCode.value = bitmap
+            // Сегментированный экспорт: длинный URL подписки режется на целые
+            // куски, каждый — отдельный QR; ничего не урезается и не сжимается.
+            val bitmaps = withContext(Dispatchers.Default) { QRCodeDecoder.createQRCodeList(url) }
+            if (bitmaps.isEmpty()) toastError(R.string.toast_qr_create_failed)
+            _qrCode.value = bitmaps
         }
     }
 
     internal fun dismissQRCode() {
         qrCodeJob?.cancel()
         qrCodeJob = null
-        _qrCode.value = null
+        _qrCode.value = emptyList()
     }
 
     fun move(fromPosition: Int, toPosition: Int) {

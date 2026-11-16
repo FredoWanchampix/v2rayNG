@@ -165,6 +165,57 @@ class WireguardFmtNoiseTest {
     }
 
     @Test
+    fun `amneziawg conf file keeps obfuscation keys`() {
+        // Панели пишут ключи в CamelCase; потеря обфускации запрещена
+        // инвариантом опциональности (в обе стороны).
+        val conf = """
+            [Interface]
+            PrivateKey = SECRET=
+            Address = 10.8.0.2/32
+            MTU = 1280
+            Jc = 4
+            Jmin = 40
+            Jmax = 70
+            S1 = 15
+            S2 = 25
+            H1 = 123456
+            HeaderProtectionKey = KEYKEY
+
+            [Peer]
+            PublicKey = PUB=
+            Endpoint = awg.example.com:51820
+        """.trimIndent()
+        val profile = WireguardFmt.parseWireguardConfFile(conf)
+        assertEquals(com.v2ray.ang.enums.EConfigType.AMNEZIAWG, profile.configType)
+        val opts = org.json.JSONObject(profile.amneziaOptions!!)
+        assertEquals(4, opts.getInt("jc"))
+        assertEquals(40, opts.getInt("jmin"))
+        assertEquals(70, opts.getInt("jmax"))
+        assertEquals(15, opts.getInt("s1"))
+        assertEquals(25, opts.getInt("s2"))
+        assertEquals("123456", opts.getString("h1"))
+        assertEquals("KEYKEY", opts.getString("header-protection-key"))
+        assertEquals("awg.example.com", profile.server)
+        assertEquals("51820", profile.serverPort)
+    }
+
+    @Test
+    fun `plain wireguard conf stays wireguard type`() {
+        val conf = """
+            [Interface]
+            PrivateKey = SECRET=
+            Address = 172.16.0.2/32
+
+            [Peer]
+            PublicKey = PUB=
+            Endpoint = 1.2.3.4:500
+        """.trimIndent()
+        val profile = WireguardFmt.parseWireguardConfFile(conf)
+        assertEquals(com.v2ray.ang.enums.EConfigType.WIREGUARD, profile.configType)
+        assertNull(profile.amneziaOptions)
+    }
+
+    @Test
     fun `conf file with broken noises stays usable`() {
         val conf = """
             [Interface]

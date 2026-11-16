@@ -316,7 +316,7 @@ object SubscriptionContentConverter {
                 "http" -> null
                 "wireguard" -> buildSbWireguard(root, rem)
                 "naive" -> buildSbNaive(root, rem)
-                "openconnect" -> buildSbOpenconnect(root, rem)
+                "openconnect", "anyconnect" -> buildSbOpenconnect(root, rem)
                 "mimic" -> buildSbMimic(root, rem)
                 else -> null
             }
@@ -458,7 +458,9 @@ object SubscriptionContentConverter {
         "proxychain", "proxy-chain" -> "PROXYCHAIN — внутренняя цепочка профилей форка, формат share-ссылки её не выражает"
         "custom", "custom_outbound", "custom-outbound" -> "кастомный профиль уже хранит исходный JSON без потерь; конвертация в ссылку не требуется"
         "tuic" -> "TUIC: парсер ссылок в форке отключён (EConfigType.TUIC закомментирован), tuic:// ссылка не импортировалась бы — профиль остаётся кастомным"
-        "freedom", "blackhole", "dns", "dokodemo-door", "loopback" -> "служебный outbound '$p' не является прокси-сервером"
+        "hysteria" -> "hysteria: версия 1 не поддерживается парсером форка (профиль остаётся кастомным без потерь)"
+        "freedom", "blackhole", "dns", "dokodemo-door", "loopback",
+        "direct", "block" -> "служебный outbound '$p' не является прокси-сервером"
         else -> null
     }
 
@@ -495,7 +497,14 @@ object SubscriptionContentConverter {
             "mimic" -> "mimic: нет uuid/адреса/порта"
             "socks" -> "socks: settings.servers[] пуст или содержит более одного сервера"
             "http" -> "http: форк не импортирует http:// ссылки (схемы нет в карте парсеров); для приватного IP строка ушла бы в подписку — профиль остаётся кастомным"
-            "hysteria", "hysteria2" -> "hysteria: версия 1 не поддерживается парсером форка либо нет адреса/порта"
+            "hysteria", "hysteria2" -> {
+                val ver = ob.optJSONObject("streamSettings")?.optJSONObject("hysteriaSettings")?.optInt("version", 0)
+                    ?: ob.optJSONObject("settings")?.optInt("version", 0)
+                    ?: ob.optInt("version", 0)
+                if (ver == 1 || (ver == 0 && p == "hysteria"))
+                    "hysteria: версия 1 не поддерживается парсером форка (профиль остаётся кастомным без потерь)"
+                else "hysteria2: нет адреса/порта или обязательных полей"
+            }
             else -> "$p: обязательные поля outbound отсутствуют или формат не распознан"
         }
     }

@@ -436,6 +436,18 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
+    fun `singbox anyconnect alias converts as openconnect`() {
+        val sb = """
+            { "type": "anyconnect", "tag": "oc", "server": "vpn.example.com", "server_port": 443,
+              "username": "u", "password": "p", "auth_group": "g2" }
+        """.trimIndent()
+        val out = convert(sb)
+        assertTrue(out.startsWith("openconnect://"), out)
+        val profile = OpenconnectFmt.parse(out)!!
+        assertEquals("g2", profile.ocservAuthGroup)
+    }
+
+    @Test
     fun `singbox openconnect round trip via OpenconnectFmt`() {
         val sb = """
             { "type": "openconnect", "tag": "oc", "server": "vpn.example.com:443",
