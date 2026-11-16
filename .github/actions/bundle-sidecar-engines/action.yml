@@ -403,9 +403,18 @@ runs:
         #                 43779836265 (ветка abi-probe, Go 1.25 / NDK 30);
         #   * fptn-client - DT_NEEDED бинарника из установленного APK.
         #
-        # Обратите внимание: mihomo под armeabi-v7a и x86 НЕ линкует libdl.so,
-        # тогда как под arm64-v8a и x86_64 линкует. Ожидание задано построчно,
-        # а не «одинаково для всех 32-битных».
+        # Значения NEEDED взяты из двух независимых источников, совпавших
+        # между собой: llvm-readelf в CI (run 43791942955, шаг Verify) и разбор
+        # DT_NEEDED тех же байтов (sha256 сверены с пинами выше). Для mihomo
+        # набор одинаков во всех четырёх ABI: libc.so libdl.so liblog.so.
+        #
+        # История одной ошибки: первая версия таблицы утверждала, что mihomo под
+        # armeabi-v7a и x86 НЕ линкует libdl.so. Это было следствием бага
+        # локального ELF-парсера, который обходил секцию .dynamic с шагом 16
+        # байт и для всех классов, тогда как у ELF32 запись DT_NEEDED занимает
+        # 8 байт. Парсер читал каждую вторую запись и терял libdl.so, а CI-гейт
+        # это расхождение поймал и остановил сборку. Ожидание исправлено под
+        # факт; шаг обхода обязан зависеть от класса ELF.
         #
         # NONE = записей NEEDED быть не должно: признак чистой Go-сборки с
         # CGO_ENABLED=0, которая возможна только для arm64 (для android/arm,
@@ -418,13 +427,13 @@ runs:
         arm64-v8a|libspeedprobe.so|ELF64|AArch64|NONE
         arm64-v8a|libfptnclient.so|ELF64|AArch64|libc.so libdl.so liblog.so libm.so
         armeabi-v7a|libfptnclient.so|ELF32|ARM|libc.so libdl.so liblog.so libm.so
-        armeabi-v7a|libmihomo.so|ELF32|ARM|libc.so liblog.so
+        armeabi-v7a|libmihomo.so|ELF32|ARM|libc.so libdl.so liblog.so
         armeabi-v7a|libsingbox.so|ELF32|ARM|libandroid.so libc.so libdl.so liblog.so libm.so
         armeabi-v7a|libmimicclient.so|ELF32|ARM|libc.so libdl.so liblog.so
         armeabi-v7a|libdnsproxy.so|ELF32|ARM|libc.so libdl.so liblog.so
         armeabi-v7a|libspeedprobe.so|ELF32|ARM|libc.so libdl.so liblog.so
         x86|libfptnclient.so|ELF32|Intel 80386|libc.so libdl.so liblog.so libm.so
-        x86|libmihomo.so|ELF32|Intel 80386|libc.so liblog.so
+        x86|libmihomo.so|ELF32|Intel 80386|libc.so libdl.so liblog.so
         x86|libsingbox.so|ELF32|Intel 80386|libandroid.so libc.so libdl.so liblog.so libm.so
         x86|libmimicclient.so|ELF32|Intel 80386|libc.so libdl.so liblog.so
         x86|libdnsproxy.so|ELF32|Intel 80386|libc.so libdl.so liblog.so
