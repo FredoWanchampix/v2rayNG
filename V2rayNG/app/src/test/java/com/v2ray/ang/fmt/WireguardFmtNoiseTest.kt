@@ -1,6 +1,7 @@
 package com.v2ray.ang.fmt
 
 import com.v2ray.ang.util.NoiseProfileUtil
+import com.v2ray.ang.util.TestJson
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -50,7 +51,7 @@ class WireguardFmtNoiseTest {
         assertNotNull(profile)
         assertNotNull(profile!!.noisesJson)
         assertNotNull(profile.finalMask, "fm обязан собраться из явного списка шумов")
-        assertTrue(JSONArray(profile.noisesJson!!).similar(JSONArray(NoiseProfileUtil.extractNoises(profile.finalMask)!!)))
+        assertTrue(TestJson.similar(JSONArray(profile.noisesJson!!), JSONArray(NoiseProfileUtil.extractNoises(profile.finalMask)!!)))
         // базовые поля не пострадали
         assertEquals("162.159.195.1", profile.server)
         assertEquals("500", profile.serverPort)
@@ -68,7 +69,7 @@ class WireguardFmtNoiseTest {
         assertEquals(1, arr.length())
         assertEquals("40-70", arr.getJSONObject(0).getString("rand"))
         // fm пересобран под явный список
-        assertTrue(JSONArray(profile.noisesJson!!).similar(JSONArray(NoiseProfileUtil.extractNoises(profile.finalMask)!!)))
+        assertTrue(TestJson.similar(JSONArray(profile.noisesJson!!), JSONArray(NoiseProfileUtil.extractNoises(profile.finalMask)!!)))
     }
 
     @Test
@@ -101,7 +102,7 @@ class WireguardFmtNoiseTest {
             JSONArray(again!!.noisesJson!!).toString()
         )
         assertTrue(
-            JSONObject(profile.finalMask!!).similar(JSONObject(again.finalMask!!)),
+            TestJson.similar(JSONObject(profile.finalMask!!), JSONObject(again.finalMask!!)),
             "finalMask обязан совпадать структурно"
         )
         assertEquals(profile.secretKey, again.secretKey)

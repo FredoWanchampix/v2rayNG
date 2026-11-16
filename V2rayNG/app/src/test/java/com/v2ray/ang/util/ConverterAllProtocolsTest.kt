@@ -215,7 +215,7 @@ class ConverterAllProtocolsTest {
         // и обратно: toUri -> parse даёт тот же профиль
         val again = MimicFmt.parse("mimic://" + MimicFmt.toUri(profile))!!
         assertEquals(profile.password, again.password)
-        assertTrue(JSONArray(profile.mimicDomains!!).similar(JSONArray(again.mimicDomains!!)))
+        assertTrue(TestJson.similar(JSONArray(profile.mimicDomains!!), JSONArray(again.mimicDomains!!)))
     }
 
     @Test
@@ -543,6 +543,6 @@ class ConverterAllProtocolsTest {
         assertEquals("23-911", JSONArray(profile.noisesJson!!).getJSONObject(0).getString("rand"))
         // и экспорт профиля не теряет шум
         val again = WireguardFmt.parse("wireguard://" + WireguardFmt.toUri(profile))!!
-        assertTrue(JSONArray(profile.noisesJson!!).similar(JSONArray(again.noisesJson!!)))
+        assertTrue(TestJson.similar(JSONArray(profile.noisesJson!!), JSONArray(again.noisesJson!!)))
     }
 }

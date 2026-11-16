@@ -210,7 +210,7 @@ class NoiseProfileUtilTest {
         val (noises, fm) = NoiseProfileUtil.syncProfileFields("""[{"rand":"40-70"}]""", null)
         assertNotNull(noises)
         assertNotNull(fm)
-        assertTrue(JSONArray(noises!!).similar(JSONArray(NoiseProfileUtil.extractNoises(fm)!!)))
+        assertTrue(TestJson.similar(JSONArray(noises!!), JSONArray(NoiseProfileUtil.extractNoises(fm)!!)))
     }
 
     @Test
@@ -227,11 +227,11 @@ class NoiseProfileUtilTest {
         val (n1, f1) = NoiseProfileUtil.syncProfileFields(warpNoises, null)
         val (n2, f2) = NoiseProfileUtil.syncProfileFields(n1, f1)
         // similar(): порядок ключей org.json на JVM не гарантирован.
-        assertTrue(JSONArray(n1!!).similar(JSONArray(n2!!)))
-        assertTrue(JSONObject(f1!!).similar(JSONObject(f2!!)))
+        assertTrue(TestJson.similar(JSONArray(n1!!), JSONArray(n2!!)))
+        assertTrue(TestJson.similar(JSONObject(f1!!), JSONObject(f2!!)))
         // и восстановление только из fm даёт тот же список
         val (n3, _) = NoiseProfileUtil.syncProfileFields(null, f1)
-        assertTrue(JSONArray(n1).similar(JSONArray(n3!!)))
+        assertTrue(TestJson.similar(JSONArray(n1), JSONArray(n3!!)))
     }
 
     // --- effectiveFinalMask: применение в конфиге ---
