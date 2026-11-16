@@ -9,6 +9,7 @@ import com.v2ray.ang.root.RootShell
 import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.LogUtil
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.roundToLong
 
 /**
  * Измерение профиля FPTN в ИЗОЛИРОВАННОМ network namespace.
@@ -336,13 +337,37 @@ internal object FptnProbeRunner {
     }
 
     /** Разбирает строку `DELAY <seconds>` в миллисекунды; -1 если её нет. */
+    /**
+     * Разбирает строку `DELAY <секунды>` (TTFB, напечатанная speedprobe) в
+     * миллисекунды.
+     *
+     * Конвертация - ОКРУГЛЕНИЕ до ближайшего целого, а не усечение: значение
+     * попадает в поле задержки профиля и показывается пользователю, поэтому
+     * ошибка обязана быть не больше 0.5 мс. При усечении 119.646 мс
+     * превращались в 119, то есть показанная задержка систематически
+     * занижалась. Спецификация зафиксирована тестом
+     * `parses delay in seconds into milliseconds` (0.119646 -> 120).
+     *
+     * `coerceAtLeast(1L)` нужен для измеримо малого, но ненулевого TTFB:
+     * 0.0004 с -> 0.4 мс. Ноль здесь был бы неотличим от сбоя, а отрицательное
+     * значение - тем более: MmkvManager.removeInvalidServer() удаляет профили с
+     * testDelayMillis < 0, то есть фиктивный ноль/минус стоил бы пользователю
+     * рабочего профиля.
+     *
+     * Обратите внимание на отличие от [parseAttempts]: там секунды усекаются, и
+     * это осознанно - длительность попытки используется только как знаменатель
+     * в расчёте скорости (totalBytes * 1000 / totalMs), где погрешность в 1 мс
+     * при типичных 300-2000 мс несущественна, а её спецификация зафиксирована
+     * отдельным тестом. Различие задокументировано здесь, чтобы его не приняли
+     * за опечатку и не «исправили» в одну сторону без проверки обоих тестов.
+     */
     internal fun parseDelay(output: String): Long {
         for (line in output.lineSequence()) {
             val trimmed = line.trim()
             if (!trimmed.startsWith("DELAY ")) continue
             val seconds = trimmed.removePrefix("DELAY ").trim().toDoubleOrNull() ?: continue
             if (seconds <= 0.0) continue
-            return (seconds * 1000.0).toLong().coerceAtLeast(1L)
+            return (seconds * 1000.0).roundToLong().coerceAtLeast(1L)
         }
         return -1L
     }
