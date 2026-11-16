@@ -200,7 +200,12 @@ object SubscriptionContentConverter {
     private val PROXY_SCHEMES = arrayOf(
         "vless://", "vmess://", "trojan://", "ss://", "ssr://",
         "hysteria://", "hysteria2://", "hy2://", "tuic://", "socks://",
-        "http://", "https://"
+        "http://", "https://",
+        // Схемы остальных протоколов форка: без них base64-тело подписки,
+        // начинающееся с такой ссылки, не распознавалось бы как список прокси
+        // и проходило бы мимо декодирования.
+        "wireguard://", "masque://", "awg://", "naive://", "openconnect://",
+        "anyconnect://", "fptn://", "mimic://"
     )
 
     /**
@@ -258,6 +263,27 @@ object SubscriptionContentConverter {
     private fun processJsonAll(root: JSONObject, keepBalancers: Boolean = false): List<String> {
         // Balancer configs stay as custom only when keepBalancers is explicitly on.
         if (keepBalancers && isBalancerConfig(root)) return emptyList()
+
+        // Цепочка outbounds (multi-hop) выражается в Xray через
+        // streamSettings.sockopt.dialerProxy, а в sing-box через detour. Формат
+        // share-ссылки не имеет поля для следующего хопа, поэтому конвертация
+        // такого конфига МОЛЧА потеряла бы обфускацию/цепочку (например WARP с
+        // noise-outbound). Конфиг остаётся кастомным, а причина фиксируется в
+        // логе: молчаливая потеря настроек хуже честного «осталось как есть».
+        chainReason(root)?.let { reason ->
+            // Лог обёрнут в runCatching намеренно: LogUtil читает уровень из
+            // MMKV, а в unit-тестах MMKV не инициализирован, поэтому прямой
+            // вызов ронял бы конвертацию подписки в тестах. На устройстве
+            // исключение невозможно, но защита делает функцию безопасной в
+            // любом контексте. Диагностика не должна ломать обновление.
+            runCatching {
+                LogUtil.w(
+                    "SubConverter",
+                    "конфиг '${root.optString("remarks", root.optString("tag", "?"))}' оставлен кастомным: $reason",
+                )
+            }
+            return emptyList()
+        }
         // Bare sing-box / direct outbound object (single server by definition)
         val sbType = root.optString("type")
         if (sbType.isNotEmpty() && (root.has("server") || root.has("server_port"))) {
@@ -271,6 +297,9 @@ object SubscriptionContentConverter {
                 "tuic" -> buildTuic(root, rem)
                 "socks" -> buildUserPassLink("socks", root, rem)
                 "http" -> buildUserPassLink("http", root, rem)
+                "wireguard" -> buildSbWireguard(root, rem)
+                "naive" -> buildSbNaive(root, rem)
+                "openconnect" -> buildSbOpenconnect(root, rem)
                 else -> null
             }
             return if (built != null) listOf(built) else emptyList()
@@ -317,6 +346,8 @@ object SubscriptionContentConverter {
                 "trojan" -> buildTrojan(ob, rem)
                 "hysteria", "hysteria2" -> buildHysteriaX(ob, rem)
                 "tuic" -> buildTuic(ob, rem)
+                "wireguard" -> buildWireguard(ob, rem)
+                "masque" -> buildMasque(ob, rem)
                 else -> if (isShadowsocks(ob)) buildShadowsocks(ob, rem) else null
             }
             if (built != null) return listOf(built)
@@ -333,6 +364,8 @@ object SubscriptionContentConverter {
                     "trojan" -> buildTrojan(ob, rem)
                     "hysteria", "hysteria2" -> buildHysteriaX(ob, rem)
                     "tuic" -> buildTuic(ob, rem)
+                    "wireguard" -> buildWireguard(ob, rem)
+                    "masque" -> buildMasque(ob, rem)
                     else -> if (isShadowsocks(ob)) buildShadowsocks(ob, rem) else null
                 }
                 if (built != null) links.add(built)
@@ -348,8 +381,241 @@ object SubscriptionContentConverter {
 
     private val PROXY_PROTOCOLS = setOf(
         "vless", "vmess", "shadowsocks", "trojan",
-        "hysteria", "hysteria2", "tuic", "socks", "http"
+        "hysteria", "hysteria2", "tuic", "socks", "http",
+        // wireguard и masque добавлены, чтобы конвертер покрывал ВСЕ протоколы,
+        // которые форк умеет разбирать из ссылок (см. configFmtParsers в
+        // AngConfigManager). Раньше wireguard-конфиг при включённом
+        // «Кастомные в ссылки» молча оставался кастомным: протокол не
+        // распознавался, processJsonAll возвращал пустой список.
+        "wireguard", "masque"
     )
+
+    /**
+     * Причина, по которой конфиг НЕ может быть конвертирован в ссылку без
+     * потери данных, или null, если цепочки нет.
+     *
+     * Цепочка outbounds (multi-hop) выражается в Xray через
+     * streamSettings.sockopt.dialerProxy, а в sing-box через detour. Формат
+     * share-ссылки не имеет поля для следующего хопа, поэтому конвертация
+     * такого конфига МОЛЧА потеряла бы обфускацию или промежуточный прокси
+     * (пример: WARP, у которого wireguard ходит через freedom с noises).
+     * Конфиг остаётся кастомным, а причина фиксируется в логе: молчаливая
+     * потеря настроек хуже честного «осталось как есть».
+     *
+     * Функция чистая (без логов и состояния), чтобы её можно было покрыть
+     * unit-тестом: LogUtil в тестах недоступен (тянет MMKV).
+     */
+    internal fun chainReason(root: JSONObject): String? {
+        // sing-box: detour у самого outbound-объекта
+        if (root.optString("detour").isNotEmpty()) {
+            return "outbound использует detour (цепочку), которую формат ссылки не выражает"
+        }
+        val dialer = fun(ob: JSONObject): String? =
+            ob.optJSONObject("streamSettings")
+                ?.optJSONObject("sockopt")
+                ?.optString("dialerProxy")
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { "outbound использует sockopt.dialerProxy=$it (цепочку), которую формат ссылки не выражает" }
+        // Xray: полный конфиг — проверяем каждый outbound
+        val obs = root.optJSONArray("outbounds")
+        if (obs != null) {
+            for (i in 0 until obs.length()) {
+                val ob = obs.optJSONObject(i) ?: continue
+                dialer(ob)?.let { return it }
+            }
+            return null
+        }
+        // Xray: одиночный outbound-объект
+        return dialer(root)
+    }
+
+    /**
+     * Xray wireguard outbound -> wireguard:// ссылка.
+     *
+     * Формат outbound (см. CoreOutboundBuilder.toOutboundWireguard):
+     * settings.secretKey, settings.address[], settings.mtu, settings.peers[]
+     * с endpoint/publicKey/preSharedKey. Ссылка читается WireguardFmt.parse:
+     * userInfo=secretKey, query publickey/address/mtu/reserved/dns/presharedkey.
+     *
+     * Ограничения, при которых конвертация НЕ выполняется (конфиг остаётся
+     * кастомным), чтобы не потерять данные молча:
+     *   - peers больше одного (multi-peer не выражается одной ссылкой);
+     *   - allowedIPs отличны от полного маршрута (0.0.0.0/0 и ::/0);
+     *   - цепочка dialerProxy (проверяется выше).
+     */
+    private fun buildWireguard(ob: JSONObject, rem: String): String? = try {
+        val st = ob.optJSONObject("settings") ?: return null
+        val secret = st.optString("secretKey", "")
+        if (secret.isEmpty()) return null
+        val peers = st.optJSONArray("peers")
+        if (peers == null || peers.length() != 1) {
+            LogUtil.w("SubConverter", "wireguard: peers != 1, оставлен кастомным")
+            return null
+        }
+        val peer = peers.getJSONObject(0)
+        val endpoint = peer.optString("endpoint", "")
+        if (endpoint.isEmpty()) return null
+        val (host, port) = splitEndpoint(endpoint) ?: return null
+        val allowed = peer.optJSONArray("allowedIPs")
+        if (allowed != null) {
+            val set = (0 until allowed.length()).map { allowed.optString(it) }.toSet()
+            if (set != setOf("0.0.0.0/0", "::/0")) {
+                LogUtil.w("SubConverter", "wireguard: нестандартный allowedIPs, оставлен кастомным")
+                return null
+            }
+        }
+        val params = linkedMapOf<String, String>()
+        params["publickey"] = peer.optString("publicKey", "")
+        val addr = st.optJSONArray("address")
+        if (addr != null && addr.length() > 0) {
+            params["address"] = (0 until addr.length()).mapNotNull { addr.optString(it).takeIf { s -> s.isNotEmpty() } }.joinToString(",")
+        }
+        st.optInt("mtu").takeIf { it > 0 }?.let { params["mtu"] = it.toString() }
+        peer.optString("preSharedKey", "").takeIf { it.isNotEmpty() }?.let { params["presharedkey"] = it }
+        st.optString("remoteDNS", "").takeIf { it.isNotEmpty() }?.let { params["dns"] = it }
+        val q = params.toList().joinToString("&") { "${it.first}=${URLEncoder.encode(it.second, "UTF-8")}" }
+        val enc = URLEncoder.encode(rem, "UTF-8").replace("+", "%20")
+        "wireguard://${URLEncoder.encode(secret, "UTF-8")}@$host:$port?$q#$enc"
+    } catch (_: Throwable) {
+        null
+    }
+
+    /**
+     * Xray masque outbound -> masque:// ссылка (обратно читается MasqueFmt.parse).
+     * settings.address/settings.port, settings.remoteDNS[],
+     * streamSettings.masqueSettings.{host,path,warp{privateKey,publicKey,address}}.
+     */
+    private fun buildMasque(ob: JSONObject, rem: String): String? = try {
+        val st = ob.optJSONObject("settings") ?: return null
+        val address = st.optString("address", "")
+        val port = st.optInt("port", 0)
+        if (address.isEmpty() || port <= 0) return null
+        val (host, portStr) = splitEndpoint("$address:$port") ?: return null
+        val ms = ob.optJSONObject("streamSettings")?.optJSONObject("masqueSettings")
+        val warp = ms?.optJSONObject("warp")
+        val params = linkedMapOf<String, String>()
+        warp?.optString("publicKey", "")?.takeIf { it.isNotEmpty() }?.let { params["publickey"] = it }
+        warp?.optJSONArray("address")?.let { a ->
+            if (a.length() > 0) params["address"] = (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }.joinToString(",")
+        }
+        st.optJSONArray("remoteDNS")?.let { d ->
+            if (d.length() > 0) params["dns"] = (0 until d.length()).mapNotNull { d.optString(it).takeIf { s -> s.isNotEmpty() } }.joinToString(",")
+        }
+        ms?.optString("host", "")?.takeIf { it.isNotEmpty() }?.let { params["host"] = it }
+        ms?.optString("path", "")?.takeIf { it.isNotEmpty() }?.let { params["path"] = it }
+        ms?.optJSONObject("headers")?.let { h ->
+            if (h.length() > 0) params["headers"] = h.toString()
+        }
+        val q = params.toList().joinToString("&") { "${it.first}=${URLEncoder.encode(it.second, "UTF-8")}" }
+        val secret = warp?.optString("privateKey", "").orEmpty()
+        val enc = URLEncoder.encode(rem, "UTF-8").replace("+", "%20")
+        "masque://${URLEncoder.encode(secret, "UTF-8")}@$host:$portStr?$q#$enc"
+    } catch (_: Throwable) {
+        null
+    }
+
+    /**
+     * sing-box wireguard outbound -> wireguard:// ссылка.
+     * Поля: server, server_port, local_address[], private_key, peer_public_key,
+     * pre_shared_key, mtu, reserved (массив или base64-строка).
+     */
+    private fun buildSbWireguard(root: JSONObject, rem: String): String? = try {
+        val secret = root.optString("private_key", "")
+        if (secret.isEmpty()) return null
+        val host = root.optString("server", "")
+        val port = root.optInt("server_port", 0)
+        if (host.isEmpty() || port <= 0) return null
+        val params = linkedMapOf<String, String>()
+        root.optString("peer_public_key", "").takeIf { it.isNotEmpty() }?.let { params["publickey"] = it }
+        root.optString("pre_shared_key", "").takeIf { it.isNotEmpty() }?.let { params["presharedkey"] = it }
+        val la = root.optJSONArray("local_address")
+        if (la != null && la.length() > 0) {
+            params["address"] = (0 until la.length()).mapNotNull { la.optString(it).takeIf { s -> s.isNotEmpty() } }.joinToString(",")
+        }
+        root.optInt("mtu").takeIf { it > 0 }?.let { params["mtu"] = it.toString() }
+        when (val r = root.opt("reserved")) {
+            is org.json.JSONArray ->
+                if (r.length() > 0) params["reserved"] = (0 until r.length()).map { r.opt(it).toString() }.joinToString(",")
+            is String -> r.takeIf { it.isNotEmpty() }?.let { params["reserved"] = it }
+            else -> {}
+        }
+        val q = params.toList().joinToString("&") { "${it.first}=${URLEncoder.encode(it.second, "UTF-8")}" }
+        val enc = URLEncoder.encode(rem, "UTF-8").replace("+", "%20")
+        val hp = if (host.contains(':')) "[$host]" else host
+        "wireguard://${URLEncoder.encode(secret, "UTF-8")}@$hp:$port?$q#$enc"
+    } catch (_: Throwable) {
+        null
+    }
+
+    /**
+     * sing-box naive outbound -> naive:// ссылка (обратно читает NaiveFmt.parse).
+     * JSON: type=naive, server, server_port, username, password, tls{server_name,
+     * insecure}. TLS-поля кладём в query теми же ключами, что читает
+     * getItemFormQuery (sni, insecure).
+     */
+    private fun buildSbNaive(root: JSONObject, rem: String): String? = try {
+        val host = root.optString("server", "")
+        val port = root.optInt("server_port", 0)
+        if (host.isEmpty() || port <= 0) return null
+        val user = root.optString("username", "")
+        val pass = root.optString("password", "")
+        val tls = root.optJSONObject("tls")
+        val params = linkedMapOf<String, String>()
+        tls?.optString("server_name", "")?.takeIf { it.isNotEmpty() }?.let { params["sni"] = it }
+        if (tls?.optBoolean("insecure", false) == true) params["insecure"] = "1"
+        val q = if (params.isEmpty()) "" else "?" + params.toList()
+            .joinToString("&") { "${it.first}=${URLEncoder.encode(it.second, "UTF-8")}" }
+        val hp = if (host.contains(':')) "[$host]" else host
+        val enc = URLEncoder.encode(rem, "UTF-8").replace("+", "%20")
+        "naive://${URLEncoder.encode(user, "UTF-8")}:${URLEncoder.encode(pass, "UTF-8")}@$hp:$port$q#$enc"
+    } catch (_: Throwable) {
+        null
+    }
+
+    /**
+     * sing-box openconnect endpoint -> openconnect:// ссылка (обратно читает
+     * OpenconnectFmt.parse). JSON: type=openconnect, server ("host:port" или
+     * host + server_port), username, password, flavor, auth_group, tls{...}.
+     */
+    private fun buildSbOpenconnect(root: JSONObject, rem: String): String? = try {
+        var host = root.optString("server", "")
+        var port = root.optInt("server_port", 0)
+        if (port <= 0 && host.contains(':')) {
+            val sp = splitEndpoint(host) ?: return null
+            host = sp.first; port = sp.second.toIntOrNull() ?: 0
+        }
+        if (host.isEmpty() || port <= 0) return null
+        val user = root.optString("username", "")
+        val pass = root.optString("password", "")
+        val params = linkedMapOf<String, String>()
+        root.optString("auth_group", "").takeIf { it.isNotEmpty() }?.let { params["group"] = it }
+        root.optString("flavor", "").takeIf { it.isNotEmpty() && it != "anyconnect" }
+            ?.let { params["flavor"] = it }
+        val tls = root.optJSONObject("tls")
+        tls?.optString("server_name", "")?.takeIf { it.isNotEmpty() }?.let { params["sni"] = it }
+        if (tls?.optBoolean("insecure", false) == true) params["insecure"] = "1"
+        val q = if (params.isEmpty()) "" else "?" + params.toList()
+            .joinToString("&") { "${it.first}=${URLEncoder.encode(it.second, "UTF-8")}" }
+        val hp = if (host.contains(':')) "[$host]" else host
+        val enc = URLEncoder.encode(rem, "UTF-8").replace("+", "%20")
+        "openconnect://${URLEncoder.encode(user, "UTF-8")}:${URLEncoder.encode(pass, "UTF-8")}@$hp:$port$q#$enc"
+    } catch (_: Throwable) {
+        null
+    }
+
+    /** "host:port" или "[ipv6]:port" -> пара строк; null если разобрать нельзя. */
+    private fun splitEndpoint(endpoint: String): Pair<String, String>? {
+        val e = endpoint.trim()
+        return when {
+            e.startsWith("[") -> {
+                val close = e.indexOf(']')
+                if (close <= 0) null
+                else e.substring(1, close) to e.substring(close + 1).removePrefix(":")
+            }
+            e.count { it == ':' } == 1 -> e.substringBefore(':') to e.substringAfter(':')
+            else -> null
+        }
+    }
 
     private fun isShadowsocks(obj: JSONObject): Boolean {
         if (obj.has("server") && obj.has("server_port") && obj.has("password") && obj.has("method")) return true

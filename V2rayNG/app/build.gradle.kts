@@ -252,6 +252,10 @@ dependencies {
     testRuntimeOnly(libs.junit.platform.launcher)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    // org.json нужен ТОЛЬКО тестам: SubscriptionContentConverter работает с
+    // JSONObject, а android.jar в unit-тестах предоставляет заглушки, которые
+    // бросают RuntimeException. В APK зависимость не попадает.
+    testImplementation(libs.json)
     testImplementation(libs.mockito.core)
     testImplementation(libs.mockito.kotlin)
     coreLibraryDesugaring(libs.desugar.jdk.libs)
