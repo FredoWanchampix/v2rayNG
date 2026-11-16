@@ -1236,11 +1236,37 @@ object SubscriptionContentConverter {
         xTls?.optString("verifyPeerCertByName")?.takeIf { it.isNotEmpty() }
             ?.let { linkJson.put("vcn", it) }
 
-        if (net == "ws") {
-            val ws = transport ?: stream?.optJSONObject("wsSettings")
-            linkJson.put("path", ws?.optString("path"))
-            val host = ws?.optJSONObject("headers")?.optString("Host") ?: ws?.optString("headers")
-            if (host != null) linkJson.put("host", host)
+        // Транспорт vmess обязан переехать целиком: VmessFmt.parse читает
+        // grpc/kcp из type/path/host, иначе туннель поднимется не туда.
+        when (net) {
+            "ws" -> {
+                val ws = transport ?: stream?.optJSONObject("wsSettings")
+                linkJson.put("path", ws?.optString("path"))
+                val host = ws?.optJSONObject("headers")?.optString("Host") ?: ws?.optString("headers")
+                if (host != null) linkJson.put("host", host)
+            }
+            "grpc" -> {
+                val grpc = stream?.optJSONObject("grpcSettings")
+                linkJson.put("type", grpc?.optString("mode").orEmpty())
+                linkJson.put("path", grpc?.optString("serviceName"))
+                linkJson.put("host", grpc?.optString("authority"))
+            }
+            "kcp" -> {
+                val kcp = stream?.optJSONObject("kcpSettings")
+                linkJson.put("type", kcp?.optJSONObject("header")?.optString("type").orEmpty())
+                linkJson.put("path", kcp?.optString("seed"))
+            }
+            "h2", "http" -> {
+                val http = stream?.optJSONObject("httpSettings")
+                linkJson.put("path", http?.optString("path"))
+                http?.optJSONArray("host")?.optString(0)?.takeIf { it.isNotEmpty() }
+                    ?.let { linkJson.put("host", it) }
+            }
+            "tcp" -> {
+                val header = stream?.optJSONObject("tcpSettings")?.optJSONObject("header")
+                header?.optString("type")?.takeIf { it != "none" }?.let { linkJson.put("type", it) }
+            }
+            else -> {}
         }
 
         val finalRem = if (ob.has("tag")) ob.getString("tag") else ob.optString("remarks", rem)
@@ -1456,9 +1482,10 @@ object SubscriptionContentConverter {
         }
         hy?.optString("pinSHA256")?.takeIf { it.isNotEmpty() }
             ?.let { query.append("&pinSHA256=").append(URLEncoder.encode(it, "UTF-8")) }
-        // finalmask/fm intentionally omitted: the URL-encoded JSON blob
-        // breaks URI parsing and the connection parameters it carries are
-        // bandwidth tuning hints, not connection requirements.
+        // finalmask целиком в ссылку не кладём (URL-encoded JSON раздувает
+        // URI и ломает QR-ёмкость); но ОБФУСКАЦИЯ из него извлечена выше
+        // (salamander/gecko -> obfs/obfs-password/min-max), а прочее в
+        // finalmask hy2 — tuning-подсказки ядра, не требования подключения.
         val queryString = if (query.isNotEmpty()) "?" + query.substring(1) else ""
 
         val encRem = URLEncoder.encode(ob.optString("remarks", rem), "UTF-8").replace("+", "%20")
@@ -1536,11 +1563,22 @@ object SubscriptionContentConverter {
         linkJson.put("tls", if (tls != null) "tls" else "")
         linkJson.put("sni", tls?.optString("server_name") ?: "")
 
-        if (net == "ws") {
-            val ws = root.optJSONObject("transport")
-            linkJson.put("path", ws?.optString("path"))
-            val host = ws?.optJSONObject("headers")?.optString("Host")
-            if (host != null) linkJson.put("host", host)
+        // sing-box транспорт: ws (path/Host) и grpc (service_name) — иначе
+        // потеря маршрута туннеля.
+        when (net) {
+            "ws" -> {
+                val ws = root.optJSONObject("transport")
+                linkJson.put("path", ws?.optString("path"))
+                val host = ws?.optJSONObject("headers")?.optString("Host")
+                if (host != null) linkJson.put("host", host)
+            }
+            "grpc" -> {
+                // type остаётся пустым: VmessFmt.parse кладёт type в mode,
+                // а mode grpc — это ""/gun/multi, не "grpc".
+                val grpc = root.optJSONObject("transport")
+                linkJson.put("path", grpc?.optString("service_name"))
+            }
+            else -> {}
         }
 
         linkJson.put("ps", rem)

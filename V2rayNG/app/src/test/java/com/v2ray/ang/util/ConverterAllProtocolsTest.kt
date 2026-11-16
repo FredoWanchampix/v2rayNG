@@ -514,6 +514,27 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
+    fun `xray vmess grpc keeps service and authority`() {
+        // Транспорт grpc обязан переехать: иначе туннель поднимется без
+        // serviceName/authority и сервер не примет поток.
+        val cfg = """
+            { "remarks": "VM-grpc", "outbounds": [ { "tag": "v", "protocol": "vmess",
+              "settings": { "vnext": [ { "address": "1.2.3.4", "port": 443,
+                "users": [ { "id": "uuid-2", "alterId": 0, "security": "auto" } ] } ] },
+              "streamSettings": { "network": "grpc", "security": "tls",
+                "grpcSettings": { "mode": "multi", "serviceName": "svcName", "authority": "auth.example.com" },
+                "tlsSettings": { "serverName": "g.example.com" } } } ] }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertTrue(out.startsWith("vmess://"), out)
+        val profile = VmessFmt.parse(out)!!
+        assertEquals("grpc", profile.network)
+        assertEquals("multi", profile.mode)
+        assertEquals("svcName", profile.serviceName)
+        assertEquals("auth.example.com", profile.authority)
+    }
+
+    @Test
     fun `xray shadowsocks round trip via ShadowsocksFmt`() {
         val cfg = """
             { "remarks": "SS", "outbounds": [ { "tag": "s", "protocol": "shadowsocks",
