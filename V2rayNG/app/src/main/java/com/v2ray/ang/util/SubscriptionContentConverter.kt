@@ -1161,7 +1161,10 @@ object SubscriptionContentConverter {
         (wsSettings?.optString("path") ?: httpSettings?.optString("path"))
             ?.takeIf { it.isNotEmpty() }?.let { params["path"] = it }
         (wsSettings?.optJSONObject("headers")?.optString("Host")
-            ?: httpSettings?.optJSONArray("host")?.optString(0))
+            ?: httpSettings?.optJSONArray("host")?.let { a ->
+                (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }
+                    .joinToString(",").takeIf { it.isNotEmpty() }
+            })
             ?.takeIf { it.isNotEmpty() }?.let { params["host"] = it }
         val grpcSettings = ss?.optJSONObject("grpcSettings")
         grpcSettings?.optString("serviceName")?.takeIf { it.isNotEmpty() }?.let { params["serviceName"] = it }
@@ -1314,8 +1317,10 @@ object SubscriptionContentConverter {
             "h2", "http" -> {
                 val http = stream?.optJSONObject("httpSettings")
                 linkJson.put("path", http?.optString("path"))
-                http?.optJSONArray("host")?.optString(0)?.takeIf { it.isNotEmpty() }
-                    ?.let { linkJson.put("host", it) }
+                http?.optJSONArray("host")?.let { a ->
+                    (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }
+                        .joinToString(",").takeIf { it.isNotEmpty() }?.let { linkJson.put("host", it) }
+                }
             }
             "tcp" -> {
                 val header = stream?.optJSONObject("tcpSettings")?.optJSONObject("header")
@@ -1433,7 +1438,10 @@ object SubscriptionContentConverter {
             "h2", "http" -> {
                 val http = ss?.optJSONObject("httpSettings")
                 http?.optString("path")?.takeIf { it.isNotEmpty() }?.let { query["path"] = it }
-                http?.optJSONArray("host")?.optString(0)?.takeIf { it.isNotEmpty() }?.let { query["host"] = it }
+                http?.optJSONArray("host")?.let { a ->
+                    (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }
+                        .joinToString(",").takeIf { it.isNotEmpty() }?.let { query["host"] = it }
+                }
             }
             else -> {}
         }
@@ -1559,7 +1567,10 @@ object SubscriptionContentConverter {
         }
 
         val sni = tls?.optString("serverName")
-        val alpn = tls?.optJSONArray("alpn")?.optString(0)
+        val alpn = tls?.optJSONArray("alpn")?.let { a ->
+            (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }
+                .joinToString(",").takeIf { it.isNotEmpty() }
+        }
 
         val query = StringBuilder()
         if (version < 2 && auth.isNotEmpty()) query.append("&auth=").append(URLEncoder.encode(auth, "UTF-8"))
@@ -1642,8 +1653,11 @@ object SubscriptionContentConverter {
         }
         // h2/http: host в sing-box — массив
         if (sbTransportType(root) == "h2" || sbTransportType(root) == "http") {
-            transport?.optJSONArray("host")?.optString(0)?.takeIf { it.isNotEmpty() }?.let {
-                query.append("&host=").append(URLEncoder.encode(it, "UTF-8"))
+            transport?.optJSONArray("host")?.let { a ->
+                (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }
+                    .joinToString(",").takeIf { it.isNotEmpty() }?.let {
+                        query.append("&host=").append(URLEncoder.encode(it, "UTF-8"))
+                    }
             }
         }
         // xhttp: mode и extra обязательны для рабочего туннеля (xray-ветка их
@@ -1655,8 +1669,11 @@ object SubscriptionContentConverter {
             transport?.optJSONObject("extra")?.toString()?.takeIf { it != "null" && it.isNotEmpty() }?.let {
                 query.append("&extra=").append(URLEncoder.encode(it, "UTF-8"))
             }
-            transport?.optJSONArray("host")?.optString(0)?.takeIf { it.isNotEmpty() }?.let {
-                query.append("&host=").append(URLEncoder.encode(it, "UTF-8"))
+            transport?.optJSONArray("host")?.let { a ->
+                (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }
+                    .joinToString(",").takeIf { it.isNotEmpty() }?.let {
+                        query.append("&host=").append(URLEncoder.encode(it, "UTF-8"))
+                    }
             }
         }
         // grpc: service_name обязателен, иначе поток не совпадёт с сервером
@@ -1708,8 +1725,10 @@ object SubscriptionContentConverter {
             "h2", "http" -> {
                 val http = root.optJSONObject("transport")
                 linkJson.put("path", http?.optString("path"))
-                http?.optJSONArray("host")?.optString(0)?.takeIf { it.isNotEmpty() }
-                    ?.let { linkJson.put("host", it) }
+                http?.optJSONArray("host")?.let { a ->
+                    (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }
+                        .joinToString(",").takeIf { it.isNotEmpty() }?.let { linkJson.put("host", it) }
+                }
             }
             else -> {}
         }
