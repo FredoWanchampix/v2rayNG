@@ -64,6 +64,11 @@ object AngConfigManager {
             EConfigType.SOCKS.protocolScheme to SocksFmt::parse,
             AppConfig.SOCKS4 to SocksFmt::parse,
             AppConfig.SOCKS5 to SocksFmt::parse,
+            // HTTP-профиль: ссылка http://user:pass@host:port. Guard по userinfo:
+            // URL подписки (loopback/private) userinfo не несут и продолжают
+            // обрабатываться как подписки, а экспорт HTTP-профиля всегда
+            // содержит userinfo — round-trip замыкается.
+            AppConfig.HTTP to AngConfigManager::parseHttpProfile,
             EConfigType.TROJAN.protocolScheme to TrojanFmt::parse,
             EConfigType.VLESS.protocolScheme to VlessFmt::parse,
             EConfigType.WIREGUARD.protocolScheme to WireguardFmt::parse,
@@ -78,6 +83,19 @@ object AngConfigManager {
             AppConfig.FPTN to FptnFmt::parse,
             AppConfig.MIMIC to MimicFmt::parse,
         )
+    }
+
+    /**
+     * Парсер http:// ссылок как HTTP-профиль: только при наличии userinfo
+     * (иначе это URL подписки/ресурса, а не профиль). Поля берутся из
+     * SocksFmt (та же схема user:pass@host:port), тип принудительно HTTP.
+     */
+    internal fun parseHttpProfile(str: String): ProfileItem? {
+        val uri = runCatching { java.net.URI(com.v2ray.ang.util.Utils.fixIllegalUrl(str)) }.getOrNull()
+            ?: return null
+        if (uri.userInfo.isNullOrEmpty()) return null
+        val base = SocksFmt.parse(str) ?: return null
+        return base.copy(configType = EConfigType.HTTP)
     }
 
     /**
@@ -204,6 +222,7 @@ object AngConfigManager {
                 EConfigType.VMESS -> VmessFmt.toUri(config)
                 EConfigType.SHADOWSOCKS -> ShadowsocksFmt.toUri(config)
                 EConfigType.SOCKS -> SocksFmt.toUri(config)
+                EConfigType.HTTP -> SocksFmt.toUri(config)
                 EConfigType.VLESS -> VlessFmt.toUri(config)
                 EConfigType.TROJAN -> TrojanFmt.toUri(config)
                 EConfigType.WIREGUARD -> WireguardFmt.toUri(config)

@@ -349,6 +349,24 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
+    fun `http profile link round trips through import`() {
+        // Теорема round-trip требует обратного парсера для КАЖДОЙ схемы
+        // экспорта: http://user:pass@host:port обязан импортироваться как
+        // HTTP-профиль, а URL подписки (без userinfo) остаться подпиской.
+        val profile = com.v2ray.ang.handler.AngConfigManager.parseHttpProfile(
+            "http://u1:p1@5.6.7.8:8080#H"
+        )
+        assertNotNull(profile, "http-ссылка с userinfo обязана импортироваться")
+        assertEquals(com.v2ray.ang.enums.EConfigType.HTTP, profile!!.configType)
+        assertEquals("u1", profile.username)
+        assertEquals("p1", profile.password)
+        assertEquals("5.6.7.8", profile.server)
+        assertEquals("8080", profile.serverPort)
+        // URL без userinfo — НЕ профиль (уйдёт в подписки)
+        assertNull(com.v2ray.ang.handler.AngConfigManager.parseHttpProfile("http://example.com/sub"))
+    }
+
+    @Test
     fun `custom and custom_outbound protocols stay custom with reason`() {
         for (proto in listOf("custom", "custom_outbound")) {
             val cfg = """{ "outbounds": [ { "tag": "c", "protocol": "$proto", "settings": {} } ] }"""
