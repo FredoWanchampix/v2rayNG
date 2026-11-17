@@ -114,6 +114,20 @@ class HysteriaFmtTest {
     }
 
     @Test
+    fun `lazy_start round trips through link and options`() {
+        val link = "hysteria://1.2.3.4:443?auth=a&upmbps=50&downmbps=60&lazy_start=1#L"
+        val p = HysteriaFmt.parse(link)!!
+        val opts = org.json.JSONObject(p.hysteriaOptions!!)
+        assertTrue(opts.getBoolean("lazyStart"))
+        val out = "hysteria://" + HysteriaFmt.toUri(p)
+        assertTrue(out.contains("lazy_start=1"), out)
+        // без lazy_start ключа нет
+        val p2 = HysteriaFmt.parse("hysteria://1.2.3.4:443?auth=a#N")!!
+        val out2 = "hysteria://" + HysteriaFmt.toUri(p2)
+        assertTrue(!out2.contains("lazy_start"), out2)
+    }
+
+    @Test
     fun `toUri omits empty optionals but keeps required bandwidth`() {
         val p = HysteriaFmt.parse("hysteria://1.2.3.4:443?auth=a#X")!!
         val out = "hysteria://" + HysteriaFmt.toUri(p)

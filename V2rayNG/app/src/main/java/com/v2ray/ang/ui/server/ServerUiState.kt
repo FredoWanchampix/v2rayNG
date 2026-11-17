@@ -82,6 +82,7 @@ class ServerUiState(
     hy1RecvWindowConn: String = "",
     hy1RecvWindow: String = "",
     hy1DisableMtuDiscovery: Boolean = false,
+    hy1LazyStart: Boolean = false,
     awgVersion: String = "3",
     awgJc: String = "",
     awgJmin: String = "",
@@ -174,6 +175,7 @@ class ServerUiState(
     var hy1RecvWindowConn by mutableStateOf(hy1RecvWindowConn)
     var hy1RecvWindow by mutableStateOf(hy1RecvWindow)
     var hy1DisableMtuDiscovery by mutableStateOf(hy1DisableMtuDiscovery)
+    var hy1LazyStart by mutableStateOf(hy1LazyStart)
     var awgVersion by mutableStateOf(awgVersion)
     var awgJc by mutableStateOf(awgJc)
     var awgJmin by mutableStateOf(awgJmin)
@@ -328,6 +330,7 @@ class ServerUiState(
         hy1RecvWindowConn.toIntOrNull()?.takeIf { it > 0 }?.let { o.put("recvWindowConn", it) }
         hy1RecvWindow.toIntOrNull()?.takeIf { it > 0 }?.let { o.put("recvWindow", it) }
         if (hy1DisableMtuDiscovery) o.put("disableMtuDiscovery", true)
+        if (hy1LazyStart) o.put("lazyStart", true)
         return if (o.length() == 0) "" else o.toString()
     }
 
@@ -466,7 +469,8 @@ class ServerUiState(
                 fptnToken = initialConfig.fptnToken ?: "",
                 hy1RecvWindowConn = "",
                 hy1RecvWindow = "",
-                hy1DisableMtuDiscovery = false
+                hy1DisableMtuDiscovery = false,
+                hy1LazyStart = false
             ).apply {
                 runCatching {
                     org.json.JSONObject(initialConfig.hysteriaOptions.orEmpty())
@@ -474,6 +478,7 @@ class ServerUiState(
                     if (o.has("recvWindowConn")) hy1RecvWindowConn = o.optInt("recvWindowConn").toString()
                     if (o.has("recvWindow")) hy1RecvWindow = o.optInt("recvWindow").toString()
                     hy1DisableMtuDiscovery = o.optBoolean("disableMtuDiscovery", false)
+                    hy1LazyStart = o.optBoolean("lazyStart", false)
                 }
                 val opts = runCatching {
                     org.json.JSONObject(initialConfig.amneziaOptions.orEmpty())

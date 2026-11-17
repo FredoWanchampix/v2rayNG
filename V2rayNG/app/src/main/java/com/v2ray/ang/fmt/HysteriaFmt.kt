@@ -78,6 +78,12 @@ object HysteriaFmt : FmtBase() {
             else -> false
         }
         config.alpn = queryParam["alpn"]?.nullIfBlank()
+        // lazy_start (схема hysteria:// v1): храним в hysteriaOptions, как и
+        // прочий v1-tuning; mihomo-ключ lazy-start проверен `mihomo -t`.
+        if (queryParam["lazy_start"] in listOf("1", "true")) {
+            config.hysteriaOptions = org.json.JSONObject()
+                .put("lazyStart", true).toString()
+        }
         config.obfsPassword = queryParam["obfs"]?.nullIfBlank()
         config.portHopping = queryParam["mport"]?.nullIfBlank()
         return config
@@ -94,6 +100,8 @@ object HysteriaFmt : FmtBase() {
             config.alpn?.nullIfBlank()?.let { add("alpn=${Utils.encodeURIComponent(it)}") }
             config.obfsPassword?.nullIfBlank()?.let { add("obfs=${Utils.encodeURIComponent(it)}") }
             config.portHopping?.nullIfBlank()?.let { add("mport=${Utils.encodeURIComponent(it)}") }
+            runCatching { org.json.JSONObject(config.hysteriaOptions.orEmpty()) }.getOrNull()
+                ?.takeIf { it.optBoolean("lazyStart", false) }?.let { add("lazy_start=1") }
         }
         val query = if (params.isEmpty()) "" else "?" + params.joinToString("&")
         // Body only: shareConfig сам добавляет схему hysteria://.

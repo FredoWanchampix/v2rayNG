@@ -54,6 +54,7 @@
     <string name="server_lab_hy1_recv_window_conn">recv-window-conn（位元組，選填）</string>
     <string name="server_lab_hy1_recv_window">recv-window（位元組，選填）</string>
     <string name="server_lab_hy1_disable_mtu">停用 MTU 探索</string>
+    <string name="server_lab_hy1_lazy_start">延遲啟動（首次使用時連線）</string>
     <string name="server_lab_hy1_bandwidth_required">Hysteria v1 需要上傳與下載頻寬（mihomo 缺少則拒絕）</string>
     <string name="menu_item_import_config_manually_masque">新增 [MASQUE]</string>
     <string name="confirm_delete_visible_profiles">確定要刪除目前顯示的所有設定檔嗎？</string>

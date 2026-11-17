@@ -54,6 +54,7 @@
     <string name="server_lab_hy1_recv_window_conn">recv-window-conn (байты, необязательно)</string>
     <string name="server_lab_hy1_recv_window">recv-window (байты, необязательно)</string>
     <string name="server_lab_hy1_disable_mtu">отключить обнаружение MTU</string>
+    <string name="server_lab_hy1_lazy_start">ленивый старт (подключение при первом использовании)</string>
     <string name="server_lab_hy1_bandwidth_required">Hysteria v1 требует скорости upload и download (mihomo без них не поднимет профиль)</string>
     <string name="menu_item_import_config_manually_masque">Добавить MASQUE</string>
     <string name="confirm_delete_visible_profiles">Удалить все отображаемые профили?</string>

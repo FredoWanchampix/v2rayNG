@@ -54,6 +54,7 @@
     <string name="server_lab_hy1_recv_window_conn">recv-window-conn (بايت، اختياري)</string>
     <string name="server_lab_hy1_recv_window">recv-window (بايت، اختياري)</string>
     <string name="server_lab_hy1_disable_mtu">تعطيل اكتشاف MTU</string>
+    <string name="server_lab_hy1_lazy_start">بدء كسول (الاتصال عند أول استخدام)</string>
     <string name="server_lab_hy1_bandwidth_required">‏Hysteria v1 يتطلب سرعة رفع وتنزيل (mihomo يرفض بدونهما)</string>
     <string name="menu_item_import_config_manually_masque">إضافة [MASQUE]</string>
     <string name="confirm_delete_visible_profiles">هل أنت متأكد من أنك تريد حذف جميع ملفات التعريف المعروضة حاليًا؟</string>

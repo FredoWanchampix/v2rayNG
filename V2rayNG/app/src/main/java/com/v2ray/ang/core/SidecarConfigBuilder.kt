@@ -228,6 +228,7 @@ object SidecarConfigBuilder {
             o.optInt("recvWindowConn", 0).takeIf { it > 0 }?.let { sb.append("    recv-window-conn: ").append(it).append('\n') }
             o.optInt("recvWindow", 0).takeIf { it > 0 }?.let { sb.append("    recv-window: ").append(it).append('\n') }
             if (o.optBoolean("disableMtuDiscovery", false)) sb.append("    disable-mtu-discovery: true\n")
+            if (o.optBoolean("lazyStart", false)) sb.append("    lazy-start: true\n")
         }
         sb.append("proxy-groups:\n")
         sb.append("  - name: GLOBAL\n")

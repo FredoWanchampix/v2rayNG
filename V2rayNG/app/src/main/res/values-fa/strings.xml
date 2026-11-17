@@ -54,6 +54,7 @@
     <string name="server_lab_hy1_recv_window_conn">recv-window-conn (بایت، اختیاری)</string>
     <string name="server_lab_hy1_recv_window">recv-window (بایت، اختیاری)</string>
     <string name="server_lab_hy1_disable_mtu">غیرفعال‌سازی کشف MTU</string>
+    <string name="server_lab_hy1_lazy_start">شروع تنبل (اتصال در نخستین استفاده)</string>
     <string name="server_lab_hy1_bandwidth_required">Hysteria v1 به پهنای بالا/پایین نیاز دارد (mihomo بدون آن رد می‌کند)</string>
     <string name="menu_item_import_config_manually_masque">افزودن [MASQUE]</string>
     <string name="confirm_delete_visible_profiles">آیا مطمئن هستید که می‌خواهید همه پروفایل‌های نمایش‌داده‌شده را حذف کنید؟</string>

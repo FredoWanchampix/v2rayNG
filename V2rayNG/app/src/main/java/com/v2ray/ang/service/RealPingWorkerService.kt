@@ -328,9 +328,12 @@ class RealPingWorkerService(
         val retFailure = -1L
 
         val config = MmkvManager.decodeServerConfig(guid) ?: return retFailure
-        if (!config.configType.isComplexType()
-            && tcpProbeApplicable(config)
-        ) {
+        // QUIC-профили (Hysteria v1/v2, WireGuard) и alpn-h3: TCP-проба к их
+        // UDP-порту бессмысленна. Возвращаем NOT_MEASURABLE, а не -1: -1 был
+        // бы ЗАПИСАН в testDelayMillis, и «Удалить недействительные» стёр бы
+        // РАБОЧИЙ профиль. NOT_MEASURABLE диспетчер не записывает.
+        if (!tcpProbeApplicable(config)) return NOT_MEASURABLE
+        if (!config.configType.isComplexType()) {
             val url = config.server.orEmpty()
             val port = config.serverPort.orEmpty().toInt()
             val tcpTime = SpeedtestManager.socketConnectTime(url, port, 1000)

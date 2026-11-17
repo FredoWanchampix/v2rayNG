@@ -109,6 +109,11 @@ class ServerHysteriaActivity : BaseServerActivity() {
             checked = state.hy1DisableMtuDiscovery,
             onCheckedChange = { state.hy1DisableMtuDiscovery = it }
         )
+        SettingsSwitchItem(
+            title = stringResource(R.string.server_lab_hy1_lazy_start),
+            checked = state.hy1LazyStart,
+            onCheckedChange = { state.hy1LazyStart = it }
+        )
     }
 
     /**
