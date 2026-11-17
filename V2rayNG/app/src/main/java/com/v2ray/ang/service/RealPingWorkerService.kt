@@ -332,7 +332,7 @@ class RealPingWorkerService(
         // UDP-порту бессмысленна. Возвращаем NOT_MEASURABLE, а не -1: -1 был
         // бы ЗАПИСАН в testDelayMillis, и «Удалить недействительные» стёр бы
         // РАБОЧИЙ профиль. NOT_MEASURABLE диспетчер не записывает.
-        if (!tcpProbeApplicable(config)) return NOT_MEASURABLE
+        if (!tcpProbeApplicable(config)) return RealPingMeasure.NOT_MEASURABLE
         if (!config.configType.isComplexType()) {
             val url = config.server.orEmpty()
             val port = config.serverPort.orEmpty().toInt()
