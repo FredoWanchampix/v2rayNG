@@ -289,8 +289,12 @@ object SubscriptionContentConverter {
         val rootDns = (root.optJSONObject("dns")?.optJSONArray("servers")
             ?: root.optJSONObject("dns")?.optJSONArray("server"))
             ?.let { arr ->
-                (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotEmpty() } }
-                    .joinToString(",").takeIf { s -> s.isNotEmpty() }
+                // Только строковые элементы: объекты {address,domainStrategy}
+                // и теги-ссылки не являются адресами DNS; optString вернул бы
+                // их JSON-текст и сломал бы параметр dns.
+                (0 until arr.length()).mapNotNull { i ->
+                    (arr.opt(i) as? String)?.takeIf { s -> s.isNotEmpty() }
+                }.joinToString(",").takeIf { s -> s.isNotEmpty() }
             }
         if (noiseFm == null) {
             chainReason(root)?.let { reason ->
