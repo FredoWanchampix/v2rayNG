@@ -511,6 +511,25 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
+    fun `singbox vmess tls alpn fp insecure survive`() {
+        val sb = """
+            { "type": "vmess", "tag": "v", "server": "1.2.3.4", "server_port": 443,
+              "uuid": "uuid-8", "alter_id": 0, "security": "auto",
+              "transport": { "type": "ws", "path": "/vm", "headers": { "Host": "h.example.com" } },
+              "tls": { "enabled": true, "server_name": "v.example.com", "insecure": true,
+                "alpn": ["h2", "http/1.1"], "utls": { "fingerprint": "chrome" } } }
+        """.trimIndent()
+        val out = convert(sb)
+        assertTrue(out.startsWith("vmess://"), out)
+        val profile = VmessFmt.parse(out)!!
+        assertEquals("h2,http/1.1", profile.alpn, "alpn обязан доехать: $out")
+        assertEquals("chrome", profile.fingerPrint, "fp обязан доехать: $out")
+        assertEquals(true, profile.insecure, "insecure обязан доехать: $out")
+        assertEquals("/vm", profile.path)
+        assertEquals("h.example.com", profile.host)
+    }
+
+    @Test
     fun `vmess allowInsecure survives as insecure key`() {
         // VmessFmt.parse читает только ключ insecure; конвертер обязан писать
         // его, иначе флаг терялся молча.

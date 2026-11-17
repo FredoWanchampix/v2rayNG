@@ -1710,6 +1710,15 @@ object SubscriptionContentConverter {
         val tls = sbTls(root)
         linkJson.put("tls", if (tls != null) "tls" else "")
         linkJson.put("sni", tls?.optString("server_name") ?: "")
+        // VmessQRCode несёт alpn/fp/insecure: sing-box tls даёт их все —
+        // молчаливая потеря недопустима.
+        tls?.optJSONArray("alpn")?.let { a ->
+            (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }
+                .joinToString(",").takeIf { it.isNotEmpty() }?.let { linkJson.put("alpn", it) }
+        }
+        tls?.optJSONObject("utls")?.optString("fingerprint")?.takeIf { it.isNotEmpty() }
+            ?.let { linkJson.put("fp", it) }
+        if (tls?.optBoolean("insecure", false) == true) linkJson.put("insecure", "1")
 
         // sing-box транспорт: ws (path/Host) и grpc (service_name) — иначе
         // потеря маршрута туннеля.
