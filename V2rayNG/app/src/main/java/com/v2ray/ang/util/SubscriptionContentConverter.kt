@@ -941,6 +941,15 @@ object SubscriptionContentConverter {
         ms?.optJSONObject("headers")?.let { h ->
             if (h.length() > 0) params["headers"] = h.toString()
         }
+        // TLS-поля masque: MasqueFmt читает sni/alpn/fp через
+        // getItemFormQuery — переносим из streamSettings.tlsSettings.
+        val mTls = ob.optJSONObject("streamSettings")?.optJSONObject("tlsSettings")
+        mTls?.optString("serverName", "")?.takeIf { it.isNotEmpty() }?.let { params["sni"] = it }
+        mTls?.optJSONArray("alpn")?.let { a ->
+            (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }
+                .joinToString(",").takeIf { it.isNotEmpty() }?.let { params["alpn"] = it }
+        }
+        mTls?.optString("fingerprint", "")?.takeIf { it.isNotEmpty() }?.let { params["fp"] = it }
         val q = params.toList().joinToString("&") { "${it.first}=${URLEncoder.encode(it.second, "UTF-8")}" }
         val secret = warp?.optString("privateKey", "").orEmpty()
         val enc = URLEncoder.encode(rem, "UTF-8").replace("+", "%20")

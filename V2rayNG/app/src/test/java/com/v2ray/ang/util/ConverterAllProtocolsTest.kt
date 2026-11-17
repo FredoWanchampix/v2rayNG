@@ -951,6 +951,27 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
+    fun `xray masque tls sni alpn fp survive`() {
+        val cfg = """
+            { "remarks": "MQ-tls", "outbounds": [ { "tag": "m", "protocol": "masque",
+              "settings": { "address": "mq.example.com", "port": 443 },
+              "streamSettings": {
+                "masqueSettings": { "host": "mq.example.com", "path": "/m",
+                  "warp": { "privateKey": "P1=", "publicKey": "P2=", "address": ["172.16.0.2/32"] } },
+                "tlsSettings": { "serverName": "sni.example.com", "alpn": ["h3"], "fingerprint": "chrome" } } } ] }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertTrue(out.startsWith("masque://"), out)
+        assertTrue(out.contains("sni=sni.example.com"), out)
+        assertTrue(out.contains("alpn=h3"), out)
+        assertTrue(out.contains("fp=chrome"), out)
+        val profile = MasqueFmt.parse(out)!!
+        assertEquals("sni.example.com", profile.sni)
+        assertEquals("h3", profile.alpn)
+        assertEquals("chrome", profile.fingerPrint)
+    }
+
+    @Test
     fun `wireguard round trip via WireguardFmt with noise`() {
         val cfg = """
             { "remarks": "WG", "outbounds": [ { "tag": "wg", "protocol": "wireguard",
