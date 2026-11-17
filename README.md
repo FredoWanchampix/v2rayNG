@@ -11,9 +11,10 @@ Android-клиент V2Ray/Xray на базе [v2rayNG](https://github.com/2dust
 
 1. **Работа в сетях с «белыми списками»** — там, где пинг проходит до любого адреса, но скорость на неразрешённых IP искусственно режется шейпингом, а обычная проверка задержки ничего не показывает.
 2. **Устойчивость соединения в ограничительных сетях** — периодические обрывы TLS-рукопожатий не роняют обновление подписок и загрузку конфигов.
-3. **Расширенный набор протоколов и ядер** — помимо штатных VLESS/VMess/Shadowsocks/Trojan/WireGuard/Hysteria2 добавлены AmneziaWG, NaiveProxy, OpenConnect/AnyConnect, Mimic и FPTN через сайдкар-движки.
+3. **Расширенный набор протоколов и ядер** — помимо штатных VLESS/VMess/Shadowsocks/Trojan/WireGuard/Hysteria2/MASQUE добавлены Hysteria v1, AmneziaWG, NaiveProxy, OpenConnect/AnyConnect, Mimic и FPTN через сайдкар-движки (mihomo, sing-box, mimic-client, fptn-client).
+4. **Полнота переноса настроек** — конвертеры подписок и шаринг не теряют контекст: шум DPI-защиты WireGuard, обфускация AmneziaWG, obfs Hysteria2, транспорты, DNS туннеля, certificate pinning; длинные ссылки передаются сегментированными QR без сжатия и сокращений.
 
-**Ключевые слова:** Android VPN, V2Ray, Xray, sing-box, mihomo, Hysteria2, NaiveProxy, OpenConnect, AmneziaWG, Mimic, FPTN, MASQUE, белые списки, DPI, прокси, подписки, certificate pinning.
+**Ключевые слова:** Android VPN, V2Ray, Xray, sing-box, mihomo, Hysteria, Hysteria2, NaiveProxy, OpenConnect, AmneziaWG, Mimic, FPTN, MASQUE, WARP, WireGuard noise, DPI-шум, сегментированный QR, белые списки, DPI, прокси, подписки, certificate pinning.
 
 ---
 
@@ -61,7 +62,7 @@ Android-клиент V2Ray/Xray на базе [v2rayNG](https://github.com/2dust
 
 Автоматическая обработка **SHA-256 certificate pinning**: при включённой опции подписки профили с заполненным `pinSHA256`/`pinnedCA256` помечаются `insecure`, чтобы pin не ломал соединение.
 
-Конвертер покрывает **все протоколы форка**: для каждого JSON-профиля либо собирается ссылка (`vless://`, `vmess://`, `ss://`, `trojan://`, `hysteria2://`, `socks://`, `wireguard://`, `masque://`, `awg://`, `naive://`, `openconnect://`, `mimic://`), либо профиль остаётся кастомным **с явной причиной в логе**. Явные отказы: `tuic` (парсер ссылок в форке отключён), `http` (схема не импортируется, а для приватного IP строка ушла бы в подписку), `fptn` (собственный TUN, нет Xray-outbound), группы/цепочки (`policygroup`, `proxychain`), multi-peer wireguard, нестандартный allowedIPs, hysteria v1. Молчаливых потерь нет: если хотя бы один outbound мульти-серверного конфига не конвертируется, конфиг сохраняется целиком. AmneziaWG-опции (jc/jmin/jmax/s1–s4/h1–h4/i1–i5/version) переносятся в `awg://` один-в-один — конвертация в plain `wireguard://` с потерей обфускации запрещена.
+Конвертер покрывает **все протоколы форка**: для каждого JSON-профиля либо собирается ссылка (`vless://`, `vmess://`, `ss://`, `trojan://`, `hysteria://`, `hysteria2://`, `socks://`, `wireguard://`, `masque://`, `awg://`, `naive://`, `openconnect://`, `mimic://`), либо профиль остаётся кастомным **с явной причиной в логе**. Явные отказы: `tuic` (парсер ссылок в форке отключён), `http` (схема не импортируется, а для приватного IP строка ушла бы в подписку), `fptn` (собственный TUN, нет Xray-outbound), группы/цепочки (`policygroup`, `proxychain`), multi-peer/multi-server/multi-user outbound, нестандартный allowedIPs wireguard, vmess/trojan xhttp (формат ссылки не выражает mode/extra у vmess v2), ss-плагин кроме obfs=http, recv-window у hysteria v1 (схема ссылки не выражает). Молчаливых потерь нет: если хотя бы один outbound мульти-серверного конфига не конвертируется, конфиг сохраняется целиком. AmneziaWG-опции (jc/jmin/jmax/s1–s4/h1–h4/i1–i5/version) переносятся в `awg://` один-в-один — конвертация в plain `wireguard://` с потерей обфускации запрещена. Переносятся также: obfs Hysteria2 (salamander/gecko, включая packetSize из finalmask), транспорты vless/vmess/trojan (ws/kcp/grpc/h2/xhttp), host-массивы и alpn-списки целиком, DNS туннеля из глобальной секции `dns` конфига в `remoteDNS` wireguard, certificate pinning и uTLS-fingerprint.
 
 #### Шум (DPI-защита) WireGuard
 
@@ -99,6 +100,7 @@ Android-клиент V2Ray/Xray на базе [v2rayNG](https://github.com/2dust
 | Протокол | Движок | Как подключается |
 |---|---|---|
 | **AmneziaWG** | `mihomo` (MetaCubeX) | wireguard-outbound с `amnezia-wg-option` (jc/jmin/jmax/s1–s4/h1–h4/i1–i5 и пр.) |
+| **Hysteria v1** | `mihomo` (MetaCubeX) | hysteria-outbound (auth_str, up/down, obfs, sni, alpn, ports, recv-window, lazy-start); Xray форка не имеет v1, sing-box собран без QUIC |
 | **NaiveProxy** | `sing-box` | naive-outbound |
 | **OpenConnect / AnyConnect** | `sing-box` | endpoint + rule-route |
 | **Mimic** | `mimic-client` | Hysteria2-семейство (MTP + TLS-мимикрия), домены мимикрии |
@@ -156,10 +158,6 @@ FPTN-профиль нельзя измерить обычным способо�
 - Отображение задержки до IP-lookup; показ соединения до резолва.
 - Расширенное редактирование Hysteria2: выбор obfs (`none`/`salamander`/`gecko`), размеры пакетов для gecko, кнопка получения certificate pin.
 
-### 6. Унаследовано из апстрима 2.4.0
-
-Форк синхронизирован с апстримом и включает его нововведения: **MASQUE (+WARP)**, импорт кастомных outbound из JSON, поиск по элементам proxy-chain, редизайн connection bar, фикс дублей групп подписки.
-
 ---
 
 ## Полнота синхронизации с апстримом
@@ -191,6 +189,7 @@ FPTN-профиль нельзя измерить обычным способо�
 - **Стабильный канал** — GitHub помечает релиз как Latest; приложение с выключенным переключателем «Проверять предварительные версии» видит только его.
 - **Предварительный канал** — бета публикуется с флагом prerelease и не сдвигает Latest; приложение видит её только при включённом переключателе предварительных версий.
 - Бета всегда получает версию выше установленной стабильной, иначе сравнение версий не предложило бы обновление.
+- Беты **одной и той же версии** (например две сборки `2.4.2-beta.…`) приложение различает по коммиту: в APK вшивается `BuildConfig.GIT_COMMIT`, а релиз несёт `target_commitish`; при равенстве versionName обновление предлагается, если коммит релиза отличается от коммита установленного APK. Переключатель «Проверять предварительные версии» включает учёт бет.
 - Релизные APK подписываются ключом владельца, который хранится только в GitHub Secrets. В публичный репозиторий и артефакты keystore не попадает.
 - Для каждого релиза проверяются подпись APK (схемы v1+v2+v3 внутри APK и v4 в парном файле `.idsig`), соответствие `versionName` тегу, наличие всех шести движков во всех ABI и успешные unit-тесты.
 
