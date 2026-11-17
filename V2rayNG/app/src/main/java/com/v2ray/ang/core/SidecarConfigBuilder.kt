@@ -11,8 +11,10 @@ import org.json.JSONObject
  * sing-box configs use a local mixed inbound plus either an outbound (naive,
  * hysteria2) or an endpoint routed via a rule (openconnect); both shapes were
  * validated against sing-box 1.14.4 with `sing-box check`.
- * mihomo configs carry the AmneziaWG options through `amnezia-wg-option`,
- * validated against mihomo 1.19.33 with `mihomo -t`.
+ * mihomo configs carry the AmneziaWG options through `amnezia-wg-option`
+ * and Hysteria v1 through the `hysteria` outbound (auth_str/up/down/obfs/sni/
+ * alpn/ports/recv-window/lazy-start); both shapes validated against mihomo
+ * 1.19.33 with `mihomo -t` on the device.
  * Mimic configs follow the upstream client.yaml schema (server, uuid,
  * transport mtp, local SOCKS5 port, optional mimicry domains).
  */

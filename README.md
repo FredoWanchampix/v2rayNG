@@ -114,12 +114,12 @@ Android-клиент V2Ray/Xray на базе [v2rayNG](https://github.com/2dust
 
 | Движок | Файл в APK | Обслуживает |
 |---|---|---|
-| mihomo | `lib/<abi>/libmihomo.so` | AmneziaWG |
-| sing-box | `lib/<abi>/libsingbox.so` | NaiveProxy, OpenConnect |
-| mimic-client | `lib/<abi>/libmimicclient.so` | Mimic |
-| fptn-client | `lib/<abi>/libfptnclient.so` | FPTN |
-| dnsproxy | `lib/<abi>/libdnsproxy.so` | DNS-форвардер пробы FPTN |
-| speedprobe | `lib/<abi>/libspeedprobe.so` | замер скорости/задержки внутри netns |
+| mihomo | `lib/<abi>/libmihomo.so` | AmneziaWG (wireguard + `amnezia-wg-option`), **Hysteria v1** (hysteria-outbound: auth_str, up/down, obfs, sni, alpn, ports, recv-window, lazy-start) |
+| sing-box | `lib/<abi>/libsingbox.so` | NaiveProxy (naive-outbound), OpenConnect/AnyConnect (endpoint + rule-route) |
+| mimic-client | `lib/<abi>/libmimicclient.so` | Mimic (Hysteria2-семейство: MTP + TLS-мимикрия, домены мимикрии) |
+| fptn-client | `lib/<abi>/libfptnclient.so` | FPTN (собственный TUN, root-режим) |
+| dnsproxy | `lib/<abi>/libdnsproxy.so` | DNS-форвардер пробы FPTN (upstream из настроек пользователя: udp/tcp/tls/https/quic/sdns) |
+| speedprobe | `lib/<abi>/libspeedprobe.so` | замер скорости/задержки внутри изолированного netns (проба FPTN) |
 
 Причина переноса из `assets/` **жёсткая, а не стилистическая**: на Android 10+ политика SELinux (W^X) запрещает домену `untrusted_app` исполнять файлы с контекстом `app_data_file` (то есть из `filesDir`) и `shell_data_file` (`/data/local/tmp`) — `execve` возвращает `EACCES`. `nativeLibraryDir` имеет контекст `apk_data_file`, исполнение оттуда разрешено и приложению, и root. Поэтому установка движка в `assets/` + копирование в `filesDir` + запуск оттуда на Android 10+ **не работает вообще**: ни один сайдкар-протокол не запустился бы. Тот же паттерн форк уже применял для `libhevsockstun.so` в root-режиме.
 

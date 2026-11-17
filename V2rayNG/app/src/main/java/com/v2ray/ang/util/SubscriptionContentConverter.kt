@@ -527,7 +527,7 @@ object SubscriptionContentConverter {
                 else -> "amneziawg: нет обязательных полей (secretKey/publicKey/endpoint) или version не число"
             }
             "mimic" -> "mimic: нет uuid/адреса/порта"
-            "trojan" -> "trojan: транспорт xhttp не выражается trojan:// (нет полей mode/extra) или обязательные поля отсутствуют — профиль остаётся кастомным без потерь"
+            "trojan" -> "trojan: обязательные поля отсутствуют (servers[0].address/port/password) — профиль остаётся кастомным без потерь"
             "shadowsocks" -> "shadowsocks: plugin не поддерживается профилем форка (только obfs=http), профиль остаётся кастомным без потерь"
             "socks" -> "socks: settings.servers[] пуст или содержит более одного сервера"
             "http" -> "http: форк не импортирует http:// ссылки (схемы нет в карте парсеров); для приватного IP строка ушла бы в подписку — профиль остаётся кастомным"
@@ -1435,9 +1435,9 @@ object SubscriptionContentConverter {
 
         val ss = ob.optJSONObject("streamSettings")
         val network = ss?.optString("network")
-        // trojan:// не имеет полей xhttp (mode/extra): ссылка была бы
-        // нерабочей. Честный отказ вместо молчаливой потери транспорта.
-        if (network == "xhttp" || network == "splithttp" || network == "splitHttp") return null
+        // xhttp у trojan переносится ниже (mode/extra/path/host читаются
+        // TrojanFmt через getItemFormQuery и применяются
+        // populateTransportSettings) — раннего отказа нет.
         val security = ss?.optString("security")
 
         val query = mutableMapOf<String, String>()
@@ -1908,9 +1908,7 @@ object SubscriptionContentConverter {
         val address = root.optString("server")
         val port = root.optInt("server_port")
         if (password.isEmpty() || address.isEmpty() || port <= 0) return null
-        // xhttp не выражается trojan:// — честный отказ
         val sbNet = sbTransportType(root)
-        if (sbNet == "xhttp" || sbNet == "splithttp" || sbNet == "splitHttp") return null
 
         val query = mutableMapOf<String, String>()
         query["type"] = sbTransportType(root)
@@ -1925,13 +1923,24 @@ object SubscriptionContentConverter {
             if (j.isNotEmpty()) query["alpn"] = j
         }
         if (sbTlsObj?.optBoolean("insecure", false) == true) query["allowInsecure"] = "1"
-        // ws-транспорт: path и Host обязательны для работоспособности туннеля;
-        // раньше терялись молча (TrojanFmt читает их из query).
-        if (sbTransportType(root) == "ws") {
+        // Транспорт обязан переехать целиком (TrojanFmt читает из query):
+        // ws (path/Host) и xhttp (mode/extra/path/host).
+        if (sbNet == "ws") {
             val transport = root.optJSONObject("transport")
             transport?.optString("path")?.takeIf { it.isNotEmpty() }?.let { query["path"] = it }
             transport?.optJSONObject("headers")?.optString("Host")?.takeIf { it.isNotEmpty() }
                 ?.let { query["host"] = it }
+        }
+        if (sbNet == "xhttp" || sbNet == "splithttp" || sbNet == "splitHttp") {
+            val x = root.optJSONObject("transport")
+            x?.optString("mode")?.takeIf { it.isNotEmpty() }?.let { query["mode"] = it }
+            x?.optJSONObject("extra")?.toString()?.takeIf { it != "null" && it.isNotEmpty() }
+                ?.let { query["extra"] = it }
+            x?.optString("path")?.takeIf { it.isNotEmpty() }?.let { query["path"] = it }
+            x?.optJSONArray("host")?.let { a ->
+                (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }
+                    .joinToString(",").takeIf { it.isNotEmpty() }?.let { query["host"] = it }
+            }
         }
         val queryStr = query.entries.sortedBy { it.key }.joinToString("&") {
             "${it.key}=${URLEncoder.encode(it.value, "UTF-8")}"
