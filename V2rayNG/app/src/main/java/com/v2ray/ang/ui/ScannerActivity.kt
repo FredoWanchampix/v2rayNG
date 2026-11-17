@@ -79,11 +79,18 @@ private val qrReader = MultiFormatReader()
 
 class ScannerActivity : HelperBaseComponentActivity() {
 
+    companion object {
+        private const val TAG_SCAN = "QrSegmentScan"
+    }
+
     /** Сборщик сегментированного QR-экспорта (серия V2NGQR1). */
     private val segmentAssembler = QrSegmentCodec.Assembler()
 
     /** Последний обработанный текст: камера видит один QR много кадров подряд. */
     private var lastScanText: String? = null
+
+    /** Отложенные действия на main-потоке (повторный выбор файла из колбэка). */
+    private val mainHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
 
     private val uiState = mutableStateOf(ScannerUiState.IDLE)
 
@@ -127,20 +134,31 @@ class ScannerActivity : HelperBaseComponentActivity() {
      * Сегменты принимаются в любом порядке; чужая серия сбрасывает накопленное.
      */
     private fun handleScan(text: String): Boolean {
-        // Вызывается из analysis-executor (нет Looper): все UI-эффекты
-        // (toast, finish) только через runOnUiThread.
-        if (text == lastScanText) return false
+        // Вызывается из analysis-executor (нет Looper) ИЛИ из колбэка выбора
+        // файла (main): все UI-эффекты только через runOnUiThread.
+        if (text == lastScanText) {
+            // Дубликат того же QR (камера держит кадр или выбран тот же файл):
+            // молчание запрещено — явно просим следующий сегмент.
+            val (got, total) = segmentAssembler.progress()
+            if (total > 0 && got < total) {
+                runOnUiThread { toast(getString(R.string.qr_scan_progress, got, total)) }
+            }
+            return false
+        }
         lastScanText = text
         if (!QrSegmentCodec.isSegment(text)) {
+            LogUtil.i(TAG_SCAN, "полная ссылка (не сегмент): ${text.take(40)}...")
             runOnUiThread { finished(text) }
             return true
         }
         val payload = segmentAssembler.offer(text)
         if (payload != null) {
+            LogUtil.i(TAG_SCAN, "серия собрана: ${payload.length} символов")
             runOnUiThread { finished(payload) }
             return true
         }
         val (got, total) = segmentAssembler.progress()
+        LogUtil.i(TAG_SCAN, "сегмент принят: $got из $total")
         runOnUiThread { toast(getString(R.string.qr_scan_progress, got, total)) }
         return false
     }
@@ -154,10 +172,16 @@ class ScannerActivity : HelperBaseComponentActivity() {
                 inputStream?.close()
                 val text = QRCodeDecoder.syncDecodeQRCode(bitmap)
                 if (text.isNullOrEmpty()) {
+                    LogUtil.w(TAG_SCAN, "файл: QR не распознан")
                     toast(R.string.toast_decoding_failed)
                 } else if (!handleScan(text)) {
-                    // сегмент серии: предлагаем выбрать следующий файл
-                    showFileChooser()
+                    // Сегмент серии: предлагаем выбрать следующий файл.
+                    // ВАЖНО: повторный launch файлового chooser изнутри
+                    // result-колбэка может быть проигнорирован androidx
+                    // (dispatch ещё идёт) — откладываем на следующий цикл
+                    // main-потока, иначе «ничего не происходит».
+                    LogUtil.i(TAG_SCAN, "файл: сегмент принят, открываем выбор следующего")
+                    mainHandler.post { showFileChooser() }
                 }
             } catch (e: Exception) {
                 LogUtil.e(AppConfig.TAG, "Failed to decode QR code from file", e)
