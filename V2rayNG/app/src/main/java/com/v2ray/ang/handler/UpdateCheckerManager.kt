@@ -146,7 +146,15 @@ object UpdateCheckerManager {
             "Update check: remote=$latestVersion (tag ${latestRelease.tagName}), current=$currentVersion"
         )
 
-        return@withContext if (compareVersions(latestVersion, currentVersion) > 0) {
+        // Беты одной версии (2.4.2-beta.X и 2.4.2-beta.Y) неразличимы по
+        // versionName: при равенстве версий предлагаем обновление, если коммит
+        // релиза отличается от коммита установленного APK (BuildConfig.GIT_COMMIT).
+        val sameVersionNewerBuild = compareVersions(latestVersion, currentVersion) == 0 &&
+            latestRelease.prerelease &&
+            latestRelease.targetCommitish.isNotEmpty() &&
+            BuildConfig.GIT_COMMIT.isNotEmpty() &&
+            !latestRelease.targetCommitish.startsWith(BuildConfig.GIT_COMMIT)
+        return@withContext if (compareVersions(latestVersion, currentVersion) > 0 || sameVersionNewerBuild) {
             CheckUpdateResult(
                 hasUpdate = true,
                 latestVersion = latestVersion,

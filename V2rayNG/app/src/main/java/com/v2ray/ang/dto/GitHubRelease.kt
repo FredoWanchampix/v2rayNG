@@ -14,7 +14,11 @@ data class GitHubRelease(
     @SerializedName("draft")
     val draft: Boolean = false,
     @SerializedName("published_at")
-    val publishedAt: String = ""
+    val publishedAt: String = "",
+    // Коммит релиза: позволяет отличать беты ОДНОЙ версии (versionName
+    // одинаков), сравнивая с BuildConfig.GIT_COMMIT установленного APK.
+    @SerializedName("target_commitish")
+    val targetCommitish: String = ""
 ) {
     data class Asset(
         @SerializedName("name")

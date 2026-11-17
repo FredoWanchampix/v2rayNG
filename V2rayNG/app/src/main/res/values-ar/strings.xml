@@ -159,6 +159,7 @@
     <string name="qr_scan_progress">تم استلام الجزء %1$d من %2$d — امسح الرمز التالي</string>
     <string name="qr_scan_crc_failed">تعذر تجميع سلسلة QR: عدم تطابق المجموع التحققی. أعد مسح رموز السلسلة نفسها</string>
     <string name="toast_qr_create_failed">تعذر إنشاء رمز QR</string>
+    <string name="toast_qr_too_long_reason">لا يمكن إنشاء رمز QR للسبب التالي: الرابط أطول من سعة رمز واحد (%1$d بايت) وقُسّم إلى %2$d جزءًا — امسحها بالترتيب أو استخدم طريقة تصدير أخرى (الحافظة، ملف)</string>
     <string name="server_lab_final_mask">FinalMask JSON (متقدم): { FinalMaskObject }</string>
     <string name="server_lab_final_mask_hint">يُحلَّل ويُطبَّق بواسطة النواة (Xray v26.11.9, streamSettings.finalmask). حقل الضوضاء أعلاه يعدّل فقط جزء udp noise من هذا الكائن</string>
     <string name="toast_invalid_final_mask">finalMask JSON غير صالح</string>

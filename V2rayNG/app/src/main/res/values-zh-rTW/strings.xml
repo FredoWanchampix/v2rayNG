@@ -159,6 +159,7 @@
     <string name="qr_scan_progress">已收到第 %1$d / %2$d 段——請掃描下一個 QR 碼</string>
     <string name="qr_scan_crc_failed">QR 系列組裝失敗：核對總和不符。請重新掃描同一系列的 QR 碼</string>
     <string name="toast_qr_create_failed">QR 碼建立失敗</string>
+    <string name="toast_qr_too_long_reason">無法產生 QR 碼，原因如下：連結超過單一 QR 的容量（%1$d 位元組），已拆分為 %2$d 段——請依序掃描，或使用其他匯出方式（剪貼簿、檔案）</string>
     <string name="server_lab_final_mask">FinalMask JSON（進階）：{ FinalMaskObject }</string>
     <string name="server_lab_final_mask_hint">由核心解析並應用（Xray v26.11.9，streamSettings.finalmask）。上方噪聲欄位僅編輯該物件的 udp noise 部分</string>
     <string name="toast_invalid_final_mask">finalMask JSON 無效</string>

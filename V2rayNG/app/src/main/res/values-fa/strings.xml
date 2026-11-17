@@ -159,6 +159,7 @@
     <string name="qr_scan_progress">بخش %1$d از %2$d دریافت شد — QR بعدی را اسکن کنید</string>
     <string name="qr_scan_crc_failed">سری QR جمع نشد: عدم تطابق جمع کنترلی. کدهای همان سری را دوباره اسکن کنید</string>
     <string name="toast_qr_create_failed">ساخت کد QR ناموفق بود</string>
+    <string name="toast_qr_too_long_reason">کد QR به این دلیل ساخته نمی‌شود: پیوند از ظرفیت یک QR (%1$d بایت) بلندتر است و به %2$d بخش تقسیم شده — به ترتیب اسکن کنید یا از روش خروجی دیگر (کلیپ‌بورد، فایل) استفاده کنید</string>
     <string name="server_lab_final_mask">FinalMask JSON (پیشرفته): { FinalMaskObject }</string>
     <string name="server_lab_final_mask_hint">توسط هسته تجزیه و اعمال می‌شود (Xray v26.11.9, streamSettings.finalmask). فیلد نویز بالا فقط بخش udp noise این شیء را ویرایش می‌کند</string>
     <string name="toast_invalid_final_mask">finalMask JSON نامعتبر</string>

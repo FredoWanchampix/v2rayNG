@@ -155,6 +155,12 @@ object AngConfigManager {
      * @param guid The GUID of the configuration.
      * @return The QR code bitmap.
      */
+    /**
+     * Публичная ссылка профиля (для сообщений об ошибках экспорта):
+     * переиспользует приватный shareConfig без побочных эффектов.
+     */
+    fun shareLink(guid: String): String = shareConfig(guid)
+
     fun share2QRCode(guid: String): List<Bitmap> {
         try {
             val conf = shareConfig(guid)

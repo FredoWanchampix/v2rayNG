@@ -159,6 +159,7 @@
     <string name="qr_scan_progress">Segment %1$d of %2$d received — scan the next QR</string>
     <string name="qr_scan_crc_failed">QR series could not be assembled: checksum mismatch. Rescan the codes of the same series</string>
     <string name="toast_qr_create_failed">Failed to create QR code</string>
+    <string name="toast_qr_too_long_reason">QR code cannot be generated for this reason: the link is longer than the capacity of a single QR (%1$d bytes) and was split into %2$d segments — scan them in order, or use another export method (clipboard, file)</string>
     <string name="server_lab_final_mask">FinalMask JSON (advanced): { FinalMaskObject }</string>
     <string name="server_lab_final_mask_hint">Parsed and applied by the core (Xray v26.11.9, streamSettings.finalmask). The noise field above edits only the udp noise part of this object</string>
     <string name="toast_invalid_final_mask">Invalid finalMask JSON</string>

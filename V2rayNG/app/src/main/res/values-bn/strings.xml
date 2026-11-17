@@ -159,6 +159,7 @@
     <string name="qr_scan_progress">সেগমেন্ট %1$d / %2$d পেয়েছি — পরের QR স্ক্যান করুন</string>
     <string name="qr_scan_crc_failed">QR সিরিজ জোড়া লাগেনি: চেকসাম মেলেনি। একই সিরিজের কোড আবার স্ক্যান করুন</string>
     <string name="toast_qr_create_failed">QR কোড তৈরি ব্যর্থ</string>
+    <string name="toast_qr_too_long_reason">এই কারণে QR কোড তৈরি করা যায় না: লিংক একটি QR-এর ধারণক্ষমতার (%1$d বাইট) চেয়ে লম্বা এবং %2$d টি অংশে ভাগ হয়েছে — ক্রমে স্ক্যান করুন বা অন্য এক্সপোর্ট পদ্ধতি ব্যবহার করুন (ক্লিপবোর্ড, ফাইল)</string>
     <string name="server_lab_final_mask">FinalMask JSON (উন্নত): { FinalMaskObject }</string>
     <string name="server_lab_final_mask_hint">কোর দ্বারা বিশ্লেষিত ও প্রয়োগকৃত (Xray v26.11.9, streamSettings.finalmask)। উপরের নয়েজ ফিল্ড শুধু এই অবজেক্টের udp noise অংশ সম্পাদনা করে</string>
     <string name="toast_invalid_final_mask">অবৈধ finalMask JSON</string>

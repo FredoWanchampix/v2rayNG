@@ -214,7 +214,17 @@ class MainViewModel(
             is MainAction.ShareQRCode -> {
                 val bitmaps = dataSource.share2QRCode(action.guid)
                 if (bitmaps.isEmpty()) {
-                    toastError(R.string.toast_qr_create_failed)
+                    // Молчаливый null запрещён: явная причина с длиной ссылки
+                    // и числом сегментов, плюс альтернативные способы экспорта.
+                    val link = com.v2ray.ang.handler.AngConfigManager.shareLink(action.guid)
+                    val segs = com.v2ray.ang.util.QrSegmentCodec.split(link).size
+                    toastError(
+                        dataSource.getString(
+                            R.string.toast_qr_too_long_reason,
+                            link.toByteArray(Charsets.UTF_8).size,
+                            segs
+                        )
+                    )
                 }
                 _uiState.update { it.copy(shareQRCodeBitmaps = bitmaps) }
             }

@@ -95,6 +95,15 @@ android {
         }
     }
 
+    // Коммит, из которого собран APK: позволяет проверке обновлений отличать
+    // беты ОДНОЙ версии (2.4.2-beta.A от 2.4.2-beta.B), которые иначе
+    // неразличимы по versionName. Версию (versionName/versionCode) НЕ трогает.
+    buildConfigField(
+        "String",
+        "GIT_COMMIT",
+        "\"${providers.exec { commandLine("git", "rev-parse", "HEAD") }.standardOutput.asText.get().trim().take(12)}\""
+    )
+
     sourceSets {
         getByName("main") {
             jniLibs.srcDirs("libs")

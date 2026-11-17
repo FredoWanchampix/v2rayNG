@@ -1490,6 +1490,19 @@ object SubscriptionContentConverter {
                         .joinToString(",").takeIf { it.isNotEmpty() }?.let { query["host"] = it }
                 }
             }
+            // xhttp: TrojanFmt читает mode/extra/path/host через
+            // getItemFormQuery — без них туннель поднялся бы не туда.
+            "xhttp", "splithttp", "splitHttp" -> {
+                val x = ss?.optJSONObject("xhttpSettings") ?: ss?.optJSONObject("splitHttpSettings")
+                x?.optString("mode")?.takeIf { it.isNotEmpty() }?.let { query["mode"] = it }
+                x?.optJSONObject("extra")?.toString()?.takeIf { it != "null" && it.isNotEmpty() }
+                    ?.let { query["extra"] = it }
+                x?.optString("path")?.takeIf { it.isNotEmpty() }?.let { query["path"] = it }
+                x?.optJSONArray("host")?.let { a ->
+                    (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }
+                        .joinToString(",").takeIf { it.isNotEmpty() }?.let { query["host"] = it }
+                }
+            }
             else -> {}
         }
 

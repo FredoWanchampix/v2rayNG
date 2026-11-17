@@ -728,16 +728,28 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
-    fun `trojan xhttp stays custom because trojan link cannot express it`() {
+    fun `trojan xhttp carries mode extra path host into link`() {
+        // TrojanFmt читает mode/extra/path/host через getItemFormQuery:
+        // конвертер обязан их перенести, иначе туннель поднимется не туда.
         val cfg = """
             { "remarks": "TJ-x", "outbounds": [ { "tag": "t", "protocol": "trojan",
               "settings": { "servers": [ { "address": "1.2.3.4", "port": 443, "password": "pw" } ] },
               "streamSettings": { "network": "xhttp", "security": "tls",
-                "xhttpSettings": { "mode": "stream-up", "path": "/x" } } } ] }
+                "xhttpSettings": { "mode": "stream-up", "path": "/tjx",
+                  "host": ["tj.example.com"], "extra": { "xPaddingBytes": "64-2048" } },
+                "tlsSettings": { "serverName": "tj.example.com" } } } ] }
         """.trimIndent()
         val out = convert(cfg)
-        assertFalse(out.startsWith("trojan://"), "xhttp не выражается trojan://: $out")
-        assertTrue(out.contains("\"trojan\""), "конфиг сохранён кастомным: $out")
+        assertTrue(out.startsWith("trojan://"), out)
+        assertTrue(out.contains("mode=stream-up"), out)
+        assertTrue(out.contains("path=%2Ftjx") || out.contains("path=/tjx"), out)
+        assertTrue(out.contains("extra="), out)
+        assertTrue(out.contains("xPaddingBytes"), out)
+        val profile = TrojanFmt.parse(out)
+        assertNotNull(profile)
+        assertEquals("stream-up", profile!!.xhttpMode)
+        assertEquals("/tjx", profile.path)
+        assertTrue(profile.xhttpExtra!!.contains("xPaddingBytes"))
     }
 
     @Test
