@@ -487,6 +487,13 @@ object SubscriptionContentConverter {
                     "wireguard: allowedIPs отличается от полного маршрута (ссылка его не выражает)"
                 else -> "wireguard: нет secretKey/endpoint или иной обязательный параметр отсутствует"
             }
+            "vmess" -> {
+                val net = ob.optJSONObject("streamSettings")?.optString("network")
+                    ?: ob.optJSONObject("transport")?.optString("type")
+                if (net == "xhttp" || net == "splithttp" || net == "splitHttp")
+                    "vmess: транспорт xhttp не выражается форматом vmess:// v2 (нет полей mode/extra) — профиль остаётся кастомным без потерь"
+                else "vmess: обязательные поля отсутствуют (vnext/users/id)"
+            }
             "amneziawg", "awg" -> when {
                 (ob.optJSONObject("amnezia-wg-option") ?: ob.optJSONObject("amneziaOptions")
                     ?: ob.optJSONObject("settings")?.optJSONObject("amnezia-wg-option"))
@@ -1219,6 +1226,9 @@ object SubscriptionContentConverter {
         val transport = ob.optJSONObject("transport")
         val stream = ob.optJSONObject("streamSettings")
         val net = transport?.optString("type") ?: stream?.optString("network") ?: "tcp"
+        // vmess:// v2 не имеет полей xhttp (mode/extra): конвертация дала бы
+        // ссылку с нерабочим транспортом. Честный отказ (null -> причина в логе).
+        if (net == "xhttp" || net == "splithttp" || net == "splitHttp") return null
         linkJson.put("net", net)
 
         val tlsObj = ob.optJSONObject("tls")
@@ -1348,10 +1358,33 @@ object SubscriptionContentConverter {
         tTls?.optString("verifyPeerCertByName")?.takeIf { it.isNotEmpty() }
             ?.let { query["vcn"] = it }
 
-        if (network == "ws") {
-            val ws = ss?.optJSONObject("wsSettings")
-            ws?.optString("path")?.takeIf { it.isNotEmpty() }?.let { query["path"] = it }
-            ws?.optJSONObject("headers")?.optString("Host")?.takeIf { it.isNotEmpty() }?.let { query["host"] = it }
+        // Транспорт trojan обязан переехать целиком (TrojanFmt читает всё из
+        // query): ws, kcp (headerType/seed), grpc (mode/serviceName/authority),
+        // h2/http (path/host). Раньше не-ws терялись молча.
+        when (network) {
+            "ws" -> {
+                val ws = ss?.optJSONObject("wsSettings")
+                ws?.optString("path")?.takeIf { it.isNotEmpty() }?.let { query["path"] = it }
+                ws?.optJSONObject("headers")?.optString("Host")?.takeIf { it.isNotEmpty() }?.let { query["host"] = it }
+            }
+            "kcp" -> {
+                val kcp = ss?.optJSONObject("kcpSettings")
+                kcp?.optJSONObject("header")?.optString("type")?.takeIf { it.isNotEmpty() && it != "none" }
+                    ?.let { query["headerType"] = it }
+                kcp?.optString("seed")?.takeIf { it.isNotEmpty() }?.let { query["seed"] = it }
+            }
+            "grpc" -> {
+                val grpc = ss?.optJSONObject("grpcSettings")
+                grpc?.optString("mode")?.takeIf { it.isNotEmpty() }?.let { query["mode"] = it }
+                grpc?.optString("serviceName")?.takeIf { it.isNotEmpty() }?.let { query["serviceName"] = it }
+                grpc?.optString("authority")?.takeIf { it.isNotEmpty() }?.let { query["authority"] = it }
+            }
+            "h2", "http" -> {
+                val http = ss?.optJSONObject("httpSettings")
+                http?.optString("path")?.takeIf { it.isNotEmpty() }?.let { query["path"] = it }
+                http?.optJSONArray("host")?.optString(0)?.takeIf { it.isNotEmpty() }?.let { query["host"] = it }
+            }
+            else -> {}
         }
 
         val queryStr = query.entries.sortedBy { it.key }.joinToString("&") {
@@ -1551,6 +1584,12 @@ object SubscriptionContentConverter {
         transport?.optJSONObject("headers")?.optString("Host")?.takeIf { it.isNotEmpty() }?.let {
             query.append("&host=").append(URLEncoder.encode(it, "UTF-8"))
         }
+        // h2/http: host в sing-box — массив
+        if (sbTransportType(root) == "h2" || sbTransportType(root) == "http") {
+            transport?.optJSONArray("host")?.optString(0)?.takeIf { it.isNotEmpty() }?.let {
+                query.append("&host=").append(URLEncoder.encode(it, "UTF-8"))
+            }
+        }
         // grpc: service_name обязателен, иначе поток не совпадёт с сервером
         if (sbTransportType(root) == "grpc") {
             transport?.optString("service_name")?.takeIf { it.isNotEmpty() }?.let {
@@ -1575,6 +1614,8 @@ object SubscriptionContentConverter {
         linkJson.put("scy", root.optString("security", "auto"))
 
         val net = sbTransportType(root)
+        // vmess:// v2 не выражает xhttp: честный отказ вместо нерабочей ссылки
+        if (net == "xhttp" || net == "splithttp" || net == "splitHttp") return null
         linkJson.put("net", net)
         val tls = sbTls(root)
         linkJson.put("tls", if (tls != null) "tls" else "")
@@ -1594,6 +1635,12 @@ object SubscriptionContentConverter {
                 // а mode grpc — это ""/gun/multi, не "grpc".
                 val grpc = root.optJSONObject("transport")
                 linkJson.put("path", grpc?.optString("service_name"))
+            }
+            "h2", "http" -> {
+                val http = root.optJSONObject("transport")
+                linkJson.put("path", http?.optString("path"))
+                http?.optJSONArray("host")?.optString(0)?.takeIf { it.isNotEmpty() }
+                    ?.let { linkJson.put("host", it) }
             }
             else -> {}
         }

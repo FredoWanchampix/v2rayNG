@@ -551,6 +551,39 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
+    fun `xray trojan kcp keeps header and seed`() {
+        val cfg = """
+            { "remarks": "TJ-kcp", "outbounds": [ { "tag": "t", "protocol": "trojan",
+              "settings": { "servers": [ { "address": "1.2.3.4", "port": 443, "password": "pw" } ] },
+              "streamSettings": { "network": "kcp", "security": "tls",
+                "kcpSettings": { "seed": "kcpseed", "header": { "type": "wechat-video" } },
+                "tlsSettings": { "serverName": "k.example.com" } } } ] }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertTrue(out.startsWith("trojan://"), out)
+        val profile = TrojanFmt.parse(out)
+        assertEquals("kcp", profile.network)
+        assertEquals("kcpseed", profile.seed, "kcp seed обязан пережить конвертацию: $out")
+        // parse хранит исходный headerType; нормализация wechat-video -> wechat
+        // происходит позже в CoreOutboundBuilder.populateTransportSettings
+        assertEquals("wechat-video", profile.headerType, out)
+    }
+
+    @Test
+    fun `vmess xhttp stays custom because v2 format cannot express it`() {
+        val cfg = """
+            { "remarks": "VM-xhttp", "outbounds": [ { "tag": "v", "protocol": "vmess",
+              "settings": { "vnext": [ { "address": "1.2.3.4", "port": 443,
+                "users": [ { "id": "uuid-9", "alterId": 0, "security": "auto" } ] } ] },
+              "streamSettings": { "network": "xhttp", "security": "tls",
+                "xhttpSettings": { "mode": "stream-up", "path": "/x" } } } ] }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertFalse(out.startsWith("vmess://"), "xhttp не выражается vmess v2: $out")
+        assertTrue(out.contains("\"vmess\""), "конфиг сохранён кастомным: $out")
+    }
+
+    @Test
     fun `xray shadowsocks round trip via ShadowsocksFmt`() {
         val cfg = """
             { "remarks": "SS", "outbounds": [ { "tag": "s", "protocol": "shadowsocks",
