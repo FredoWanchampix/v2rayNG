@@ -38,8 +38,13 @@ object HysteriaFmt : FmtBase() {
         config.remarks = Utils.decodeURIComponent(uri.fragment.orEmpty()).let { it.ifEmpty { "none" } }
         config.server = uri.idnHost
         config.serverPort = (if (uri.port == -1) AppConfig.DEFAULT_PORT else uri.port).toString()
-        // дефолт протокола v1 — udp (схема hysteria:// без protocol=)
+        // дефолты v1 ДО раннего возврата: ссылка без query тоже обязана
+        // дать полный профиль (method=udp, insecure=false, up/down=100Mbps —
+        // mihomo требует up/down).
         config.method = "udp"
+        config.insecure = false
+        config.bandwidthUp = "100Mbps"
+        config.bandwidthDown = "100Mbps"
         if (uri.rawQuery.isNullOrEmpty()) return config
         val queryParam = getQueryParam(uri)
 
@@ -63,13 +68,7 @@ object HysteriaFmt : FmtBase() {
                 }.getOrDefault(raw)
             }
         }
-        // insecure по умолчанию false (ссылка без флага): редактор и сборка
-        // читают Boolean, null означал бы «не задано» и требовал бы ветвлений.
-        config.insecure = false
         config.method = queryParam["protocol"]?.nullIfBlank() ?: "udp"
-        // mihomo ОТКАЗЫВАЕТ hysteria-outbound без up/down (эксперимент:
-        // "unset fields: down, up"), поэтому отсутствие mbps в ссылке
-        // дополняется дефолтом, а не оставляет мёртвый профиль.
         config.bandwidthUp = queryParam["upmbps"]?.toIntOrNull()?.let { "${it}Mbps" } ?: "100Mbps"
         config.bandwidthDown = queryParam["downmbps"]?.toIntOrNull()?.let { "${it}Mbps" } ?: "100Mbps"
         config.sni = queryParam["peer"]?.nullIfBlank()
