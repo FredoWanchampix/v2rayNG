@@ -284,7 +284,9 @@ class MainActivity : HelperBaseComponentActivity() {
             EConfigType.OPENCONNECT -> ServerOpenconnectActivity::class.java
             EConfigType.FPTN -> ServerFptnActivity::class.java
             EConfigType.MASQUE -> ServerMasqueActivity::class.java
-            else -> ServerHttpActivity::class.java
+            // else намеренно отсутствует: when исчерпывающий по EConfigType
+            // (все 19 значений перечислены) — добавление нового типа в enum
+            // даст compile-error, а не молчаливый fallback в HTTP-редактор.
         }
         val intent = Intent(this, activityClass).apply {
             putExtra("guid", guid)
