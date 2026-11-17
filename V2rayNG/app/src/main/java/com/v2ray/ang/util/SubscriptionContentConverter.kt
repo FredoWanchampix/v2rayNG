@@ -1291,7 +1291,9 @@ object SubscriptionContentConverter {
             if (j.isNotEmpty()) linkJson.put("alpn", j)
         }
         xTls?.optString("fingerprint")?.takeIf { it.isNotEmpty() }?.let { linkJson.put("fp", it) }
-        if (xTls?.optBoolean("allowInsecure", false) == true) linkJson.put("allowInsecure", 1)
+        // VmessFmt.parse читает ключ insecure ("1"/"0"); allowInsecure он
+        // не знает — молчаливая потеря флага недопустима.
+        if (xTls?.optBoolean("allowInsecure", false) == true) linkJson.put("insecure", "1")
         pinSha256(xTls)?.let { linkJson.put("pcs", it) }
         xTls?.optString("verifyPeerCertByName")?.takeIf { it.isNotEmpty() }
             ?.let { linkJson.put("vcn", it) }

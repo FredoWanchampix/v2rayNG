@@ -511,6 +511,39 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
+    fun `vmess allowInsecure survives as insecure key`() {
+        // VmessFmt.parse читает только ключ insecure; конвертер обязан писать
+        // его, иначе флаг терялся молча.
+        val cfg = """
+            { "remarks": "VM-ins", "outbounds": [ { "tag": "v", "protocol": "vmess",
+              "settings": { "vnext": [ { "address": "1.2.3.4", "port": 443,
+                "users": [ { "id": "uuid-7", "alterId": 0, "security": "auto" } ] } ] },
+              "streamSettings": { "network": "tcp", "security": "tls",
+                "tlsSettings": { "serverName": "v.example.com", "allowInsecure": true } } } ] }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertTrue(out.startsWith("vmess://"), out)
+        val profile = VmessFmt.parse(out)!!
+        assertEquals(true, profile.insecure, "allowInsecure обязан доехать как insecure: $out")
+    }
+
+    @Test
+    fun `openconnect sni and insecure round trip`() {
+        val sb = """
+            { "type": "openconnect", "tag": "oc", "server": "vpn.example.com", "server_port": 443,
+              "username": "u", "password": "p", "flavor": "gp",
+              "tls": { "server_name": "oc.example.com", "insecure": true } }
+        """.trimIndent()
+        val out = convert(sb)
+        assertTrue(out.startsWith("openconnect://"), out)
+        assertTrue(out.contains("sni=oc.example.com"), "sni обязан попасть в ссылку: $out")
+        assertTrue(out.contains("insecure=1"), out)
+        val profile = OpenconnectFmt.parse(out)!!
+        assertEquals("oc.example.com", profile.sni)
+        assertEquals(true, profile.insecure)
+    }
+
+    @Test
     fun `singbox openconnect round trip via OpenconnectFmt`() {
         val sb = """
             { "type": "openconnect", "tag": "oc", "server": "vpn.example.com:443",

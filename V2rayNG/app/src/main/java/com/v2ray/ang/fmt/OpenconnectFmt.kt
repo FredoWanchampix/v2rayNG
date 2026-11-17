@@ -47,6 +47,14 @@ object OpenconnectFmt : FmtBase() {
         }
         config.ocservAuthGroup = q("group", "authgroup", "auth_group", "auth-group")
         config.ocservFlavor = q("flavor", "flavour") ?: "anyconnect"
+        // TLS-поля: редактор и SidecarConfigBuilder используют sni/insecure
+        // (tls.server_name / tls.insecure в sing-box endpoint). Без чтения
+        // этих ключей ссылка теряла их молча.
+        config.sni = q("sni")?.takeIf { it.isNotBlank() }
+        config.insecure = when {
+            listOf("insecure", "allowInsecure").any { q(it) == "1" } -> true
+            else -> false
+        }
         return config
     }
 
@@ -54,6 +62,8 @@ object OpenconnectFmt : FmtBase() {
         val params = buildList {
             config.ocservAuthGroup?.takeIf { it.isNotBlank() }?.let { add("group=${Utils.encodeURIComponent(it)}") }
             config.ocservFlavor?.takeIf { it.isNotBlank() && it != "anyconnect" }?.let { add("flavor=$it") }
+            config.sni?.takeIf { it.isNotBlank() }?.let { add("sni=${Utils.encodeURIComponent(it)}") }
+            if (config.insecure == true) add("insecure=1")
         }
         val userInfo = Utils.encodeURIComponent(config.username.orEmpty()) + ":" +
                 Utils.encodeURIComponent(config.password.orEmpty())
