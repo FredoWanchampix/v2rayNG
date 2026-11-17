@@ -191,7 +191,7 @@ object WireguardFmt : FmtBase() {
         }
         // пустой remoteDNS не пишем: дефолт приложения и так применится,
         // а пустой dns= в ссылке — шум, ломающий читаемость и QR-ёмкость
-        config.remoteDNS?.nullIfBlank()?.let { dicQuery["dns"] = it.removeWhiteSpace() }
+        config.remoteDNS?.removeWhiteSpace()?.nullIfBlank()?.let { dicQuery["dns"] = it }
         // «Весь контекст» несёт fm: он содержит noise-маску целиком, а импорт
         // (parse) восстанавливает из fm явное поле шума — дублировать список
         // ключом noises НЕЛЬЗЯ: ссылка с большим hex-пакетом удваивается и

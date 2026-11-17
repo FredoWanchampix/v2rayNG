@@ -360,7 +360,7 @@ object SubscriptionContentConverter {
                 return emptyList()
             }
             if (proto0 in PROXY_PROTOCOLS || isShadowsocks(root)) {
-                val built = buildXrayProxy(root, proto0, root.optString("tag", root.optString("remarks", "")), noiseFm)
+                val built = buildXrayProxy(root, proto0, root.optString("tag", root.optString("remarks", "")), noiseFm, rootDns)
                 if (built != null) return listOf(built)
                 logCustomKept(root, conversionFailureReason(root, proto0))
                 return emptyList()
@@ -391,7 +391,7 @@ object SubscriptionContentConverter {
         // Exactly one proxy outbound -> convert to a link.
         if (proxies.size == 1) {
             val (ob, p) = proxies[0]
-            val built = buildXrayProxy(ob, p, rem, noiseFm)
+            val built = buildXrayProxy(ob, p, rem, noiseFm, rootDns)
             if (built != null) return listOf(built)
             logCustomKept(root, conversionFailureReason(ob, p))
             return emptyList()
@@ -406,7 +406,7 @@ object SubscriptionContentConverter {
             val links = mutableListOf<String>()
             var failed = false
             for ((ob, p) in proxies) {
-                val built = buildXrayProxy(ob, p, rem, noiseFm)
+                val built = buildXrayProxy(ob, p, rem, noiseFm, rootDns)
                 if (built != null) links.add(built)
                 else {
                     failed = true
@@ -440,7 +440,7 @@ object SubscriptionContentConverter {
      * Возвращает ссылку, либо null — и тогда вызывающий ОБЯЗАН зафиксировать
      * причину отказа (conversionFailureReason), молчаливых пустых списков нет.
      */
-    private fun buildXrayProxy(ob: JSONObject, p: String, rem: String, noiseFm: String?): String? = when (p) {
+    private fun buildXrayProxy(ob: JSONObject, p: String, rem: String, noiseFm: String?, dnsFallback: String? = null): String? = when (p) {
         "vless" -> buildVless(ob, rem)
         "vmess" -> buildVmess(ob, rem)
         "shadowsocks" -> buildShadowsocks(ob, rem)
@@ -450,7 +450,7 @@ object SubscriptionContentConverter {
         // в configFmtParsers нет) — tuic:// ссылка не импортировалась бы.
         // Честный отказ вместо мёртвой ссылки.
         "tuic" -> null
-        "wireguard" -> buildWireguard(ob, rem, noiseFm, rootDns)
+        "wireguard" -> buildWireguard(ob, rem, noiseFm, dnsFallback)
         "masque" -> buildMasque(ob, rem)
         // http:// ссылки форк НЕ импортирует (схемы нет в configFmtParsers),
         // а для приватного IP строка ещё и ушла бы в подписку (isValidSubUrl).
