@@ -100,7 +100,7 @@ internal object RealPingMeasure {
         }
 
         if (!config.configType.isComplexType()
-            && tcpProbeApplicable(config)
+            && RealPingWorkerService.tcpProbeApplicable(config)
         ) {
             val url = config.server.orEmpty()
             val port = config.serverPort.orEmpty().toInt()

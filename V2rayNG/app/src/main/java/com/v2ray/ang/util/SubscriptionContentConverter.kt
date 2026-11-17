@@ -476,14 +476,7 @@ object SubscriptionContentConverter {
         "proxychain", "proxy-chain" -> "PROXYCHAIN — внутренняя цепочка профилей форка, формат share-ссылки её не выражает"
         "custom", "custom_outbound", "custom-outbound" -> "кастомный профиль уже хранит исходный JSON без потерь; конвертация в ссылку не требуется"
         "tuic" -> "TUIC: парсер ссылок в форке отключён (EConfigType.TUIC закомментирован), tuic:// ссылка не импортировалась бы — профиль остаётся кастомным"
-        "hysteria" -> when {
-            (ob.optJSONObject("streamSettings")?.optJSONObject("hysteriaSettings")?.let {
-                it.has("recvWindowConn") || it.has("recvWindow") || it.optBoolean("disableMtuDiscovery", false)
-            } == true) || ob.has("recv_window_conn") || ob.has("recv_window")
-                || ob.optBoolean("disable_mtu_discovery", false) ->
-                "hysteria v1: recv-window/disable-mtu-discovery не выражаются схемой hysteria:// — профиль остаётся кастомным без потерь"
-            else -> "hysteria v1: нет обязательных полей (адрес/порт/auth/up/down — mihomo требует up и down) — ссылка не собрана, профиль остаётся кастомным без потерь"
-        }
+        "hysteria" -> "hysteria v1: нет обязательных полей (адрес/порт/auth/up/down — mihomo требует up и down) либо recv-window/disable-mtu-discovery не выражаются схемой hysteria:// — профиль остаётся кастомным без потерь"
         "freedom", "blackhole", "dns", "dokodemo-door", "loopback",
         "direct", "block" -> "служебный outbound '$p' не является прокси-сервером"
         else -> null
@@ -542,9 +535,20 @@ object SubscriptionContentConverter {
                 val ver = ob.optJSONObject("streamSettings")?.optJSONObject("hysteriaSettings")?.optInt("version", 0)
                     ?: ob.optJSONObject("settings")?.optInt("version", 0)
                     ?: ob.optInt("version", 0)
-                if (ver == 1 || (ver == 0 && p == "hysteria"))
-                    "hysteria: версия 1 не поддерживается парсером форка (профиль остаётся кастомным без потерь)"
-                else "hysteria2: нет адреса/порта или обязательных полей"
+                if (ver == 1 || (ver == 0 && p == "hysteria")) {
+                    // recv-window/disable-mtu-discovery схема hysteria:// не
+                    // выражает: точная причина для такого случая
+                    val hy = ob.optJSONObject("streamSettings")?.optJSONObject("hysteriaSettings")
+                    if (hy?.has("recvWindowConn") == true || hy?.has("recvWindow") == true
+                        || hy?.optBoolean("disableMtuDiscovery", false) == true
+                        || ob.has("recv_window_conn") || ob.has("recv_window")
+                        || ob.optBoolean("disable_mtu_discovery", false)
+                    ) {
+                        "hysteria v1: recv-window/disable-mtu-discovery не выражаются схемой hysteria:// — профиль остаётся кастомным без потерь"
+                    } else {
+                        "hysteria v1: нет обязательных полей (адрес/порт/auth/up/down — mihomo требует up и down) — ссылка не собрана, профиль остаётся кастомным без потерь"
+                    }
+                } else "hysteria2: нет адреса/порта или обязательных полей"
             }
             else -> "$p: обязательные поля outbound отсутствуют или формат не распознан"
         }
