@@ -550,6 +550,8 @@ object SubscriptionContentConverter {
         val address = s.optString("address", "")
         val port = s.optInt("port", 0)
         if (address.isEmpty() || port <= 0) return null
+        // ровно один пользователь: несколько аккаунтов ссылка не выражает
+        s.optJSONArray("users")?.takeIf { it.length() > 1 }?.let { return null }
         val u = s.optJSONArray("users")?.optJSONObject(0)
         val user = u?.optString("user", "").orEmpty()
         val pass = u?.optString("pass", "").orEmpty()
