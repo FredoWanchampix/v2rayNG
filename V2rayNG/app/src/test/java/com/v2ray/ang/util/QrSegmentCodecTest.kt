@@ -115,17 +115,27 @@ class QrSegmentCodecTest {
         // CHUNK_MAX_BYTES с парой в начале и в середине куска.
         for (n in 2690..2712) {
             for (prefix in listOf("🇪🇺", "x🇪🇺", "")) {
-                val payload = prefix + "x".repeat(n) + "🇪🇺" + "y".repeat(40)
+                // payload заведомо больше SINGLE_MAX (2800), чтобы split дал
+                // серию, а пара 🇪🇺 попадала в окрестность границы chunk
+                val payload = prefix + "x".repeat(n) + "🇪🇺" + "y".repeat(400)
                 val parts = QrSegmentCodec.split(payload)
                 assertTrue(parts.isNotEmpty())
                 for (p in parts) {
                     assertTrue(p.isNotEmpty(), "пустой сегмент запрещён (n=$n)")
                     assertTrue(p.toByteArray(Charsets.UTF_8).size <= 2953)
                 }
-                val asm = QrSegmentCodec.Assembler()
-                var out: String? = null
-                for (p in parts) out = asm.offer(p)
-                assertEquals(payload, out, "round-trip при n=$n")
+                // Одиночный QR (payload <= SINGLE_MAX) не имеет префикса и
+                // идёт мимо сборщика (сканер передаёт его как есть); серия
+                // собирается через Assembler.
+                if (parts.size > 1) {
+                    val asm = QrSegmentCodec.Assembler()
+                    var out: String? = null
+                    for (p in parts) out = asm.offer(p)
+                    assertEquals(payload, out, "round-trip при n=$n")
+                } else {
+                    assertEquals(payload, parts[0])
+                    assertFalse(QrSegmentCodec.isSegment(parts[0]))
+                }
             }
         }
     }
