@@ -160,8 +160,13 @@ class ScannerActivity : HelperBaseComponentActivity() {
         val (got, total) = segmentAssembler.progress()
         if (total > 0 && got >= total) {
             // Все сегменты на месте, но CRC не сошлась: молчание запрещено,
-            // просим пересканировать серию.
-            LogUtil.w(TAG_SCAN, "CRC серии не сошлась ($got/$total)")
+            // просим пересканировать серию. Накопитель сбрасываем, чтобы
+            // повторное сканирование серии началось с чистого состояния.
+            LogUtil.w(TAG_SCAN, "CRC серии не сошлась ($got/$total), сброс накопителя")
+            segmentAssembler.reset()
+            // сбрасываем и дедупликацию: пересканированный тот же код обязан
+            // обработаться, иначе серия не начнётся заново
+            lastScanText = null
             runOnUiThread { toast(R.string.qr_scan_crc_failed) }
             return false
         }

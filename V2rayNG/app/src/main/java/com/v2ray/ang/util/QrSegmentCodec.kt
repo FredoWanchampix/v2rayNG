@@ -122,6 +122,14 @@ object QrSegmentCodec {
         /** Сколько сегментов собрано и сколько всего (для прогресса). */
         fun progress(): Pair<Int, Int> = chunks.size to count
 
+        /** Сброс накопителя: начать серию заново (после CRC-провала). */
+        fun reset() {
+            seriesId = null
+            count = 0
+            crc = null
+            chunks.clear()
+        }
+
         fun offer(text: String): String? {
             val seg = parse(text) ?: return null
             if (seriesId == null) {
