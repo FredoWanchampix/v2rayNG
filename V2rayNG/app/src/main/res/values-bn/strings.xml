@@ -45,6 +45,16 @@
     <string name="menu_item_import_config_manually_trojan">[Trojan] যোগ করুন</string>
     <string name="menu_item_import_config_manually_wireguard">[WireGuard] যোগ করুন</string>
     <string name="menu_item_import_config_manually_hysteria2">[Hysteria2] যোগ করুন</string>
+    <string name="menu_item_import_config_manually_hysteria">যোগ করুন [Hysteria]</string>
+    <string name="server_lab_hy1_auth">auth (স্ট্রিং টোকেন)</string>
+    <string name="server_lab_hy1_auth_hint">Hysteria v1-এর auth স্ট্রিং; base64 রূপ আমদানিতে ডিকোড হয়</string>
+    <string name="server_lab_hy1_protocol">protocol</string>
+    <string name="server_lab_hy1_obfs">obfs (অবফাস্কেশন স্ট্রিং)</string>
+    <string name="server_lab_hy1_peer_hint">peer = TLS সার্টিফিকেটের SNI (hysteria:// লিংকে peer কী)</string>
+    <string name="server_lab_hy1_recv_window_conn">recv-window-conn (বাইট, ঐচ্ছিক)</string>
+    <string name="server_lab_hy1_recv_window">recv-window (বাইট, ঐচ্ছিক)</string>
+    <string name="server_lab_hy1_disable_mtu">MTU আবিষ্কার নিষ্ক্রিয়</string>
+    <string name="server_lab_hy1_bandwidth_required">Hysteria v1-এ আপ/ডাউন ব্যান্ডউইথ লাগবে (mihomo ছাড়া প্রত্যাখ্যান করে)</string>
     <string name="menu_item_import_config_manually_masque">[MASQUE] যোগ করুন</string>
     <string name="confirm_delete_visible_profiles">আপনি কি বর্তমানে প্রদর্শিত সব প্রোফাইল মুছে ফেলতে চান?</string>
     <string name="confirm_delete_duplicate_profiles">আপনি কি বর্তমানে প্রদর্শিত সব সদৃশ প্রোফাইল মুছে ফেলতে চান?</string>

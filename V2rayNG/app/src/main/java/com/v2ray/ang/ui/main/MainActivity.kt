@@ -36,6 +36,7 @@ import com.v2ray.ang.ui.server.ServerCustomConfigActivity
 import com.v2ray.ang.ui.server.ServerGroupActivity
 import com.v2ray.ang.ui.server.ServerHttpActivity
 import com.v2ray.ang.ui.server.ServerHysteria2Activity
+import com.v2ray.ang.ui.server.ServerHysteriaActivity
 import com.v2ray.ang.ui.server.ServerMasqueActivity
 import com.v2ray.ang.ui.server.ServerProxyChainActivity
 import com.v2ray.ang.ui.server.ServerShadowsocksActivity
@@ -216,6 +217,9 @@ class MainActivity : HelperBaseComponentActivity() {
             // into `else` and opened the HTTP proxy editor.
             EConfigType.HYSTERIA2.value, EConfigType.MIMIC.value ->
                 Intent(this, ServerHysteria2Activity::class.java)
+            // Hysteria v1: собственный редактор (поля v1: auth/protocol/
+            // up/down/obfs/mport/peer), движок mihomo.
+            EConfigType.HYSTERIA.value -> Intent(this, ServerHysteriaActivity::class.java)
             EConfigType.AMNEZIAWG.value -> Intent(this, ServerAmneziaActivity::class.java)
             EConfigType.NAIVE.value -> Intent(this, ServerNaiveActivity::class.java)
             EConfigType.OPENCONNECT.value -> Intent(this, ServerOpenconnectActivity::class.java)
@@ -274,6 +278,7 @@ class MainActivity : HelperBaseComponentActivity() {
             EConfigType.WIREGUARD -> ServerWireguardActivity::class.java
             // See importServerIntent: MIMIC is edited through the Hysteria2 form.
             EConfigType.HYSTERIA2, EConfigType.MIMIC -> ServerHysteria2Activity::class.java
+            EConfigType.HYSTERIA -> ServerHysteriaActivity::class.java
             EConfigType.AMNEZIAWG -> ServerAmneziaActivity::class.java
             EConfigType.NAIVE -> ServerNaiveActivity::class.java
             EConfigType.OPENCONNECT -> ServerOpenconnectActivity::class.java

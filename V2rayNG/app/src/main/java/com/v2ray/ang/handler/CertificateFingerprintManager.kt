@@ -18,7 +18,7 @@ object CertificateFingerprintManager {
         val request = buildRequest(profile) ?: return null
         // alpn can be "h2,http/1.1" so need to split by parts
         val alpn = profile.alpn.orEmpty().split(",").map { it.trim() }
-        val useQuic = profile.configType == EConfigType.HYSTERIA2 ||
+        val useQuic = usesQuicHandshake(profile.configType) ||
             (profile.configType == EConfigType.MASQUE && ("h2" !in alpn || "h3" in alpn))
         val result = if (useQuic) {
             fetch("quic", request) { Libv2ray.fetchQuicCertSha256(it) }
@@ -47,8 +47,16 @@ object CertificateFingerprintManager {
     }
 
     private fun isFetchable(profile: ProfileItem): Boolean {
-        return profile.configType == EConfigType.HYSTERIA2 || profile.security == AppConfig.TLS
+        return usesQuicHandshake(profile.configType) || profile.security == AppConfig.TLS
     }
+
+    /**
+     * QUIC-протоколы форка: отпечаток сертификата берётся QUIC-рукопожатием
+     * (Libv2ray.fetchQuicCertSha256), а не TLS. Hysteria v1 — QUIC, как и
+     * Hysteria2 (эксперимент: mihomo поднимает v1 по QUIC-схеме).
+     */
+    internal fun usesQuicHandshake(type: EConfigType): Boolean =
+        type == EConfigType.HYSTERIA2 || type == EConfigType.HYSTERIA
 
     private fun fetch(
         type: String,

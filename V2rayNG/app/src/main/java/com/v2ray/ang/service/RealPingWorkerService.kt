@@ -8,6 +8,7 @@ import com.v2ray.ang.core.FptnProbeRunner
 import com.v2ray.ang.core.SidecarEngineManager
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.RealPingEvent
+import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.extension.isComplexType
 import com.v2ray.ang.extension.isNotNullEmpty
@@ -99,11 +100,7 @@ internal object RealPingMeasure {
         }
 
         if (!config.configType.isComplexType()
-            && config.configType != EConfigType.HYSTERIA2
-            && config.configType != EConfigType.WIREGUARD
-            && config.alpn?.startsWith("h3") != true
-            && config.server.isNotNullEmpty()
-            && config.serverPort?.toIntOrNull() != null
+            && tcpProbeApplicable(config)
         ) {
             val url = config.server.orEmpty()
             val port = config.serverPort.orEmpty().toInt()
@@ -311,16 +308,28 @@ class RealPingWorkerService(
         return RealPingMeasure.measure(guid)
     }
 
+    companion object {
+        /**
+         * Применима ли TCP-проба (TCPing) к профилю. QUIC-протоколы
+         * (Hysteria2, Hysteria v1) и WireGuard слушают UDP: TCP-рукопожатие
+         * к их порту дало бы ложный -1/таймаут вместо честного «не применимо»,
+         * а профили с alpn h3 идут QUIC даже поверх TCP-подобных схем.
+         */
+        internal fun tcpProbeApplicable(config: ProfileItem): Boolean =
+            config.configType != EConfigType.HYSTERIA2 &&
+                config.configType != EConfigType.HYSTERIA &&
+                config.configType != EConfigType.WIREGUARD &&
+                config.alpn?.split(',')?.all { it.trim().startsWith("h3") } != true &&
+                config.server.isNotNullEmpty() &&
+                config.serverPort?.toIntOrNull() != null
+    }
+
     private fun startTcping(guid: String): Long {
         val retFailure = -1L
 
         val config = MmkvManager.decodeServerConfig(guid) ?: return retFailure
         if (!config.configType.isComplexType()
-            && config.configType != EConfigType.HYSTERIA2
-            && config.configType != EConfigType.WIREGUARD
-            && config.alpn?.split(',')?.all { it.trim().startsWith("h3") } != true
-            && config.server.isNotNullEmpty()
-            && config.serverPort?.toIntOrNull() != null
+            && tcpProbeApplicable(config)
         ) {
             val url = config.server.orEmpty()
             val port = config.serverPort.orEmpty().toInt()

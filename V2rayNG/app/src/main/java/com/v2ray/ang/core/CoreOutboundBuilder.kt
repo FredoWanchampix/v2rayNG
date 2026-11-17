@@ -38,7 +38,9 @@ object CoreOutboundBuilder {
             EConfigType.NAIVE,
             EConfigType.OPENCONNECT,
             EConfigType.FPTN,
-            EConfigType.MIMIC -> toOutboundSidecar(profileItem)
+            EConfigType.MIMIC,
+            // Hysteria v1 обслуживается сайдкар-движком mihomo
+            EConfigType.HYSTERIA -> toOutboundSidecar(profileItem)
             else -> null
         }
 

@@ -5,6 +5,7 @@ import android.util.Base64
 import android.util.Log
 import com.v2ray.ang.fmt.AmneziaFmt
 import com.v2ray.ang.fmt.Hysteria2Fmt
+import com.v2ray.ang.fmt.HysteriaFmt
 import com.v2ray.ang.fmt.MasqueFmt
 import com.v2ray.ang.fmt.ShadowsocksFmt
 import com.v2ray.ang.fmt.TrojanFmt
@@ -358,15 +359,71 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
-    fun `hysteria v1 stays custom because fork parser has no v1`() {
+    fun `hysteria v1 converts to hysteria link served by mihomo`() {
+        // mihomo v1.19.33 принимает hysteria v1 (эксперимент `mihomo -t`
+        // green на устройстве владельца), sing-box форка собран без QUIC —
+        // поэтому v1 конвертируется в hysteria:// и обслуживается mihomo.
         val cfg = """
             { "remarks": "H1", "outbounds": [ { "tag": "h", "protocol": "hysteria",
-              "settings": { "address": "hy.example.com", "port": 443, "auth": "a" },
+              "settings": { "address": "hy.example.com", "port": 443, "auth": "authstr",
+                "up": "100 Mbps", "down": "100 Mbps" },
+              "streamSettings": { "hysteriaSettings": { "version": 1 },
+                "tlsSettings": { "serverName": "hy.example.com", "alpn": ["h3"] } } } ] }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertTrue(out.startsWith("hysteria://"), out)
+        val profile = HysteriaFmt.parse(out)!!
+        assertEquals("hy.example.com", profile.server)
+        assertEquals("443", profile.serverPort)
+        assertEquals("authstr", profile.password)
+        assertEquals("100Mbps", profile.bandwidthUp)
+        assertEquals("100Mbps", profile.bandwidthDown)
+        assertEquals("hy.example.com", profile.sni)
+        assertEquals("h3", profile.alpn)
+    }
+
+    @Test
+    fun `hysteria v1 without auth stays custom`() {
+        val cfg = """
+            { "remarks": "H1-noauth", "outbounds": [ { "tag": "h", "protocol": "hysteria",
+              "settings": { "address": "hy.example.com", "port": 443 },
               "streamSettings": { "hysteriaSettings": { "version": 1 } } } ] }
         """.trimIndent()
         val out = convert(cfg)
-        assertFalse(out.startsWith("hysteria://"), "v1 не поддерживается парсером: $out")
-        assertTrue(out.contains("\"hysteria\""), "конфиг сохранён: $out")
+        assertFalse(out.startsWith("hysteria://"), "без auth ссылка нерабочая: $out")
+        assertTrue(out.contains("\"hysteria\""), "конфиг сохранён кастомным: $out")
+    }
+
+    @Test
+    fun `hysteria v1 with recv-window stays custom`() {
+        // Схема hysteria:// не выражает recv-window: конвертация молча
+        // потеряла бы tuning — честный отказ, профиль кастомный.
+        val cfg = """
+            { "remarks": "H1-rw", "outbounds": [ { "tag": "h", "protocol": "hysteria",
+              "settings": { "address": "hy.example.com", "port": 443, "auth": "a",
+                "up": "100 Mbps", "down": "100 Mbps" },
+              "streamSettings": { "hysteriaSettings": { "version": 1, "recvWindowConn": 123 } } } ] }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertFalse(out.startsWith("hysteria://"), "recv-window нельзя терять молча: $out")
+        assertTrue(out.contains("\"hysteria\""), out)
+    }
+
+    @Test
+    fun `singbox hysteria v1 converts to hysteria link`() {
+        val sb = """
+            { "type": "hysteria", "tag": "h", "server": "hy.example.com", "server_port": 8443,
+              "auth_str": "tok", "up_mbps": 50, "down_mbps": 80, "obfs": "myobfs",
+              "tls": { "server_name": "hy.example.com", "insecure": true } }
+        """.trimIndent()
+        val out = convert(sb)
+        assertTrue(out.startsWith("hysteria://"), out)
+        val profile = HysteriaFmt.parse(out)!!
+        assertEquals("tok", profile.password)
+        assertEquals("50Mbps", profile.bandwidthUp)
+        assertEquals("80Mbps", profile.bandwidthDown)
+        assertEquals("myobfs", profile.obfsPassword)
+        assertEquals(true, profile.insecure)
     }
 
     @Test

@@ -122,6 +122,11 @@ object SidecarConfigBuilder {
     // ---------------- mihomo (AmneziaWG) ----------------
 
     private fun mihomo(profile: ProfileItem, port: Int): String {
+        // Hysteria v1: отдельная ветка конфига mihomo (схема проверена
+        // экспериментом `mihomo -t`: type hysteria, auth_str, up/down, obfs).
+        if (profile.configType == EConfigType.HYSTERIA) {
+            return mihomoHysteria(profile, port)
+        }
         val opts = profile.amneziaOptions
             ?.takeIf { it.isNotBlank() }
             ?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject()
@@ -185,6 +190,49 @@ object SidecarConfigBuilder {
         sb.append("  - name: GLOBAL\n")
         sb.append("    type: select\n")
         sb.append("    proxies: [awg]\n")
+        return sb.toString()
+    }
+
+    /**
+     * mihomo hysteria (v1) outbound: поля по схеме mihomo 1.19.x, проверено
+     * `mihomo -t` на устройстве владельца (конфиг hy1: auth_str/up/down/sni/
+     * skip-cert-verify/obfs/alpn).
+     */
+    private fun mihomoHysteria(profile: ProfileItem, port: Int): String {
+        val sb = StringBuilder()
+        sb.append("mixed-port: ").append(port).append('\n')
+        sb.append("mode: global\n")
+        sb.append("log-level: silent\n")
+        sb.append("proxies:\n")
+        sb.append("  - name: hy1\n")
+        sb.append("    type: hysteria\n")
+        sb.append("    server: ").append(yq(profile.server)).append('\n')
+        sb.append("    port: ").append(profile.serverPort.orEmpty().toIntOrNull() ?: 443).append('\n')
+        profile.password?.takeIf { it.isNotBlank() }?.let { sb.append("    auth_str: ").append(yq(it)).append('\n') }
+        profile.method?.takeIf { it.isNotBlank() && it != "udp" }?.let { sb.append("    protocol: ").append(yq(it)).append('\n') }
+        profile.bandwidthUp?.takeIf { it.isNotBlank() }?.let { sb.append("    up: ").append(yq(it)).append('\n') }
+        profile.bandwidthDown?.takeIf { it.isNotBlank() }?.let { sb.append("    down: ").append(yq(it)).append('\n') }
+        profile.sni?.takeIf { it.isNotBlank() }?.let { sb.append("    sni: ").append(yq(it)).append('\n') }
+        if (profile.insecure == true) sb.append("    skip-cert-verify: true\n")
+        profile.alpn?.takeIf { it.isNotBlank() }?.let { alpn ->
+            sb.append("    alpn:\n")
+            alpn.split(",").map { it.trim() }.filter { it.isNotEmpty() }.forEach {
+                sb.append("      - ").append(yq(it)).append('\n')
+            }
+        }
+        profile.obfsPassword?.takeIf { it.isNotBlank() }?.let { sb.append("    obfs: ").append(yq(it)).append('\n') }
+        profile.portHopping?.takeIf { it.isNotBlank() }?.let { sb.append("    ports: ").append(yq(it)).append('\n') }
+        // Tuning v1 (recv-window-conn/recv-window/disable-mtu-discovery):
+        // схема mihomo 1.19.x, проверено `mihomo -t` (test is successful).
+        runCatching { org.json.JSONObject(profile.hysteriaOptions.orEmpty()) }.getOrNull()?.let { o ->
+            o.optInt("recvWindowConn", 0).takeIf { it > 0 }?.let { sb.append("    recv-window-conn: ").append(it).append('\n') }
+            o.optInt("recvWindow", 0).takeIf { it > 0 }?.let { sb.append("    recv-window: ").append(it).append('\n') }
+            if (o.optBoolean("disableMtuDiscovery", false)) sb.append("    disable-mtu-discovery: true\n")
+        }
+        sb.append("proxy-groups:\n")
+        sb.append("  - name: GLOBAL\n")
+        sb.append("    type: select\n")
+        sb.append("    proxies: [hy1]\n")
         return sb.toString()
     }
 

@@ -71,6 +71,60 @@ class SidecarEngineManagerTest {
     }
 
     @Test
+    fun `hysteria v1 is served by mihomo`() {
+        // Эксперимент на устройстве: libmihomo.so -t с hysteria-outbound =
+        // "test is successful"; sing-box форка собран без QUIC
+        // ("QUIC is not included in this build"). Значит v1 -> mihomo.
+        assertEquals("mihomo", SidecarEngineManager.engineFor(EConfigType.HYSTERIA))
+        assertTrue(SidecarEngineManager.needsProbeEngine(EConfigType.HYSTERIA))
+    }
+
+    @Test
+    fun `mihomo hysteria v1 config carries all protocol fields`() {
+        val profile = com.v2ray.ang.dto.entities.ProfileItem.create(EConfigType.HYSTERIA)
+        profile.server = "hy.example.com"
+        profile.serverPort = "8443"
+        profile.password = "tok"
+        profile.method = "wechat-video"
+        profile.bandwidthUp = "100Mbps"
+        profile.bandwidthDown = "200Mbps"
+        profile.sni = "s.example.com"
+        profile.insecure = true
+        profile.alpn = "h3"
+        profile.obfsPassword = "myobfs"
+        profile.portHopping = "8443-8450"
+        val cfg = SidecarConfigBuilder.build(profile, "mihomo", 39081)
+        assertNotNull(cfg)
+        assertTrue(cfg!!.contains("type: hysteria"), cfg)
+        assertTrue(cfg.contains("auth_str: \"tok\""), cfg)
+        assertTrue(cfg.contains("protocol: \"wechat-video\""), cfg)
+        assertTrue(cfg.contains("up: \"100Mbps\""), cfg)
+        assertTrue(cfg.contains("down: \"200Mbps\""), cfg)
+        assertTrue(cfg.contains("sni: \"s.example.com\""), cfg)
+        assertTrue(cfg.contains("skip-cert-verify: true"), cfg)
+        assertTrue(cfg.contains("- \"h3\""), cfg)
+        assertTrue(cfg.contains("obfs: \"myobfs\""), cfg)
+        assertTrue(cfg.contains("ports: \"8443-8450\""), cfg)
+        assertTrue(cfg.contains("mixed-port: 39081"), cfg)
+    }
+
+    @Test
+    fun `mihomo hysteria v1 config carries tuning options`() {
+        val profile = com.v2ray.ang.dto.entities.ProfileItem.create(EConfigType.HYSTERIA)
+        profile.server = "hy.example.com"
+        profile.serverPort = "8443"
+        profile.password = "tok"
+        profile.bandwidthUp = "100Mbps"
+        profile.bandwidthDown = "100Mbps"
+        profile.hysteriaOptions = """{"recvWindowConn":12345678,"recvWindow":12345678,"disableMtuDiscovery":true}"""
+        val cfg = SidecarConfigBuilder.build(profile, "mihomo", 39084)
+        assertNotNull(cfg)
+        assertTrue(cfg!!.contains("recv-window-conn: 12345678"), cfg)
+        assertTrue(cfg.contains("recv-window: 12345678"), cfg)
+        assertTrue(cfg.contains("disable-mtu-discovery: true"), cfg)
+    }
+
+    @Test
     fun `sidecar types need a probe engine`() {
         for (type in listOf(
             EConfigType.AMNEZIAWG, EConfigType.NAIVE,

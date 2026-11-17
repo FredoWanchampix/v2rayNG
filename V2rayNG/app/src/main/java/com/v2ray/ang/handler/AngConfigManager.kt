@@ -18,6 +18,7 @@ import com.v2ray.ang.fmt.AmneziaFmt
 import com.v2ray.ang.fmt.CustomOutboundFmt
 import com.v2ray.ang.fmt.FptnFmt
 import com.v2ray.ang.fmt.Hysteria2Fmt
+import com.v2ray.ang.fmt.HysteriaFmt
 import com.v2ray.ang.fmt.MasqueFmt
 import com.v2ray.ang.fmt.MimicFmt
 import com.v2ray.ang.fmt.NaiveFmt
@@ -67,6 +68,7 @@ object AngConfigManager {
             EConfigType.VLESS.protocolScheme to VlessFmt::parse,
             EConfigType.WIREGUARD.protocolScheme to WireguardFmt::parse,
             EConfigType.HYSTERIA2.protocolScheme to Hysteria2Fmt::parse,
+            EConfigType.HYSTERIA.protocolScheme to HysteriaFmt::parse,
             EConfigType.MASQUE.protocolScheme to MasqueFmt::parse,
             AppConfig.HY2 to Hysteria2Fmt::parse,
             AppConfig.AMNEZIAWG to AmneziaFmt::parse,
@@ -206,6 +208,7 @@ object AngConfigManager {
                 EConfigType.TROJAN -> TrojanFmt.toUri(config)
                 EConfigType.WIREGUARD -> WireguardFmt.toUri(config)
                 EConfigType.HYSTERIA2 -> Hysteria2Fmt.toUri(config)
+                EConfigType.HYSTERIA -> HysteriaFmt.toUri(config)
                 EConfigType.MASQUE -> MasqueFmt.toUri(config)
                 // Fork-only protocols. Without these branches every profile of
                 // these types hit `else -> return ""`, so share-to-clipboard

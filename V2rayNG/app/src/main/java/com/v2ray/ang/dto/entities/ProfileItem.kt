@@ -83,6 +83,8 @@ data class ProfileItem(
     var mimicDomains: String? = null,
     /** FPTN access token. */
     var fptnToken: String? = null,
+    /** Hysteria v1 tuning as JSON blob (recv-window-conn/recv-window/disable-mtu-discovery). */
+    var hysteriaOptions: String? = null,
 
     var policyGroupType: String? = null,
     var policyGroupSubscriptionId: String? = null,

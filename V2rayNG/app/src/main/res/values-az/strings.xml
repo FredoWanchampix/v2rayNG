@@ -45,6 +45,16 @@
     <string name="menu_item_import_config_manually_trojan">[Trojan] əlavə et</string>
     <string name="menu_item_import_config_manually_wireguard">[WireGuard] əlavə et</string>
     <string name="menu_item_import_config_manually_hysteria2">[Hysteria2] əlavə et</string>
+    <string name="menu_item_import_config_manually_hysteria">Əlavə et [Hysteria]</string>
+    <string name="server_lab_hy1_auth">auth (mətn token)</string>
+    <string name="server_lab_hy1_auth_hint">Hysteria v1 auth mətni; base64 forması idxalda dekodlanır</string>
+    <string name="server_lab_hy1_protocol">protocol</string>
+    <string name="server_lab_hy1_obfs">obfs (obfuskasiya sətri)</string>
+    <string name="server_lab_hy1_peer_hint">peer = TLS sertifikatının SNI (hysteria:// linklərində peer açarı)</string>
+    <string name="server_lab_hy1_recv_window_conn">recv-window-conn (bayt, isteğe bağlı)</string>
+    <string name="server_lab_hy1_recv_window">recv-window (bayt, isteğe bağlı)</string>
+    <string name="server_lab_hy1_disable_mtu">MTU aşkarlanmasını söndür</string>
+    <string name="server_lab_hy1_bandwidth_required">Hysteria v1 upload/down sürəti tələb edir (mihomo onsuz rədd edir)</string>
     <string name="menu_item_import_config_manually_masque">[MASQUE] əlavə et</string>
     <string name="confirm_delete_visible_profiles">Hazırda göstərilən bütün profilləri silmək istədiyinizə əminsiniz?</string>
     <string name="confirm_delete_duplicate_profiles">Hazırda göstərilən bütün təkrar profilləri silmək istədiyinizə əminsiniz?</string>

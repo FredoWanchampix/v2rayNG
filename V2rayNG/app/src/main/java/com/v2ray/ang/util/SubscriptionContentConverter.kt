@@ -322,6 +322,9 @@ object SubscriptionContentConverter {
                 "trojan" -> buildSbTrojan(root, rem)
                 "shadowsocks" -> buildSbShadowsocks(root, rem)
                 "hysteria2" -> buildSbHysteria2(root, rem)
+                // Hysteria v1 (sing-box форма): конвертируется в hysteria://,
+                // профиль обслуживает mihomo (эксперимент: mihomo -t green).
+                "hysteria" -> buildSbHysteria(root, rem)
                 // TUIC: парсер форка отключён, ссылка была бы мёртвой.
                 "tuic" -> null
                 "socks" -> buildUserPassLink("socks", root, rem)
@@ -473,7 +476,14 @@ object SubscriptionContentConverter {
         "proxychain", "proxy-chain" -> "PROXYCHAIN — внутренняя цепочка профилей форка, формат share-ссылки её не выражает"
         "custom", "custom_outbound", "custom-outbound" -> "кастомный профиль уже хранит исходный JSON без потерь; конвертация в ссылку не требуется"
         "tuic" -> "TUIC: парсер ссылок в форке отключён (EConfigType.TUIC закомментирован), tuic:// ссылка не импортировалась бы — профиль остаётся кастомным"
-        "hysteria" -> "hysteria: версия 1 не поддерживается парсером форка (профиль остаётся кастомным без потерь)"
+        "hysteria" -> when {
+            (ob.optJSONObject("streamSettings")?.optJSONObject("hysteriaSettings")?.let {
+                it.has("recvWindowConn") || it.has("recvWindow") || it.optBoolean("disableMtuDiscovery", false)
+            } == true) || ob.has("recv_window_conn") || ob.has("recv_window")
+                || ob.optBoolean("disable_mtu_discovery", false) ->
+                "hysteria v1: recv-window/disable-mtu-discovery не выражаются схемой hysteria:// — профиль остаётся кастомным без потерь"
+            else -> "hysteria v1: нет обязательных полей (адрес/порт/auth/up/down — mihomo требует up и down) — ссылка не собрана, профиль остаётся кастомным без потерь"
+        }
         "freedom", "blackhole", "dns", "dokodemo-door", "loopback",
         "direct", "block" -> "служебный outbound '$p' не является прокси-сервером"
         else -> null
@@ -1578,9 +1588,13 @@ object SubscriptionContentConverter {
         val version = hy?.optInt("version")
             ?: settings?.optInt("version")
             ?: if (ob.optString("protocol") == "hysteria2") 2 else 1
-        // Our parser has no hysteria v1 - keep the entry as a custom config
-        // instead of emitting a dead link.
-        if (version < 2) return null
+        // Hysteria v1 в xray-форме конвертируется в hysteria:// (профиль
+        // обслуживает mihomo, эксперимент `mihomo -t` green): раньше профиль
+        // молча оставался кастомным. Мёртвых ссылок нет: обязательные
+        // адрес/порт/auth проверяются ниже.
+        if (version < 2) {
+            return buildHysteriaV1Link(ob, rem, settings, hy)
+        }
         val auth = hy?.optString("auth")
             ?: serverObj?.optString("password")
             ?: settings?.optString("auth")
@@ -1640,6 +1654,96 @@ object SubscriptionContentConverter {
             "hysteria://$address:$port$queryString#$encRem"
         }
     } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * Xray-форма hysteria v1 -> hysteria:// (HysteriaFmt): auth, obfs, sni,
+     * alpn, insecure, up/down (settings.up/down "100 Mbps" -> mbps).
+     */
+    private fun buildHysteriaV1Link(
+        ob: JSONObject, rem: String, settings: JSONObject?, hy: JSONObject?
+    ): String? = try {
+        val serverObj = settings?.optJSONArray("servers")?.optJSONObject(0)
+        val address = settings?.optString("address", "").orEmpty()
+            .ifEmpty { serverObj?.optString("address", "").orEmpty() }
+        val port = if (settings?.has("port") == true) settings.optInt("port")
+        else serverObj?.optInt("port", 0) ?: 0
+        if (address.isEmpty() || port <= 0) return null
+        val auth = hy?.optString("auth", "").orEmpty()
+            .ifEmpty { serverObj?.optString("password", "").orEmpty() }
+            .ifEmpty { settings?.optString("auth", "").orEmpty() }
+        if (auth.isEmpty()) return null
+        // Схема hysteria:// не выражает recv-window*/disable-mtu-discovery:
+        // при их наличии конвертация молча потеряла бы tuning — честный отказ.
+        if (hy?.has("recvWindowConn") == true || hy?.has("recvWindow") == true
+            || hy?.optBoolean("disableMtuDiscovery", false) == true
+        ) return null
+        val params = linkedMapOf<String, String>()
+        params["auth"] = auth
+        fun mbps(raw: String?): Int? = raw?.replace(Regex("[^0-9]"), "")?.toIntOrNull()
+        val up = (mbps(settings?.optString("up")) ?: mbps(hy?.optString("up")))?.takeIf { it > 0 }
+        val down = (mbps(settings?.optString("down")) ?: mbps(hy?.optString("down")))?.takeIf { it > 0 }
+        // mihomo требует up/down у hysteria-outbound: без них ссылка дала бы
+        // мёртвый профиль — честный отказ.
+        if (up == null || down == null) return null
+        params["upmbps"] = up.toString()
+        params["downmbps"] = down.toString()
+        val obfsObj = hy?.optJSONObject("obfs") ?: settings?.optJSONObject("obfs")
+        obfsObj?.optString("password", "").orEmpty().ifEmpty { obfsObj?.optString("type", "").orEmpty() }
+            .takeIf { it.isNotEmpty() }?.let { params["obfs"] = it }
+        val tls = ob.optJSONObject("streamSettings")?.optJSONObject("tlsSettings")
+        tls?.optString("serverName", "")?.takeIf { it.isNotEmpty() }?.let { params["peer"] = it }
+        if (tls?.optBoolean("allowInsecure", false) == true) params["insecure"] = "1"
+        tls?.optJSONArray("alpn")?.let { a ->
+            (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }
+                .joinToString(",").takeIf { it.isNotEmpty() }?.let { params["alpn"] = it }
+        }
+        val q = params.toList().joinToString("&") { "${it.first}=${URLEncoder.encode(it.second, "UTF-8")}" }
+        val hp = if (address.contains(':')) "[$address]" else address
+        val encRem = URLEncoder.encode(ob.optString("remarks", rem), "UTF-8").replace("+", "%20")
+        "hysteria://$hp:$port?$q#$encRem"
+    } catch (_: Throwable) {
+        null
+    }
+
+    /**
+     * sing-box hysteria (v1) outbound -> hysteria:// ссылка (HysteriaFmt).
+     * Поля: auth_str, up_mbps/down_mbps, obfs, tls{server_name,insecure,alpn};
+     * recv_window* — tuning, не переносится (mihomo применяет свои).
+     */
+    private fun buildSbHysteria(root: JSONObject, rem: String): String? = try {
+        val address = root.optString("server", "")
+        val port = root.optInt("server_port", 0)
+        if (address.isEmpty() || port <= 0) return null
+        // recv-window*/disable_mtu_discovery схема hysteria:// не выражает
+        if (root.has("recv_window_conn") || root.has("recv_window")
+            || root.optBoolean("disable_mtu_discovery", false)
+        ) return null
+        val params = linkedMapOf<String, String>()
+        root.optString("auth_str", root.optString("auth", "")).takeIf { it.isNotEmpty() }
+            ?.let { params["auth"] = it }
+        val up = root.optInt("up_mbps", 0).takeIf { it > 0 }
+        val down = root.optInt("down_mbps", 0).takeIf { it > 0 }
+        if (up == null || down == null) return null
+        params["upmbps"] = up.toString()
+        params["downmbps"] = down.toString()
+        root.optString("obfs", "").takeIf { it.isNotEmpty() }?.let { params["obfs"] = it }
+        val tls = root.optJSONObject("tls")
+        tls?.optString("server_name", "")?.takeIf { it.isNotEmpty() }?.let { params["peer"] = it }
+        if (tls?.optBoolean("insecure", false) == true) params["insecure"] = "1"
+        tls?.optJSONArray("alpn")?.let { a ->
+            (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }
+                .joinToString(",").takeIf { it.isNotEmpty() }?.let { params["alpn"] = it }
+        }
+        root.optString("alpn", "").takeIf { it.isNotEmpty() && !params.containsKey("alpn") }
+            ?.let { params["alpn"] = it }
+        val q = params.toList().joinToString("&") { "${it.first}=${URLEncoder.encode(it.second, "UTF-8")}" }
+        val hp = if (address.contains(':')) "[$address]" else address
+        val encRem = URLEncoder.encode(rem, "UTF-8").replace("+", "%20")
+        val qs = if (q.isEmpty()) "" else "?$q"
+        "hysteria://$hp:$port$qs#$encRem"
+    } catch (_: Throwable) {
         null
     }
 

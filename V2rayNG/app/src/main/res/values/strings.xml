@@ -45,6 +45,16 @@
     <string name="menu_item_import_config_manually_trojan">Add [Trojan]</string>
     <string name="menu_item_import_config_manually_wireguard">Add [WireGuard]</string>
     <string name="menu_item_import_config_manually_hysteria2">Add [Hysteria2]</string>
+    <string name="menu_item_import_config_manually_hysteria">Add [Hysteria]</string>
+    <string name="server_lab_hy1_auth">auth (string token)</string>
+    <string name="server_lab_hy1_auth_hint">Hysteria v1 auth string; base64 form is decoded on import</string>
+    <string name="server_lab_hy1_protocol">protocol</string>
+    <string name="server_lab_hy1_obfs">obfs (obfuscation string)</string>
+    <string name="server_lab_hy1_peer_hint">peer = SNI of the TLS certificate (key peer in hysteria:// links)</string>
+    <string name="server_lab_hy1_recv_window_conn">recv-window-conn (bytes, optional)</string>
+    <string name="server_lab_hy1_recv_window">recv-window (bytes, optional)</string>
+    <string name="server_lab_hy1_disable_mtu">disable MTU discovery</string>
+    <string name="server_lab_hy1_bandwidth_required">Hysteria v1 requires upload and download bandwidth (mihomo rejects without them)</string>
     <string name="menu_item_import_config_manually_masque">Add [MASQUE]</string>
     <string name="confirm_delete_visible_profiles">Are you sure you want to delete all profiles currently shown?</string>
     <string name="confirm_delete_duplicate_profiles">Are you sure you want to delete all duplicate profiles currently shown?</string>

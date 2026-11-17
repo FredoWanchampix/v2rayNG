@@ -45,6 +45,16 @@
     <string name="menu_item_import_config_manually_trojan">إضافة [Trojan]</string>
     <string name="menu_item_import_config_manually_wireguard">إضافة [WireGuard]</string>
     <string name="menu_item_import_config_manually_hysteria2">إضافة [Hysteria2]</string>
+    <string name="menu_item_import_config_manually_hysteria">إضافة [Hysteria]</string>
+    <string name="server_lab_hy1_auth">auth (رمز نصي)</string>
+    <string name="server_lab_hy1_auth_hint">نص auth لـ Hysteria v1؛ تُفك صيغة base64 عند الاستيراد</string>
+    <string name="server_lab_hy1_protocol">protocol</string>
+    <string name="server_lab_hy1_obfs">obfs (سلسلة التشويش)</string>
+    <string name="server_lab_hy1_peer_hint">peer = SNI لشهادة TLS (مفتاح peer في روابط hysteria://)</string>
+    <string name="server_lab_hy1_recv_window_conn">recv-window-conn (بايت، اختياري)</string>
+    <string name="server_lab_hy1_recv_window">recv-window (بايت، اختياري)</string>
+    <string name="server_lab_hy1_disable_mtu">تعطيل اكتشاف MTU</string>
+    <string name="server_lab_hy1_bandwidth_required">‏Hysteria v1 يتطلب سرعة رفع وتنزيل (mihomo يرفض بدونهما)</string>
     <string name="menu_item_import_config_manually_masque">إضافة [MASQUE]</string>
     <string name="confirm_delete_visible_profiles">هل أنت متأكد من أنك تريد حذف جميع ملفات التعريف المعروضة حاليًا؟</string>
     <string name="confirm_delete_duplicate_profiles">هل أنت متأكد من أنك تريد حذف جميع ملفات التعريف المكررة المعروضة حاليًا؟</string>

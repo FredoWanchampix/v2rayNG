@@ -79,6 +79,9 @@ class ServerUiState(
     ocFlavor: String = "anyconnect",
     ocAuthGroup: String = "",
     fptnToken: String = "",
+    hy1RecvWindowConn: String = "",
+    hy1RecvWindow: String = "",
+    hy1DisableMtuDiscovery: Boolean = false,
     awgVersion: String = "3",
     awgJc: String = "",
     awgJmin: String = "",
@@ -168,6 +171,9 @@ class ServerUiState(
     var ocFlavor by mutableStateOf(ocFlavor)
     var ocAuthGroup by mutableStateOf(ocAuthGroup)
     var fptnToken by mutableStateOf(fptnToken)
+    var hy1RecvWindowConn by mutableStateOf(hy1RecvWindowConn)
+    var hy1RecvWindow by mutableStateOf(hy1RecvWindow)
+    var hy1DisableMtuDiscovery by mutableStateOf(hy1DisableMtuDiscovery)
     var awgVersion by mutableStateOf(awgVersion)
     var awgJc by mutableStateOf(awgJc)
     var awgJmin by mutableStateOf(awgJmin)
@@ -212,6 +218,7 @@ class ServerUiState(
         val isWireguard = configType == EConfigType.WIREGUARD
         val isMasque = configType == EConfigType.MASQUE
         val isHysteria2 = configType == EConfigType.HYSTERIA2
+        val isHysteria = configType == EConfigType.HYSTERIA
 
         return initialConfig.copy(
             configType = configType,
@@ -222,6 +229,8 @@ class ServerUiState(
             method = when {
                 isVmess || isShadowsocks -> method
                 isVless -> encryption
+                // Hysteria v1: protocol (udp/wechat-video/faketcp)
+                isHysteria -> method
                 else -> null
             },
             flow = if (isVless) flow else null,
@@ -238,13 +247,13 @@ class ServerUiState(
             mtu = if (isWireguard) mtu.toIntOrNull() else null,
             remoteDNS = if (isWireguard || isMasque) remoteDNS else null,
             obfs = if (isHysteria2) obfs.nullIfBlank() else null,
-            obfsPassword = if (isHysteria2) obfsPassword else null,
+            obfsPassword = if (isHysteria2 || isHysteria) obfsPassword else null,
             minPacketSize = if (isHysteria2) minPacketSize.nullIfBlank() else null,
             maxPacketSize = if (isHysteria2) maxPacketSize.nullIfBlank() else null,
-            portHopping = if (isHysteria2) portHopping else null,
+            portHopping = if (isHysteria2 || isHysteria) portHopping else null,
             portHoppingInterval = if (isHysteria2) portHoppingInterval else null,
-            bandwidthDown = if (isHysteria2) bandwidthDown else null,
-            bandwidthUp = if (isHysteria2) bandwidthUp else null,
+            bandwidthDown = if (isHysteria2 || isHysteria) bandwidthDown else null,
+            bandwidthUp = if (isHysteria2 || isHysteria) bandwidthUp else null,
             network = network,
             headerType = headerType,
             mode = mode.nullIfBlank(),
@@ -280,6 +289,7 @@ class ServerUiState(
             ocservFlavor = ocFlavor.nullIfBlank(),
             ocservAuthGroup = ocAuthGroup.nullIfBlank(),
             fptnToken = fptnToken.nullIfBlank(),
+            hysteriaOptions = if (isHysteria) buildHysteriaOptions().nullIfBlank() else null,
             amneziaOptions = buildAmneziaOptions().nullIfBlank()
         ).let { profile ->
             // Шум DPI-защиты: вливаем явный список в noise-часть finalMask,
@@ -307,6 +317,18 @@ class ServerUiState(
                 profile
             }
         }
+    }
+
+    /**
+     * Hysteria v1 tuning-поля в JSON-blob для mihomo (recv-window-conn,
+     * recv-window, disable-mtu-discovery). Схема проверена `mihomo -t`.
+     */
+    private fun buildHysteriaOptions(): String {
+        val o = org.json.JSONObject()
+        hy1RecvWindowConn.toIntOrNull()?.takeIf { it > 0 }?.let { o.put("recvWindowConn", it) }
+        hy1RecvWindow.toIntOrNull()?.takeIf { it > 0 }?.let { o.put("recvWindow", it) }
+        if (hy1DisableMtuDiscovery) o.put("disableMtuDiscovery", true)
+        return if (o.length() == 0) "" else o.toString()
     }
 
     /**
@@ -441,8 +463,18 @@ class ServerUiState(
                 mimicDomains = initialConfig.mimicDomains ?: "",
                 ocFlavor = initialConfig.ocservFlavor ?: "anyconnect",
                 ocAuthGroup = initialConfig.ocservAuthGroup ?: "",
-                fptnToken = initialConfig.fptnToken ?: ""
+                fptnToken = initialConfig.fptnToken ?: "",
+                hy1RecvWindowConn = "",
+                hy1RecvWindow = "",
+                hy1DisableMtuDiscovery = false
             ).apply {
+                runCatching {
+                    org.json.JSONObject(initialConfig.hysteriaOptions.orEmpty())
+                }.getOrNull()?.let { o ->
+                    if (o.has("recvWindowConn")) hy1RecvWindowConn = o.optInt("recvWindowConn").toString()
+                    if (o.has("recvWindow")) hy1RecvWindow = o.optInt("recvWindow").toString()
+                    hy1DisableMtuDiscovery = o.optBoolean("disableMtuDiscovery", false)
+                }
                 val opts = runCatching {
                     org.json.JSONObject(initialConfig.amneziaOptions.orEmpty())
                 }.getOrNull()

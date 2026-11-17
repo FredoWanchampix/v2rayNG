@@ -84,6 +84,10 @@ object SidecarEngineManager {
     /** Asset/executable name per engine, null when the profile needs no sidecar. */
     fun engineFor(type: EConfigType): String? = when (type) {
         EConfigType.AMNEZIAWG -> ENGINE_MIHOMO
+        // Hysteria v1: Xray форка не имеет v1-outbound, sing-box собран без
+        // QUIC ("QUIC is not included in this build", эксперимент check),
+        // а mihomo v1.19.33 принимает hysteria-outbound (`mihomo -t` green).
+        EConfigType.HYSTERIA -> ENGINE_MIHOMO
         EConfigType.NAIVE, EConfigType.OPENCONNECT -> ENGINE_SINGBOX
         EConfigType.MIMIC -> ENGINE_MIMIC
         else -> null

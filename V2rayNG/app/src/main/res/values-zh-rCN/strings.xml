@@ -45,6 +45,16 @@
     <string name="menu_item_import_config_manually_trojan">添加 [Trojan]</string>
     <string name="menu_item_import_config_manually_wireguard">添加 [WireGuard]</string>
     <string name="menu_item_import_config_manually_hysteria2">添加 [Hysteria2]</string>
+    <string name="menu_item_import_config_manually_hysteria">添加 [Hysteria]</string>
+    <string name="server_lab_hy1_auth">auth（字符串令牌）</string>
+    <string name="server_lab_hy1_auth_hint">Hysteria v1 的 auth 字符串；base64 形式在导入时解码</string>
+    <string name="server_lab_hy1_protocol">protocol</string>
+    <string name="server_lab_hy1_obfs">obfs（混淆字符串）</string>
+    <string name="server_lab_hy1_peer_hint">peer = TLS 证书的 SNI（hysteria:// 链接中的 peer 键）</string>
+    <string name="server_lab_hy1_recv_window_conn">recv-window-conn（字节，可选）</string>
+    <string name="server_lab_hy1_recv_window">recv-window（字节，可选）</string>
+    <string name="server_lab_hy1_disable_mtu">禁用 MTU 发现</string>
+    <string name="server_lab_hy1_bandwidth_required">Hysteria v1 需要上传与下载带宽（mihomo 缺少则拒绝）</string>
     <string name="menu_item_import_config_manually_masque">添加 [MASQUE]</string>
     <string name="confirm_delete_visible_profiles">确定要删除当前显示的所有配置吗？</string>
     <string name="confirm_delete_duplicate_profiles">确定要删除当前显示的所有重复配置吗？</string>

@@ -45,6 +45,16 @@
     <string name="menu_item_import_config_manually_trojan">Thêm [Trojan]</string>
     <string name="menu_item_import_config_manually_wireguard">Thêm [WireGuard]</string>
     <string name="menu_item_import_config_manually_hysteria2">Thêm [Hysteria2]</string>
+    <string name="menu_item_import_config_manually_hysteria">Thêm [Hysteria]</string>
+    <string name="server_lab_hy1_auth">auth (chuỗi token)</string>
+    <string name="server_lab_hy1_auth_hint">Chuỗi auth của Hysteria v1; dạng base64 được giải mã khi nhập</string>
+    <string name="server_lab_hy1_protocol">protocol</string>
+    <string name="server_lab_hy1_obfs">obfs (chuỗi obfuscation)</string>
+    <string name="server_lab_hy1_peer_hint">peer = SNI của chứng chỉ TLS (khóa peer trong liên kết hysteria://)</string>
+    <string name="server_lab_hy1_recv_window_conn">recv-window-conn (byte, tùy chọn)</string>
+    <string name="server_lab_hy1_recv_window">recv-window (byte, tùy chọn)</string>
+    <string name="server_lab_hy1_disable_mtu">tắt khám phá MTU</string>
+    <string name="server_lab_hy1_bandwidth_required">Hysteria v1 cần băng thông lên/xuống (mihomo từ chối nếu thiếu)</string>
     <string name="menu_item_import_config_manually_masque">Thêm [MASQUE]</string>
     <string name="confirm_delete_visible_profiles">Bạn có chắc muốn xóa tất cả cấu hình đang hiển thị không?</string>
     <string name="confirm_delete_duplicate_profiles">Bạn có chắc muốn xóa tất cả cấu hình trùng lặp đang hiển thị không?</string>
