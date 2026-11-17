@@ -1082,12 +1082,31 @@ object SubscriptionContentConverter {
 
     private fun buildVless(ob: JSONObject, rem: String): String? = try {
         val s = ob.optJSONObject("settings") ?: return null
-        val vnext = s.optJSONArray("vnext") ?: return null
-        if (vnext.length() == 0) return null
-        val vn = vnext.getJSONObject(0)
-        val users = vn.optJSONArray("users") ?: return null
-        if (users.length() == 0) return null
-        val u = users.getJSONObject(0)
+        // Две формы settings: классическая vnext[] и прямая
+        // address/port/id/encryption/flow — именно её пишут собственные
+        // конфиги форка (CoreOutboundBuilder.toOutboundVless). Конвертер
+        // обязан понимать обе, иначе конфиг владельца не конвертируется.
+        val vnext = s.optJSONArray("vnext")
+        val address: String
+        val port: Int
+        val u: JSONObject
+        if (vnext != null && vnext.length() > 0) {
+            val vn = vnext.getJSONObject(0)
+            address = vn.optString("address", "")
+            port = vn.optInt("port", 0)
+            val users = vn.optJSONArray("users")
+            if (users == null || users.length() == 0) return null
+            u = users.getJSONObject(0)
+        } else {
+            address = s.optString("address", "")
+            port = s.optInt("port", 0)
+            if (address.isEmpty() || port <= 0 || s.optString("id", "").isEmpty()) return null
+            u = JSONObject()
+                .put("id", s.optString("id"))
+                .put("encryption", s.optString("encryption", "none"))
+            s.optString("flow", "").takeIf { it.isNotEmpty() }?.let { u.put("flow", it) }
+        }
+        if (address.isEmpty() || port <= 0) return null
         val ss = ob.optJSONObject("streamSettings")
         val rs = ss?.optJSONObject("realitySettings")
         val enc = URLEncoder.encode(rem, "UTF-8").replace("+", "%20")
@@ -1201,7 +1220,7 @@ object SubscriptionContentConverter {
             ?.let { params["ech"] = it }
         val query = params.filterValues { it.isNotEmpty() }
             .entries.joinToString("&") { "${it.key}=${URLEncoder.encode(it.value, "UTF-8")}" }
-        "vless://${u.getString("id")}@${vn.getString("address")}:${vn.getInt("port")}?$query#$enc"
+        "vless://${u.optString("id")}@$address:$port?$query#$enc"
     } catch (_: Exception) {
         null
     }
@@ -1213,12 +1232,19 @@ object SubscriptionContentConverter {
         val settings = ob.optJSONObject("settings")
         val vnext = settings?.optJSONArray("vnext")?.optJSONObject(0)
 
-        val addr = ob.optString("server", vnext?.optString("address", "") ?: "")
-        val port = if (ob.has("server_port")) ob.getInt("server_port") else vnext?.optInt("port", 0) ?: 0
+        // Обе формы: vnext[] и прямая address/port/id (конфиги форка)
+        val addr = ob.optString("server",
+            vnext?.optString("address", "") ?: settings?.optString("address", "").orEmpty())
+        val port = if (ob.has("server_port")) ob.getInt("server_port")
+        else vnext?.optInt("port", 0) ?: settings?.optInt("port", 0) ?: 0
         val user0 = vnext?.optJSONArray("users")?.optJSONObject(0)
-        val uuid = ob.optString("uuid", user0?.optString("id", "") ?: "")
+        val uuid = ob.optString("uuid",
+            user0?.optString("id", "") ?: settings?.optString("id", "").orEmpty())
         val alterId = user0?.optInt("alterId", 0) ?: 0
-        val security = user0?.optString("security", "auto") ?: "auto"
+        val security = user0?.optString("security", "")
+            ?: settings?.optString("security", "").orEmpty().ifEmpty { "auto" }
+        // Мёртвая ссылка (пустой адрес/порт/id) запрещена: честный отказ
+        if (addr.isEmpty() || port <= 0 || uuid.isEmpty()) return null
 
         linkJson.put("add", addr)
         linkJson.put("port", port.toString())
@@ -1719,7 +1745,12 @@ object SubscriptionContentConverter {
         if (method.isEmpty() || address.isEmpty() || port <= 0) return null
         val ui = android.util.Base64.encodeToString("$method:$password".toByteArray(), android.util.Base64.NO_WRAP)
         val encRem = URLEncoder.encode(rem, "UTF-8").replace("+", "%20")
-        val plugin = root.optString("plugin")
+        // plugin: obfs-local переносим через plugin_opts, прочее — честный
+        // отказ (профиль форка не имеет поля plugin, ShadowsocksFmt знает
+        // только obfs=http). Молчаливая потеря плагина недопустима.
+        val sbPlugin = root.optString("plugin", "")
+        if (sbPlugin.isNotEmpty() && sbPlugin != "obfs-local") return null
+        val plugin = if (sbPlugin == "obfs-local") root.optString("plugin_opts", "") else sbPlugin
         val pluginQ = if (plugin.isEmpty()) "" else "/?plugin=" + URLEncoder.encode(plugin, "UTF-8")
         "ss://$ui@$address:$port$pluginQ#$encRem"
     } catch (_: Exception) {
