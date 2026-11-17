@@ -579,6 +579,8 @@ object SubscriptionContentConverter {
     private fun buildAmnezia(ob: JSONObject, rem: String): String? = try {
         // mihomo-поля верхнего уровня либо xray settings
         val st = ob.optJSONObject("settings")
+        // xray-форма с peers: ровно один peer (multi-peer ссылка не выражает)
+        st?.optJSONArray("peers")?.takeIf { it.length() != 1 }?.let { return null }
         val secret = ob.optString("private-key",
             ob.optString("private_key", st?.optString("secretKey", "").orEmpty()))
         if (secret.isEmpty()) return null
@@ -1494,7 +1496,11 @@ object SubscriptionContentConverter {
         val tls = ob.optJSONObject("tls")
         if (tls != null && tls.optBoolean("enabled", false)) {
             tls.optString("server_name").takeIf { it.isNotEmpty() }?.let { query["sni"] = it }
-            tls.optJSONArray("alpn")?.optString(0)?.takeIf { it.isNotEmpty() }?.let { query["alpn"] = it }
+            // alpn — список через запятую (TuicFmt/getItemFormQuery читают строку)
+            tls.optJSONArray("alpn")?.let { a ->
+                (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotEmpty() } }
+                    .joinToString(",").takeIf { it.isNotEmpty() }?.let { query["alpn"] = it }
+            }
             if (tls.optBoolean("insecure", false)) query["allow_insecure"] = "1"
         }
 
