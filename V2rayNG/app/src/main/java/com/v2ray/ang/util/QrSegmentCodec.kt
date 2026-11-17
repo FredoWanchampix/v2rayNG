@@ -72,6 +72,12 @@ object QrSegmentCodec {
             ) {
                 end -= 1
             }
+            // защита от вырожденного случая: если сдвиг границы оставил chunk
+            // пустым (пара в самом начале куска), берём пару целиком —
+            // 4 байта всегда влезают в бюджет, бесконечный цикл исключён
+            if (end <= start) {
+                end = (start + 2).coerceAtMost(payload.length)
+            }
             chunks.add(payload.substring(start, end))
             start = end
         }

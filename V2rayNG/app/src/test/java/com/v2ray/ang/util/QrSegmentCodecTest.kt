@@ -109,6 +109,28 @@ class QrSegmentCodecTest {
     }
 
     @Test
+    fun `chunks are never empty across budget boundaries`() {
+        // Регрессия: сдвиг границы по суррогатной паре не должен оставлять
+        // пустой chunk (бесконечный цикл split). Проходим окрестность бюджета
+        // CHUNK_MAX_BYTES с парой в начале и в середине куска.
+        for (n in 2690..2712) {
+            for (prefix in listOf("🇪🇺", "x🇪🇺", "")) {
+                val payload = prefix + "x".repeat(n) + "🇪🇺" + "y".repeat(40)
+                val parts = QrSegmentCodec.split(payload)
+                assertTrue(parts.isNotEmpty())
+                for (p in parts) {
+                    assertTrue(p.isNotEmpty(), "пустой сегмент запрещён (n=$n)")
+                    assertTrue(p.toByteArray(Charsets.UTF_8).size <= 2953)
+                }
+                val asm = QrSegmentCodec.Assembler()
+                var out: String? = null
+                for (p in parts) out = asm.offer(p)
+                assertEquals(payload, out, "round-trip при n=$n")
+            }
+        }
+    }
+
+    @Test
     fun `progress reports collected and total`() {
         val parts = QrSegmentCodec.split(longLink)
         val asm = QrSegmentCodec.Assembler()
