@@ -43,16 +43,29 @@ object HysteriaFmt : FmtBase() {
         if (uri.rawQuery.isNullOrEmpty()) return config
         val queryParam = getQueryParam(uri)
 
-        // auth: строка или base64 (upstream допускает оба написания)
+        // auth: строка или base64 (upstream допускает оба написания).
+        // Декодируем ТОЛЬКО канонический base64 (длина %4==0, алфавит+паддинг)
+        // И только если результат — печатная ASCII-строка без U+FFFD: иначе
+        // обычный токен вроде "tok123" молча превратился бы в бинарный мусор.
         val auth = queryParam["auth"]?.nullIfBlank()
         config.password = auth?.let { raw ->
-            runCatching {
-                val decoded = android.util.Base64.decode(raw, android.util.Base64.NO_WRAP)
-                    .toString(Charsets.UTF_8)
-                // base64-форма: декодированное не содержит управляющих символов
-                if (decoded.isNotEmpty() && decoded.none { c -> c.code < 0x20 && c != '\t' }) decoded else raw
-            }.getOrDefault(raw)
+            val isCanonicalB64 = raw.length % 4 == 0 && raw.length >= 8 &&
+                raw.matches(Regex("[A-Za-z0-9+/]+={0,2}"))
+            if (!isCanonicalB64) {
+                raw
+            } else {
+                runCatching {
+                    val decoded = android.util.Base64.decode(raw, android.util.Base64.NO_WRAP)
+                        .toString(Charsets.UTF_8)
+                    if (decoded.isNotEmpty() &&
+                        decoded.none { c -> c.code == 0xFFFD || (c.code < 0x20 && c != '\t') || c.code > 0x7E }
+                    ) decoded else raw
+                }.getOrDefault(raw)
+            }
         }
+        // insecure по умолчанию false (ссылка без флага): редактор и сборка
+        // читают Boolean, null означал бы «не задано» и требовал бы ветвлений.
+        config.insecure = false
         config.method = queryParam["protocol"]?.nullIfBlank() ?: "udp"
         // mihomo ОТКАЗЫВАЕТ hysteria-outbound без up/down (эксперимент:
         // "unset fields: down, up"), поэтому отсутствие mbps в ссылке

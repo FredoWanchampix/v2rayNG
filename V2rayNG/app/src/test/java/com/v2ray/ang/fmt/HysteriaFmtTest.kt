@@ -114,11 +114,15 @@ class HysteriaFmtTest {
     }
 
     @Test
-    fun `toUri omits empty optionals`() {
+    fun `toUri omits empty optionals but keeps required bandwidth`() {
         val p = HysteriaFmt.parse("hysteria://1.2.3.4:443?auth=a#X")!!
         val out = "hysteria://" + HysteriaFmt.toUri(p)
-        assertTrue(out.startsWith("hysteria://1.2.3.4:443?auth=a#"), out)
+        assertTrue(out.startsWith("hysteria://1.2.3.4:443?auth=a&"), out)
         assertTrue(!out.contains("protocol="), out)
-        assertTrue(!out.contains("upmbps="), out)
+        assertTrue(!out.contains("peer="), out)
+        assertTrue(!out.contains("obfs="), out)
+        // up/down обязательны для mihomo: дефолт 100Mbps всегда в ссылке
+        assertTrue(out.contains("upmbps=100"), out)
+        assertTrue(out.contains("downmbps=100"), out)
     }
 }
