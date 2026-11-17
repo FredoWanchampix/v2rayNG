@@ -146,6 +146,7 @@
     <string name="qr_segment_counter">QR %1$d از %2$d</string>
     <string name="qr_scan_hint_multi">لینک بلنده: کدا QR و به ترتیب اسکن بکن — برنامه اونا رو بدون افت به لینک کامل جمع می‌کنه</string>
     <string name="qr_scan_progress">بخش %1$d از %2$d رسید — QR بعدی و اسکن بکن</string>
+    <string name="qr_scan_crc_failed">سری QR جمع نبۉ: چک‌سام نخوند. کدا همون سری و دواره اسکن بکن</string>
     <string name="toast_qr_create_failed">ساخت کد QR نشد</string>
     <string name="server_lab_final_mask">FinalMask JSON (پیشرفته): { FinalMaskObject }</string>
     <string name="server_lab_final_mask_hint">دسته هسته تجزیه و اعمال می‌بۉ (Xray v26.11.9, streamSettings.finalmask). فیلد نویز هار فقط بخش udp noise ای شیء ویرایش می‌کنه</string>

@@ -158,6 +158,13 @@ class ScannerActivity : HelperBaseComponentActivity() {
             return true
         }
         val (got, total) = segmentAssembler.progress()
+        if (total > 0 && got >= total) {
+            // Все сегменты на месте, но CRC не сошлась: молчание запрещено,
+            // просим пересканировать серию.
+            LogUtil.w(TAG_SCAN, "CRC серии не сошлась ($got/$total)")
+            runOnUiThread { toast(R.string.qr_scan_crc_failed) }
+            return false
+        }
         LogUtil.i(TAG_SCAN, "сегмент принят: $got из $total")
         runOnUiThread { toast(getString(R.string.qr_scan_progress, got, total)) }
         return false

@@ -146,6 +146,7 @@
     <string name="qr_segment_counter">QR %1$d of %2$d</string>
     <string name="qr_scan_hint_multi">The link is long: scan the QR codes one by one in order — the app assembles them into the full link without loss</string>
     <string name="qr_scan_progress">Segment %1$d of %2$d received — scan the next QR</string>
+    <string name="qr_scan_crc_failed">QR series could not be assembled: checksum mismatch. Rescan the codes of the same series</string>
     <string name="toast_qr_create_failed">Failed to create QR code</string>
     <string name="server_lab_final_mask">FinalMask JSON (advanced): { FinalMaskObject }</string>
     <string name="server_lab_final_mask_hint">Parsed and applied by the core (Xray v26.11.9, streamSettings.finalmask). The noise field above edits only the udp noise part of this object</string>

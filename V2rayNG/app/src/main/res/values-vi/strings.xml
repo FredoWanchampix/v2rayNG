@@ -146,6 +146,7 @@
     <string name="qr_segment_counter">QR %1$d / %2$d</string>
     <string name="qr_scan_hint_multi">Liên kết dài: hãy quét các mã QR lần lượt — ứng dụng sẽ ghép thành liên kết đầy đủ không mất mát</string>
     <string name="qr_scan_progress">Đã nhận đoạn %1$d / %2$d — quét mã QR tiếp theo</string>
+    <string name="qr_scan_crc_failed">Không ghép được chuỗi QR: sai tổng kiểm tra. Hãy quét lại các mã cùng chuỗi</string>
     <string name="toast_qr_create_failed">Không tạo được mã QR</string>
     <string name="server_lab_final_mask">FinalMask JSON (nâng cao): { FinalMaskObject }</string>
     <string name="server_lab_final_mask_hint">Được lõi phân tích và áp dụng (Xray v26.11.9, streamSettings.finalmask). Trường nhiễu phía trên chỉ sửa phần udp noise của đối tượng này</string>

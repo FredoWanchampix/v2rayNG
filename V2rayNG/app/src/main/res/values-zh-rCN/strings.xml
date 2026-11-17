@@ -146,6 +146,7 @@
     <string name="qr_segment_counter">第 %1$d / %2$d 个二维码</string>
     <string name="qr_scan_hint_multi">链接较长：请依次扫描二维码，应用将无损拼装为完整链接</string>
     <string name="qr_scan_progress">已收到第 %1$d / %2$d 段——请扫描下一个二维码</string>
+    <string name="qr_scan_crc_failed">QR 系列组装失败：校验和不匹配。请重新扫描同一系列的二维码</string>
     <string name="toast_qr_create_failed">二维码创建失败</string>
     <string name="server_lab_final_mask">FinalMask JSON（高级）：{ FinalMaskObject }</string>
     <string name="server_lab_final_mask_hint">由核心解析并应用（Xray v26.11.9，streamSettings.finalmask）。上方噪声字段仅编辑该对象的 udp noise 部分</string>

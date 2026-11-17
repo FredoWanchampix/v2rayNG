@@ -146,6 +146,7 @@
     <string name="qr_segment_counter">QR %1$d из %2$d</string>
     <string name="qr_scan_hint_multi">Ссылка длинная: сканируйте QR-коды по очереди — приложение соберёт их в полную ссылку без потерь</string>
     <string name="qr_scan_progress">Получен сегмент %1$d из %2$d — отсканируйте следующий QR</string>
+    <string name="qr_scan_crc_failed">Серия QR не собралась: контрольная сумма не сошлась. Пересканируйте коды одной серии</string>
     <string name="toast_qr_create_failed">Не удалось создать QR-код</string>
     <string name="server_lab_final_mask">FinalMask JSON (расширенный режим): { FinalMaskObject }</string>
     <string name="server_lab_final_mask_hint">Разбирается и применяется ядром (Xray v26.11.9, streamSettings.finalmask). Поле шума выше правит только noise-часть udp этого объекта</string>

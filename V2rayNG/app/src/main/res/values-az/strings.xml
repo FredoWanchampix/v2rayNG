@@ -146,6 +146,7 @@
     <string name="qr_segment_counter">QR %1$d / %2$d</string>
     <string name="qr_scan_hint_multi">Keçid uzundur: QR kodları ardıcıllıqla skan edin — tətbiq onları itkisiz tam keçidə yığacaq</string>
     <string name="qr_scan_progress">%1$d / %2$d seqment alındı — növbəti QR-ı skan edin</string>
+    <string name="qr_scan_crc_failed">QR seriyası yığılmadı: yekun cəm uyğun gəlmir. Eyni seriyanın kodlarını yenidən skan edin</string>
     <string name="toast_qr_create_failed">QR kodu yaratmaq alınmadı</string>
     <string name="server_lab_final_mask">FinalMask JSON (qabaqcıl): { FinalMaskObject }</string>
     <string name="server_lab_final_mask_hint">Nüvə tərəfindən təhlil olunur və tətbiq edilir (Xray v26.11.9, streamSettings.finalmask). Yuxarıdakı səs-küy sahəsi bu obyektin yalnız udp noise hissəsini redaktə edir</string>
