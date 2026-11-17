@@ -283,6 +283,15 @@ object SubscriptionContentConverter {
         // с fm, сохраняя защиту от DPI. Прочие цепочки (dialerProxy на не-freedom)
         // по-прежнему остаются кастомными с причиной в логе.
         val noiseFm = noiseChainFinalMask(root)
+        // Глобальная dns-секция конфига как фолбэк remoteDNS wireguard:
+        // xray: dns.servers[], sing-box: dns.server[]; берём только строковые
+        // элементы (объекты {address,...} и теги не являются адресами DNS).
+        val rootDns = (root.optJSONObject("dns")?.optJSONArray("servers")
+            ?: root.optJSONObject("dns")?.optJSONArray("server"))
+            ?.let { arr ->
+                (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotEmpty() } }
+                    .joinToString(",").takeIf { s -> s.isNotEmpty() }
+            }
         if (noiseFm == null) {
             chainReason(root)?.let { reason ->
             // Лог обёрнут в runCatching намеренно: LogUtil читает уровень из
@@ -314,7 +323,7 @@ object SubscriptionContentConverter {
                 "socks" -> buildUserPassLink("socks", root, rem)
                 // http:// не импортируется форком — мёртвая ссылка запрещена
                 "http" -> null
-                "wireguard" -> buildSbWireguard(root, rem)
+                "wireguard" -> buildSbWireguard(root, rem, rootDns)
                 "naive" -> buildSbNaive(root, rem)
                 "openconnect", "anyconnect" -> buildSbOpenconnect(root, rem)
                 "mimic" -> buildSbMimic(root, rem)
@@ -437,7 +446,7 @@ object SubscriptionContentConverter {
         // в configFmtParsers нет) — tuic:// ссылка не импортировалась бы.
         // Честный отказ вместо мёртвой ссылки.
         "tuic" -> null
-        "wireguard" -> buildWireguard(ob, rem, noiseFm)
+        "wireguard" -> buildWireguard(ob, rem, noiseFm, rootDns)
         "masque" -> buildMasque(ob, rem)
         // http:// ссылки форк НЕ импортирует (схемы нет в configFmtParsers),
         // а для приватного IP строка ещё и ушла бы в подписку (isValidSubUrl).
@@ -853,7 +862,7 @@ object SubscriptionContentConverter {
      *   - allowedIPs отличны от полного маршрута (0.0.0.0/0 и ::/0);
      *   - цепочка dialerProxy (проверяется выше).
      */
-    private fun buildWireguard(ob: JSONObject, rem: String, finalMaskJson: String? = null): String? = try {
+    private fun buildWireguard(ob: JSONObject, rem: String, finalMaskJson: String? = null, dnsFallback: String? = null): String? = try {
         // AmneziaWG-опции (mihomo-формат верхнего уровня ИЛИ xray settings):
         // конвертация в plain wireguard:// ПОТЕРЯЛА бы обфускацию. Проверяем
         // ДО требования settings: mihomo-объект (type=wireguard + server/port/
@@ -894,7 +903,11 @@ object SubscriptionContentConverter {
         }
         st.optInt("mtu").takeIf { it > 0 }?.let { params["mtu"] = it.toString() }
         peer.optString("preSharedKey", "").takeIf { it.isNotEmpty() }?.let { params["presharedkey"] = it }
-        st.optString("remoteDNS", "").takeIf { it.isNotEmpty() }?.let { params["dns"] = it }
+        // remoteDNS outbound-а; если его нет — глобальная dns-секция конфига
+        // (именно она обслуживала туннель в кастомном профиле): потеря DNS
+        // означала бы молчаливую смену поведения туннеля после конвертации.
+        (st.optString("remoteDNS", "").takeIf { it.isNotEmpty() } ?: dnsFallback)
+            ?.let { params["dns"] = it }
         // Шумовая защита от DPI: finalmask целиком (JSON), ключ fm читает
         // WireguardFmt.parse в ProfileItem.finalMask, а CoreOutboundBuilder
         // кладёт его в streamSettings.finalmask. Приоритет у поглощённой
@@ -963,7 +976,7 @@ object SubscriptionContentConverter {
      * Поля: server, server_port, local_address[], private_key, peer_public_key,
      * pre_shared_key, mtu, reserved (массив или base64-строка).
      */
-    private fun buildSbWireguard(root: JSONObject, rem: String): String? = try {
+    private fun buildSbWireguard(root: JSONObject, rem: String, dnsFallback: String? = null): String? = try {
         // AmneziaWG в sing-box-обёртке: обфускацию терять нельзя, plain-ссылка
         // её не выражает. awg-сборщик понимает mihomo-имена; sing-box
         // awg-поля (junk_packet_count и т.п.) не нормализованы — честный отказ.
@@ -984,6 +997,9 @@ object SubscriptionContentConverter {
             params["address"] = (0 until la.length()).mapNotNull { la.optString(it).takeIf { s -> s.isNotEmpty() } }.joinToString(",")
         }
         root.optInt("mtu").takeIf { it > 0 }?.let { params["mtu"] = it.toString() }
+        // sing-box: у wireguard-outbound нет remoteDNS; глобальный dns.conf
+        // (dns.server[]) — фактический DNS туннеля, переносим его.
+        dnsFallback?.takeIf { it.isNotEmpty() }?.let { params["dns"] = it }
         when (val r = root.opt("reserved")) {
             is org.json.JSONArray ->
                 if (r.length() > 0) params["reserved"] = (0 until r.length()).map { r.opt(it).toString() }.joinToString(",")

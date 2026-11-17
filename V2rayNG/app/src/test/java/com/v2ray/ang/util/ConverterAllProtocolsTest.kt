@@ -881,6 +881,37 @@ class ConverterAllProtocolsTest {
     """.trimIndent().replace("HEXPLACEHOLDER", ownerWarpHex)
 
     @Test
+    fun `owner warp config carries tunnel dns into link and editor field`() {
+        // В кастомном конфиге владельца DNS туннеля живёт в глобальной секции
+        // dns.servers (outbound remoteDNS отсутствует). Конвертер обязан
+        // перенести его в ссылку, иначе поле remoteDNS редактора осталось бы
+        // пустым и туннель молча пошёл бы на дефолтный DNS приложения.
+        val cfg = JSONObject(ownerWarpConfig)
+        cfg.put("dns", JSONObject().put("servers", org.json.JSONArray().apply {
+            put("1.1.1.1"); put("1.0.0.1"); put("2606:4700:4700::1111"); put("2606:4700:4700::1001")
+        }))
+        val out = convert(cfg.toString())
+        assertTrue(out.startsWith("wireguard://"), out)
+        assertTrue(out.contains("dns=1.1.1.1"), "dns обязан попасть в ссылку: $out")
+        val profile = WireguardFmt.parse(out)!!
+        assertEquals("1.1.1.1,1.0.0.1,2606:4700:4700::1111,2606:4700:4700::1001", profile.remoteDNS)
+        // и обратно в ссылку без потерь и без пустого dns=
+        val again = "wireguard://" + WireguardFmt.toUri(profile)
+        assertTrue(again.contains("dns=1.1.1.1"), again)
+    }
+
+    @Test
+    fun `wireguard without dns keeps field empty and link clean`() {
+        // Опциональность: нет dns ни в outbound, ни в секции dns — поле пусто,
+        // в ссылке нет пустого dns=.
+        val out = convert(ownerWarpConfig)
+        assertTrue(out.startsWith("wireguard://"), out)
+        assertFalse(out.contains("dns=&"), "пустой dns= запрещён: $out")
+        val profile = WireguardFmt.parse(out)!!
+        assertNull(profile.remoteDNS)
+    }
+
+    @Test
     fun `owner warp config converts with the whole hex noise intact`() {
         // Доказательство переноса: весь hex-пакет (не обрезанный) и все 9
         // элементов шума доходят до ссылки, а из ссылки — в поля профиля.

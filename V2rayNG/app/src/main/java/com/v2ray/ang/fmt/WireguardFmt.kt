@@ -33,7 +33,9 @@ object WireguardFmt : FmtBase() {
         config.publicKey = queryParam["publickey"].orEmpty()
         config.preSharedKey = queryParam["presharedkey"]?.nullIfBlank()
         config.mtu = Utils.parseInt(queryParam["mtu"] ?: AppConfig.WIREGUARD_LOCAL_MTU)
-        config.remoteDNS = queryParam["dns"] ?: ""
+        // Пустой/отсутствующий dns -> null: профиль следует дефолту
+        // приложения, а toUri не пишет пустой dns= в ссылку.
+        config.remoteDNS = queryParam["dns"]?.nullIfBlank()
         config.reserved = queryParam["reserved"] ?: "0,0,0"
         config.finalMask = (queryParam["fm"] ?: queryParam["finalmask"] ?: queryParam["finalMask"])?.nullIfBlank()
         // Шум DPI-защиты: явный ключ noises приоритетнее noise-части fm; если
@@ -187,9 +189,9 @@ object WireguardFmt : FmtBase() {
         if (config.preSharedKey != null) {
             dicQuery["presharedkey"] = config.preSharedKey.removeWhiteSpace().orEmpty()
         }
-        if (config.remoteDNS != null) {
-            dicQuery["dns"] = config.remoteDNS.removeWhiteSpace().orEmpty()
-        }
+        // пустой remoteDNS не пишем: дефолт приложения и так применится,
+        // а пустой dns= в ссылке — шум, ломающий читаемость и QR-ёмкость
+        config.remoteDNS?.nullIfBlank()?.let { dicQuery["dns"] = it.removeWhiteSpace() }
         // «Весь контекст» несёт fm: он содержит noise-маску целиком, а импорт
         // (parse) восстанавливает из fm явное поле шума — дублировать список
         // ключом noises НЕЛЬЗЯ: ссылка с большим hex-пакетом удваивается и
