@@ -84,7 +84,7 @@ env:
 
 jobs:
   build-fptn-android:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 240
     # fail-fast=false ОБЯЗАТЕЛЕН: цель эксперимента - увидеть поведение ВСЕХ
     # ABI, а не только первого упавшего. Иначе 32-битный провал скрыл бы
@@ -628,7 +628,7 @@ jobs:
   # Жёсткий гейт: если хотя бы одна нога matrix не загрузила артефакт, сборка
   # останавливается здесь, а не выпускает APK с отсутствующим движком.
   bundle:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     needs: build-fptn-android
     outputs:
