@@ -474,6 +474,13 @@ object SubscriptionContentConverter {
     private fun conversionFailureReason(ob: JSONObject, p: String): String {
         unsupportedProtocolReason(p)?.let { return it }
         val st = ob.optJSONObject("settings")
+        val multi = when (p) {
+            "vless", "vmess" -> st?.optJSONArray("vnext")?.let { it.length() != 1 } == true
+            "shadowsocks", "trojan", "hysteria", "hysteria2", "socks", "http" ->
+                st?.optJSONArray("servers")?.let { it.length() != 1 } == true
+            else -> false
+        }
+        if (multi) return "$p: multi-server outbound (несколько адресов/пользователей) — ссылка выражает один сервер; профиль остаётся кастомным без потерь"
         return when (p) {
             "wireguard" -> when {
                 (ob.optJSONObject("amnezia-wg-option") ?: ob.optJSONObject("amnezia")
@@ -1091,11 +1098,14 @@ object SubscriptionContentConverter {
         val port: Int
         val u: JSONObject
         if (vnext != null && vnext.length() > 0) {
+            // multi-server outbound: ссылка выражает один сервер; молча
+            // потерять остальные нельзя — честный отказ.
+            if (vnext.length() != 1) return null
             val vn = vnext.getJSONObject(0)
             address = vn.optString("address", "")
             port = vn.optInt("port", 0)
             val users = vn.optJSONArray("users")
-            if (users == null || users.length() == 0) return null
+            if (users == null || users.length() != 1) return null
             u = users.getJSONObject(0)
         } else {
             address = s.optString("address", "")
@@ -1230,6 +1240,9 @@ object SubscriptionContentConverter {
         linkJson.put("v", "2")
 
         val settings = ob.optJSONObject("settings")
+        settings?.optJSONArray("vnext")?.takeIf { it.length() != 1 }?.let { return null }
+        settings?.optJSONArray("vnext")?.optJSONObject(0)?.optJSONArray("users")
+            ?.takeIf { it.length() != 1 }?.let { return null }
         val vnext = settings?.optJSONArray("vnext")?.optJSONObject(0)
 
         // Обе формы: vnext[] и прямая address/port/id (конфиги форка)
@@ -1336,7 +1349,9 @@ object SubscriptionContentConverter {
             val sbPlugin = ob.optString("plugin", "")
             if (sbPlugin.isNotEmpty() && sbPlugin != "obfs-local") return null
         } else {
-            val s = ob.optJSONObject("settings")?.optJSONArray("servers")?.getJSONObject(0) ?: return null
+            val servers = ob.optJSONObject("settings")?.optJSONArray("servers") ?: return null
+            if (servers.length() != 1) return null
+            val s = servers.getJSONObject(0)
             address = s.getString("address")
             port = s.getInt("port")
             method = s.getString("method")
@@ -1357,7 +1372,9 @@ object SubscriptionContentConverter {
     }
 
     private fun buildTrojan(ob: JSONObject, rem: String): String? = try {
-        val server = ob.optJSONObject("settings")?.optJSONArray("servers")?.optJSONObject(0) ?: return null
+        val serversArr = ob.optJSONObject("settings")?.optJSONArray("servers") ?: return null
+        if (serversArr.length() != 1) return null
+        val server = serversArr.getJSONObject(0)
         val address = server.optString("address")
         val port = server.optInt("port")
         val password = server.optString("password")
@@ -1501,6 +1518,7 @@ object SubscriptionContentConverter {
      */
     private fun buildHysteriaX(ob: JSONObject, rem: String): String? = try {
         val settings = ob.optJSONObject("settings")
+        settings?.optJSONArray("servers")?.takeIf { it.length() > 1 }?.let { return null }
         val serverObj = settings?.optJSONArray("servers")?.optJSONObject(0)
         val address = (settings?.optString("address", "") ?: "")
             .ifEmpty { serverObj?.optString("address", "") ?: "" }

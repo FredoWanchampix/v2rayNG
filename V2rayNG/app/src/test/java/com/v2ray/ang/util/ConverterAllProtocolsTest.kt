@@ -380,6 +380,37 @@ class ConverterAllProtocolsTest {
     // --- мульти-сервер: всё или ничего ---
 
     @Test
+    fun `vless multi-server outbound stays custom instead of losing servers`() {
+        // Ссылка выражает один сервер: раньше молча брался vnext[0],
+        // остальные сервера терялись. Теперь честный отказ.
+        val cfg = """
+            { "remarks": "MS", "outbounds": [ { "tag": "v", "protocol": "vless",
+              "settings": { "vnext": [
+                { "address": "1.1.1.1", "port": 443, "users": [ { "id": "u1", "encryption": "none" } ] },
+                { "address": "2.2.2.2", "port": 443, "users": [ { "id": "u1", "encryption": "none" } ] }
+              ] },
+              "streamSettings": { "network": "tcp", "security": "none" } } ] }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertFalse(out.startsWith("vless://"), "multi-server нельзя терять молча: $out")
+        assertTrue(out.contains("\"vless\""), "конфиг сохранён целиком: $out")
+    }
+
+    @Test
+    fun `trojan multi-server outbound stays custom`() {
+        val cfg = """
+            { "remarks": "TJ-ms", "outbounds": [ { "tag": "t", "protocol": "trojan",
+              "settings": { "servers": [
+                { "address": "1.1.1.1", "port": 443, "password": "pw" },
+                { "address": "2.2.2.2", "port": 443, "password": "pw" } ] },
+              "streamSettings": { "network": "tcp", "security": "tls" } } ] }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertFalse(out.startsWith("trojan://"), out)
+        assertTrue(out.contains("\"trojan\""), out)
+    }
+
+    @Test
     fun `multi server with one broken outbound keeps whole config`() {
         // Раньше возвращалось подмножество ссылок, а несконвертированный
         // outbound МОЛЧА терялся. Теперь: конфиг целиком кастомный.
