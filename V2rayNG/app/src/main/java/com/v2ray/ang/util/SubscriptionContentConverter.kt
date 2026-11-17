@@ -321,8 +321,10 @@ object SubscriptionContentConverter {
                 else -> null
             }
             if (built != null) return listOf(built)
+            // Причина точная: сначала таблица неподдерживаемых протоколов,
+            // затем диагностика по содержимому (например, vmess+xhttp).
             logCustomKept(root, unsupportedProtocolReason(sbType)
-                ?: "sing-box type=$sbType: сборщик ссылки не реализован или обязательные поля отсутствуют")
+                ?: conversionFailureReason(root, sbType))
             return emptyList()
         }
 
@@ -492,7 +494,7 @@ object SubscriptionContentConverter {
                     ?: ob.optJSONObject("transport")?.optString("type")
                 if (net == "xhttp" || net == "splithttp" || net == "splitHttp")
                     "vmess: транспорт xhttp не выражается форматом vmess:// v2 (нет полей mode/extra) — профиль остаётся кастомным без потерь"
-                else "vmess: обязательные поля отсутствуют (vnext/users/id)"
+                else "vmess: обязательные поля отсутствуют (xray: vnext/users/id; sing-box: server/server_port/uuid) или транспорт xhttp не выражается vmess:// v2"
             }
             "amneziawg", "awg" -> when {
                 (ob.optJSONObject("amnezia-wg-option") ?: ob.optJSONObject("amneziaOptions")
@@ -502,6 +504,7 @@ object SubscriptionContentConverter {
                 else -> "amneziawg: нет обязательных полей (secretKey/publicKey/endpoint) или version не число"
             }
             "mimic" -> "mimic: нет uuid/адреса/порта"
+            "trojan" -> "trojan: транспорт xhttp не выражается trojan:// (нет полей mode/extra) или обязательные поля отсутствуют — профиль остаётся кастомным без потерь"
             "shadowsocks" -> "shadowsocks: plugin не поддерживается профилем форка (только obfs=http), профиль остаётся кастомным без потерь"
             "socks" -> "socks: settings.servers[] пуст или содержит более одного сервера"
             "http" -> "http: форк не импортирует http:// ссылки (схемы нет в карте парсеров); для приватного IP строка ушла бы в подписку — профиль остаётся кастомным"
@@ -1335,6 +1338,9 @@ object SubscriptionContentConverter {
 
         val ss = ob.optJSONObject("streamSettings")
         val network = ss?.optString("network")
+        // trojan:// не имеет полей xhttp (mode/extra): ссылка была бы
+        // нерабочей. Честный отказ вместо молчаливой потери транспорта.
+        if (network == "xhttp" || network == "splithttp" || network == "splitHttp") return null
         val security = ss?.optString("security")
 
         val query = mutableMapOf<String, String>()
@@ -1590,6 +1596,19 @@ object SubscriptionContentConverter {
                 query.append("&host=").append(URLEncoder.encode(it, "UTF-8"))
             }
         }
+        // xhttp: mode и extra обязательны для рабочего туннеля (xray-ветка их
+        // переносит; sing-box хранит их в transport)
+        if (sbTransportType(root) == "xhttp" || sbTransportType(root) == "splithttp" || sbTransportType(root) == "splitHttp") {
+            transport?.optString("mode")?.takeIf { it.isNotEmpty() }?.let {
+                query.append("&mode=").append(URLEncoder.encode(it, "UTF-8"))
+            }
+            transport?.optJSONObject("extra")?.toString()?.takeIf { it != "null" && it.isNotEmpty() }?.let {
+                query.append("&extra=").append(URLEncoder.encode(it, "UTF-8"))
+            }
+            transport?.optJSONArray("host")?.optString(0)?.takeIf { it.isNotEmpty() }?.let {
+                query.append("&host=").append(URLEncoder.encode(it, "UTF-8"))
+            }
+        }
         // grpc: service_name обязателен, иначе поток не совпадёт с сервером
         if (sbTransportType(root) == "grpc") {
             transport?.optString("service_name")?.takeIf { it.isNotEmpty() }?.let {
@@ -1657,6 +1676,9 @@ object SubscriptionContentConverter {
         val address = root.optString("server")
         val port = root.optInt("server_port")
         if (password.isEmpty() || address.isEmpty() || port <= 0) return null
+        // xhttp не выражается trojan:// — честный отказ
+        val sbNet = sbTransportType(root)
+        if (sbNet == "xhttp" || sbNet == "splithttp" || sbNet == "splitHttp") return null
 
         val query = mutableMapOf<String, String>()
         query["type"] = sbTransportType(root)

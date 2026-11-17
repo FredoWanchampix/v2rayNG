@@ -570,6 +570,39 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
+    fun `trojan xhttp stays custom because trojan link cannot express it`() {
+        val cfg = """
+            { "remarks": "TJ-x", "outbounds": [ { "tag": "t", "protocol": "trojan",
+              "settings": { "servers": [ { "address": "1.2.3.4", "port": 443, "password": "pw" } ] },
+              "streamSettings": { "network": "xhttp", "security": "tls",
+                "xhttpSettings": { "mode": "stream-up", "path": "/x" } } } ] }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertFalse(out.startsWith("trojan://"), "xhttp не выражается trojan://: $out")
+        assertTrue(out.contains("\"trojan\""), "конфиг сохранён кастомным: $out")
+    }
+
+    @Test
+    fun `singbox vless xhttp keeps mode extra and host`() {
+        val sb = """
+            { "type": "vless", "tag": "v", "server": "x.example.com", "server_port": 443,
+              "uuid": "uuid-4", "transport": { "type": "xhttp", "mode": "stream-up",
+                "path": "/xh", "host": ["xh.example.com"],
+                "extra": { "xPaddingBytes": "100-1600" } },
+              "tls": { "server_name": "x.example.com" } }
+        """.trimIndent()
+        val out = convert(sb)
+        assertTrue(out.startsWith("vless://"), out)
+        assertTrue(out.contains("mode=stream-up"), "xhttp mode обязан попасть: $out")
+        assertTrue(out.contains("extra="), "xhttp extra обязан попасть: $out")
+        assertTrue(out.contains("xPaddingBytes"), out)
+        val profile = VlessFmt.parse(out)!!
+        assertEquals("xhttp", profile.network)
+        assertEquals("stream-up", profile.xhttpMode)
+        assertTrue(profile.xhttpExtra!!.contains("xPaddingBytes"))
+    }
+
+    @Test
     fun `vmess xhttp stays custom because v2 format cannot express it`() {
         val cfg = """
             { "remarks": "VM-xhttp", "outbounds": [ { "tag": "v", "protocol": "vmess",
