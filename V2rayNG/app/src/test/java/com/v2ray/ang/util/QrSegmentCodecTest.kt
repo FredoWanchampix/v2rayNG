@@ -145,7 +145,7 @@ class QrSegmentCodecTest {
         // Типовая независимость QR-канала: hysteria:// с длинным obfs
         // режется на сегменты и собирается байт в байт.
         val link = "hysteria://hy.example.com:8443?auth=tok&upmbps=100&downmbps=100" +
-            "&obfs=" + java.net.URLEncoder.encode("o".repeat(2600), "UTF-8") +
+            "&obfs=" + java.net.URLEncoder.encode("o".repeat(3200), "UTF-8") +
             "&peer=s.example.com&alpn=h3&insecure=1&mport=8443-8450#HY1"
         assertTrue(link.toByteArray(Charsets.UTF_8).size > 2953)
         val parts = QrSegmentCodec.split(link)
