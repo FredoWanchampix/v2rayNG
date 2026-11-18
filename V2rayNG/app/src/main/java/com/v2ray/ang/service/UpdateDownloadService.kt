@@ -474,13 +474,19 @@ class UpdateDownloadService : Service() {
 
             UpdateDecisions.StartDecision.AlreadyDownloaded -> {
                 state = existing ?: return
-                val apk = UpdatePaths.apkFile(workDir, state.assetName)
+                // Приоритет сохранённому apkPath: рабочая папка могла быть
+                // резервной приватной (filesDir/updates), и пересчёт от workDir
+                // дал бы ложное «файл исчез» с лишней полной перезакачкой.
+                val apk = state.apkPath.takeIf { it.isNotBlank() }?.let(::File)
+                    ?: UpdatePaths.apkFile(workDir, state.assetName)
                 if (apk.exists()) {
                     showReadyNotification(apk)
                     broadcastReady(apk.absolutePath)
                     return
                 }
-                // Файл исчез (чистка каталога) — качаем заново тем же путём.
+                // Файл удалён вручную: готовность устарела — качаем заново тем
+                // же путём (part-файлов после успеха уже нет, качается начисто).
+                UpdateDownloadLogger.log(this, "READY state but APK missing (${apk.absolutePath}); re-downloading")
             }
 
             UpdateDecisions.StartDecision.SwitchTarget -> {
