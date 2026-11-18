@@ -662,11 +662,26 @@ class UpdateDownloadService : Service() {
         state = persisted
         pausedFlag.set(false)
         profileAbortDone.set(false)
+        cancelledFlag.set(false)
+
+        // Если за это время файл уже готов и лежит на диске (например, готовность
+        // пришла, пока пользователь смотрел на кнопку «Продолжить»), перезакачка
+        // не нужна: показываем готовность и выходим.
+        if (persisted.phase == DownloadState.Phase.READY_TO_INSTALL) {
+            val apk = persisted.apkPath.takeIf { it.isNotBlank() }?.let(::File)
+                ?: UpdatePaths.apkFile(workDir, persisted.assetName)
+            if (apk.exists()) {
+                showReadyNotification(apk)
+                stopForeground(STOP_FOREGROUND_DETACH)
+                stopSelf()
+                return
+            }
+        }
+
         // Возобновление после остановки (пауза, отмена, PROFILE_LOST) всегда
         // продолжает докачку ТОЙ ЖЕ цели: part-файлы на диске доверенные, их
         // байты надо учесть в прогрессе (иначе шкала упала бы в ноль, хотя
         // половина файла уже скачана).
-        cancelledFlag.set(false)
         trustExistingParts = true
         bytesWrittenTotal.set(persisted.downloadedBytes())
         speedTracker.reset()
