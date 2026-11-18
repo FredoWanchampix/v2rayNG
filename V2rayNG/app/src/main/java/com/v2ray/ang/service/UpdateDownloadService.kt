@@ -155,6 +155,15 @@ class UpdateDownloadService : Service() {
         const val ACTION_CANCEL = ACTIONS_PREFIX + "update.download.cancel"
 
         /**
+         * Сброс устаревшей готовности: UI обнаружил, что проверенный APK удалён
+         * из папки загрузки вручную, и просит сервис снять состояние
+         * READY_TO_INSTALL и уведомление «Готово к установке». Без этого экран
+         * продолжал бы показывать кнопку «Установить» для несуществующего файла
+         * (баг, найденный владельцем).
+         */
+        const val ACTION_CLEAR_READY = ACTIONS_PREFIX + "update.download.clear_ready"
+
+        /**
          * requestCode PendingIntent'а кнопки «Установить» в уведомлении.
          *
          * Отдельного действия ACTION_INSTALL для сервиса НЕТ: кнопка ведёт
@@ -384,7 +393,14 @@ class UpdateDownloadService : Service() {
         // получить startForeground быстро. Команды паузы/отмены приходят в уже
         // поднятый сервис, и повторный startForeground просто обновляет
         // уведомление — это безопасно и соответствует контракту.
-        ensureForeground()
+        //
+        // ИСКЛЮЧЕНИЕ — ACTION_CLEAR_READY: сервис поднимается обычным
+        // startService (FGS-контракта нет), а задача команды — СНЯТЬ уведомление
+        // «Готово к установке». Показ FGS-уведомления здесь дал бы мерцание:
+        // уведомление появилось бы на мгновение и тут же было отменено.
+        if (action != ACTION_CLEAR_READY) {
+            ensureForeground()
+        }
         when (action) {
             ACTION_START ->
                 // `!!` не нужен: K2 выводит non-null из ветки when, потому что
@@ -395,6 +411,7 @@ class UpdateDownloadService : Service() {
             ACTION_PAUSE -> handlePause()
             ACTION_RESUME -> handleResume()
             ACTION_CANCEL -> handleCancel()
+            ACTION_CLEAR_READY -> handleClearReady()
             else -> {
                 // START_STICKY перезапустил сервис после kill процесса без intent:
                 // продолжаем сохранённую загрузку (докачка после перезагрузки).
@@ -567,6 +584,35 @@ class UpdateDownloadService : Service() {
         UpdateDownloadLogger.log(this, "service restarted, resuming persisted download: ${persisted.releaseTag}/${persisted.assetName} at ${persisted.progressPercent()}%")
         registerNetworkCallback()
         launchDownload()
+    }
+
+    /**
+     * Сброс устаревшей готовности (файл удалён из папки загрузки вручную).
+     *
+     * Проверяет ФАКТ: если проверенный APK всё ещё на месте — ничего не делаем
+     * (команда пришла от гонки UI/сервиса, трогать готовность нельзя). Если
+     * файла нет — очищаем персистентное состояние и снимаем уведомление
+     * «Готово к установке», иначе пользователь видел бы кнопку для
+     * несуществующего файла и в шторке, и на экране.
+     */
+    private fun handleClearReady() {
+        val persisted = UpdateDownloadStore.load()
+        if (persisted == null || persisted.phase != DownloadState.Phase.READY_TO_INSTALL) {
+            stopSelfIfIdle()
+            return
+        }
+        val apk = persisted.apkPath.takeIf { it.isNotBlank() }?.let(::File)
+            ?: UpdatePaths.apkFile(workDir, persisted.assetName)
+        if (apk.exists()) {
+            // Файл на месте: готовность актуальна, сбрасывать нечего.
+            stopSelfIfIdle()
+            return
+        }
+        UpdateDownloadLogger.log(this, "READY state is stale: verified APK missing (${apk.absolutePath}); clearing state and notification")
+        UpdateDownloadStore.clear()
+        state = DownloadState()
+        NotificationHelper.cancel(NotificationChannelType.UPDATE_DOWNLOAD, this)
+        stopSelfIfIdle()
     }
 
     private fun handlePause() {
@@ -1158,12 +1204,20 @@ class UpdateDownloadService : Service() {
 
     /** Файл скачан и проверен: уведомление «Установить» + broadcast в UI. */
     private fun onVerified(apkFile: File, sha256: String) {
+        // Part-файлы сегментов больше не нужны: APK склеен, хэш совпал, файл
+        // опубликован. Оставлять их — мусор в папке загрузки размером с сам
+        // APK (жалоба владельца: «мержи не удаляются»). Удаляем ТОЛЬКО part и
+        // временный файл склейки; готовый APK и лог не трогаем.
+        clearPartFiles(state.assetName)
         // Сохраняем ФАКТИЧЕСКИЙ путь: рабочая папка может быть резервной
         // приватной (filesDir/updates), установщик обязан брать файл отсюда.
         persistState(
             state.copy(
                 phase = DownloadState.Phase.READY_TO_INSTALL,
                 apkPath = apkFile.absolutePath,
+                // Прогресс сегментов обнуляем: part-файлов больше нет, и эти
+                // байты не должны учитываться ни в прогрессе, ни при докачке.
+                segmentDone = emptyMap(),
             )
         )
         UpdateDownloadLogger.log(this, "READY: ${apkFile.absolutePath} sha256=$sha256 size=${apkFile.length()}")

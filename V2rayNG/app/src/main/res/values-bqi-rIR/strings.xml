@@ -654,6 +654,7 @@
     <string name="update_download_profile_lost_notification">پروفایل خامۉش ڤابی — بۉرگاری ڤایساد. پاره‌ل بۉرگاری ڌیا نیڌا ڤابیڌ: پروفایل نە رۉشن کۊنین ڤو «بۉرگاری» نە بکۉڌین تا دۉماڌۉمه.</string>
     <string name="update_check_profile_lost_toast">پروفایل خامۉشە — سیل ڤەروزرسانی ڤاداریڌ.</string>
     <string name="update_skipped_releases_header">%1$d ڤەرشین جی دس رفته:</string>
+    <string name="update_download_error_file_missing">فایل ڤەروزرسانی بۉرگاری ڌیا بو نی. شایڌ جی پۉشە بۉرگاری پاک ڤابی.</string>
     <string name="title_wl_search">پروفایل پایڌار نە پیڌا کۊن (سیل نومگه سفید)</string>
     <string name="title_sort_by_speed_results">جور کردن دناڤ سرعت</string>
     <string name="title_del_zerospeed_config">پاک کردن کانفیگ‌ل 0 kB/s</string>

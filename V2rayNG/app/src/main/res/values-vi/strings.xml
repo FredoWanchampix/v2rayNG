@@ -652,6 +652,7 @@
     <string name="update_download_profile_lost_notification">Hồ sơ đã tắt — tải xuống đã dừng. Các phần đã tải được giữ lại: bật hồ sơ rồi nhấn Tải xuống để tiếp tục.</string>
     <string name="update_check_profile_lost_toast">Hồ sơ đã tắt — việc kiểm tra cập nhật bị gián đoạn.</string>
     <string name="update_skipped_releases_header">Đã bỏ lỡ %1$d bản phát hành:</string>
+    <string name="update_download_error_file_missing">Tệp cập nhật đã tải không còn. Có thể nó đã bị xóa khỏi thư mục tải xuống.</string>
     <string name="title_wl_search">Tìm cấu hình ổn định (kiểm tra danh sách trắng)</string>
     <string name="title_sort_by_speed_results">Sắp xếp theo tốc độ</string>
     <string name="title_del_zerospeed_config">Xóa cấu hình 0 kB/s</string>

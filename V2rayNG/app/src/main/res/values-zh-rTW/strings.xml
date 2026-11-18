@@ -652,6 +652,7 @@
     <string name="update_download_profile_lost_notification">代理已關閉 — 下載已停止。已下載的分塊會保留：開啟代理後輕觸「下載」即可繼續。</string>
     <string name="update_check_profile_lost_toast">代理已關閉 — 更新檢查已中止。</string>
     <string name="update_skipped_releases_header">錯過了 %1$d 個版本：</string>
+    <string name="update_download_error_file_missing">已下載的更新檔案不存在，可能已從下載資料夾刪除。</string>
     <string name="title_wl_search">尋找穩定設定（白名單檢查）</string>
     <string name="title_sort_by_speed_results">依速度排序</string>
     <string name="title_del_zerospeed_config">刪除 0 kB/s 的設定</string>

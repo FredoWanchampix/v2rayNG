@@ -82,8 +82,9 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
                 AppConfig.MSG_UPDATE_DOWNLOAD_READY -> {
                     // Авто-установку решает ГЛОБАЛЬНЫЙ UpdateInstallReceiver
                     // (живёт всё время работы main-процесса, даже если этот
-                    // экран закрыт). Здесь только обновляем UI-состояние.
-                    _downloadState.value = UpdateDownloadStore.load() ?: _downloadState.value
+                    // экран закрыт). Здесь только обновляем UI-состояние — и
+                    // тоже сверяем с фактом на диске (файл могли успеть удалить).
+                    refreshReadyState()
                 }
 
                 AppConfig.MSG_UPDATE_DOWNLOAD_FAILED -> {
@@ -103,6 +104,36 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
             IntentFilter(AppConfig.BROADCAST_ACTION_ACTIVITY),
             Utils.receiverFlags()
         )
+        // Пользователь мог удалить проверенный APK из папки загрузки вручную
+        // (Files и т.п.), пока клиента не было в памяти. Персистентное состояние
+        // при этом всё ещё READY_TO_INSTALL, и экран показал бы кнопку
+        // «Установить» для НЕСУЩЕСТВУЮЩЕГО файла (баг владельца). Поэтому при
+        // открытии экрана готовность сверяется с ФАКТОМ на диске.
+        refreshReadyState()
+    }
+
+    /**
+     * Сверяет сохранённую готовность с наличием файла. Если файла нет —
+     * просит сервис сбросить состояние и уведомление, и чистит локальный flow.
+     */
+    private fun refreshReadyState() {
+        val persisted = UpdateDownloadStore.load() ?: return
+        if (persisted.phase != DownloadState.Phase.READY_TO_INSTALL) {
+            _downloadState.value = persisted
+            return
+        }
+        val apk = persisted.apkPath.takeIf { it.isNotBlank() }?.let(::File)
+            ?: com.v2ray.ang.util.updater.UpdatePaths.apkFile(
+                com.v2ray.ang.util.updater.UpdatePaths.dir(app), persisted.assetName
+            )
+        if (apk.exists()) {
+            _downloadState.value = persisted
+            return
+        }
+        // Файла нет: готовность устарела. Сбрасываем через сервис (он снимет и
+        // уведомление из шторки), локально показываем пустое состояние.
+        _downloadState.value = DownloadState()
+        UpdateDownloadService.sendCommand(app, UpdateDownloadService.ACTION_CLEAR_READY)
     }
 
     override fun onCleared() {
@@ -282,6 +313,13 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
     fun installDownloaded() {
         val state = UpdateDownloadStore.load() ?: _downloadState.value
         if (state.phase != DownloadState.Phase.READY_TO_INSTALL) return
+        // Гонка: файл могли удалить между отрисовкой кнопки и нажатием.
+        val apkNow = state.apkPath.takeIf { it.isNotBlank() }?.let(::File)
+        if (apkNow != null && !apkNow.exists()) {
+            toastError(R.string.update_download_error_file_missing)
+            refreshReadyState()
+            return
+        }
         // Берём ФАКТИЧЕСКИЙ путь из состояния: рабочая папка может быть
         // резервной приватной (filesDir/updates), если публичный Download
         // недоступен — пересчёт от публичного каталога дал бы несуществующий файл.

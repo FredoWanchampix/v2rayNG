@@ -655,6 +655,7 @@
     <string name="update_download_profile_lost_notification">Profil söndü — yükləmə dayandı. Yüklənmiş hissələr saxlanılır: profili yandırıb «Yüklə» düyməsinə toxunun.</string>
     <string name="update_check_profile_lost_toast">Profil sönülüdür — yenilənmə yoxlaması dayandı.</string>
     <string name="update_skipped_releases_header">Buraxılmış buraxılış sayı: %1$d.</string>
+    <string name="update_download_error_file_missing">Yüklənmiş yenilənmə faylı yoxdur. Ola bilsin, yükləmə qovluğundan silinib.</string>
     <string name="title_wl_search">Sabit profilləri tap (ağ siyahı yoxlaması)</string>
     <string name="title_sort_by_speed_results">Sürətə görə sırala</string>
     <string name="title_del_zerospeed_config">0 kB/s konfiqləri sil</string>
