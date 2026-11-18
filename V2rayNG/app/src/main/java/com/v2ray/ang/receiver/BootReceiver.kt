@@ -8,8 +8,10 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.core.LauncherManager
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SubscriptionUpdater
+import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.service.UpdateDownloadService
 import com.v2ray.ang.util.LogUtil
+import com.v2ray.ang.util.updater.ChangelogCollector
 import com.v2ray.ang.util.updater.DownloadState
 import com.v2ray.ang.util.updater.UpdateDownloadStore
 
@@ -46,6 +48,17 @@ class BootReceiver : BroadcastReceiver() {
                 LogUtil.w(AppConfig.TAG, "BootReceiver: Unhandled action: $action")
                 return
             }
+        }
+
+        // После УСПЕШНОЙ установки обновления приложение перезапускается с
+        // MY_PACKAGE_REPLACED. Персистентное состояние загрузчика осталось
+        // READY_TO_INSTALL и указывало бы на уже установленную версию: экран
+        // предложил бы «Установить» повторно. Если сохранённый тег совпадает по
+        // версии с установленной — состояние больше не нужно, очищаем его.
+        // Сам APK в папке загрузки оставляем: это артефакт пользователя
+        // (поделиться/повторная установка), а не мусор загрузчика.
+        if (action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            clearInstalledUpdateState(context)
         }
 
         // Сначала поднимаем профиль (если включён автозапуск), и ТОЛЬКО ПОТОМ
@@ -91,6 +104,23 @@ class BootReceiver : BroadcastReceiver() {
          *  - PROFILE_LOST — профиль выключен, автозапуск нарушил бы требование
          *    «строго через профиль»; продолжит пользователь кнопкой «Продолжить».
          */
+        /**
+         * Очищает состояние загрузчика, если сохранённая готовость относится к
+         * УЖЕ УСТАНОВЛЕННОЙ версии (сравнивается точечная версия тега релиза с
+         * BuildConfig.VERSION_NAME). Вызывается на MY_PACKAGE_REPLACED.
+         */
+        private fun clearInstalledUpdateState(context: Context) {
+            val state = UpdateDownloadStore.load() ?: return
+            if (state.phase != DownloadState.Phase.READY_TO_INSTALL) return
+            val tagVersion = ChangelogCollector.parseVersion(state.releaseTag)
+            if (tagVersion != BuildConfig.VERSION_NAME) return
+            LogUtil.i(
+                AppConfig.TAG,
+                "BootReceiver: update ${state.releaseTag} is installed; clearing stale download state"
+            )
+            UpdateDownloadStore.clear()
+        }
+
         fun resumeUpdateDownloadIfActive(context: Context) {
             val state = UpdateDownloadStore.load() ?: return
             val resumable = state.phase == DownloadState.Phase.DOWNLOADING ||
