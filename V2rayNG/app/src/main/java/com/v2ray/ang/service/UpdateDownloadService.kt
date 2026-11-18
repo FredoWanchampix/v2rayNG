@@ -36,6 +36,13 @@ import com.v2ray.ang.util.updater.UpdateHttpClient
 import com.v2ray.ang.util.updater.UpdateInstallLauncher
 import com.v2ray.ang.util.updater.UpdatePaths
 import com.v2ray.ang.util.updater.UpdateUrlPolicy
+import java.io.File
+import java.io.IOException
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,16 +53,11 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlin.coroutines.coroutineContext
 import okhttp3.Call
 import okhttp3.OkHttpClient
-import java.io.File
-import java.io.IOException
-import java.util.Collections
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Foreground-сервис встроенного загрузчика обновлений клиента.
@@ -162,6 +164,16 @@ class UpdateDownloadService : Service() {
          * именно поэтому установка из шторки сделана через Activity-intent.
          */
         private const val REQUEST_CODE_INSTALL = 3
+
+        /** Ключ маршрута для прямого канала (без прокси профиля). */
+        private const val KEY_ROUTE_DIRECT = "direct"
+
+        /**
+         * Минимальный интервал между повторными TCP-пробами маршрута (мс).
+         * Совпадает с интервалом наблюдателя профиля: чаще всё равно ничего не
+         * меняется, а каждый resolve() — это реальная попытка соединения.
+         */
+        private const val ROUTE_RECHECK_TTL_MS = 2_000L
 
         const val EXTRA_RELEASE_TAG = "extra_release_tag"
         const val EXTRA_ASSET_NAME = "extra_asset_name"
@@ -284,6 +296,43 @@ class UpdateDownloadService : Service() {
     private var requireProfile = false
 
     /**
+     * Активный HTTP-клиент загрузки. @Volatile, потому что его пересоздаёт
+     * наблюдатель профиля (отдельная корутина), а читают его сегментные корутины
+     * на КАЖДОЙ итерации ретрая.
+     *
+     * Зачем пересоздавать: клиент держит конкретный loopback-прокси запущенного
+     * ядра (адрес+порт+креды). Если пользователь переключил профиль, ядро
+     * поднимает inbound на ДРУГОМ порту (порт может быть динамическим), и старый
+     * клиент навсегда упирался бы в мёртвый порт: все сегменты бесконечно
+     * получали бы Transient-ошибки. Это нарушало бы требование «скачивание не
+     * должно останавливаться» — загрузка зависла бы без видимой причины.
+     *
+     * При ВЫКЛЮЧЕННОМ свитче «через профиль» клиент всегда прямой и не меняется.
+     */
+    @Volatile
+    private var currentClient: OkHttpClient? = null
+
+    /** Сигнатура маршрута, под который собран [currentClient] (для детекции смены). */
+    @Volatile
+    private var clientRouteKey: String = ""
+
+    /**
+     * Сериализует пересборку клиента и троттлит TCP-пробу маршрута.
+     *
+     * [currentClientFresh] вызывается КАЖДЫМ сегментом на КАЖДОЙ итерации ретрая,
+     * то есть до 24 параллельных вызовов. При включённом свитче «через профиль»
+     * каждый вызов делал бы ActiveProfileRoute.resolve() с TCP-пробой loopback-
+     * порта — 24 одновременные пробы на каждом массовом ретрае (например, когда
+     * сеть вернулась после обрыва и все сегменты проснулись разом). Мьютекс
+     * сводит резолв к одному, а [ROUTE_RECHECK_TTL_MS] не даёт долбить порт чаще
+     * необходимого.
+     */
+    private val routeMutex = Mutex()
+
+    @Volatile
+    private var lastRouteResolveMs = 0L
+
+    /**
      * Атомарный флаг «остановка из-за профиля уже выполнена».
      *
      * [abortProfileLost] могут вызвать ДВА независимых источника почти
@@ -393,6 +442,12 @@ class UpdateDownloadService : Service() {
                 // только что перезапущен) — подхватываем сохранённое и докачиваем.
                 state = existing ?: state
                 trustExistingParts = true
+                cancelledFlag.set(false)
+                // Сбрасываем флаг однократности остановки по потере профиля:
+                // иначе НОВАЯ остановка по той же причине была бы проигнорирована
+                // как «дубль» (см. profileAbortDone), и пользователь не получил бы
+                // ни тоста, ни уведомления.
+                profileAbortDone.set(false)
                 bytesWrittenTotal.set(state.downloadedBytes())
                 speedTracker.reset()
                 registerNetworkCallback()
@@ -618,9 +673,6 @@ class UpdateDownloadService : Service() {
         startProgressTicker()
 
         val viaProfile = UpdateDownloadStore.viaActiveProfile()
-        // Маршрут решается ОДНАЖДЫ на старте: тот же резолвер ActiveProfileRoute,
-        // что у проверки обновлений (переиспользование, требование 9 промта).
-        val route = resolveRoute(viaProfile)
         // Требование владельца: если загрузка обязана идти через профиль, а
         // профиль ОТКЛЮЧИЛСЯ во время скачивания — загрузку остановить (с тостом,
         // записью в лог и уведомлением), а не продолжать через мёртвый прокси.
@@ -628,11 +680,16 @@ class UpdateDownloadService : Service() {
         if (viaProfile) {
             startProfileWatch()
         }
-        val client = UpdateHttpClient.build(route)
+        // Клиент собирается через currentClientFresh(): он же решает маршрут тем
+        // же резолвером ActiveProfileRoute, что и проверка обновлений (требование
+        // 9 промта — переиспользование), и дальше пересоздаёт клиент при смене
+        // профиля. Отдельный resolveRoute() здесь дал бы вторую TCP-пробу порта.
+        // Первый вызов собирает клиент и фиксирует ключ маршрута в логе ниже.
+        currentClientFresh()
         UpdateDownloadLogger.log(
             this,
             "download run: ${state.releaseTag}/${state.assetName} segments=${state.requestedSegments} " +
-                "route=${if (viaProfile) "via active profile" else "direct"} proxyPort=${route.proxyPort}"
+                "route=${if (viaProfile) "via active profile ($clientRouteKey)" else "direct"}"
         )
 
         var fullRestarts = 0
@@ -642,13 +699,13 @@ class UpdateDownloadService : Service() {
 
             // 1) Эталонный хэш: маленький запрос SHA256SUMS.txt того же релиза.
             if (state.expectedSha256.isBlank()) {
-                fetchExpectedHash(client)
+                fetchExpectedHash(currentClientFresh())
             }
 
             // 2) Проба: размер объекта и поддержка Range. Повторяется до успеха —
             //    «загрузка не должна останавливаться» даже на старте.
             var probe = UpdateDownloader.probe(
-                client = client,
+                client = currentClientFresh(),
                 url = state.browserDownloadUrl,
                 onCall = { call -> registerCall(call) },
                 onCallDone = { call -> unregisterCall(call) },
@@ -664,7 +721,7 @@ class UpdateDownloadService : Service() {
                 UpdateDownloadLogger.log(this, "probe failed, retrying in 5s")
                 delay(5_000L)
                 probe = UpdateDownloader.probe(
-                client = client,
+                client = currentClientFresh(),
                 url = state.browserDownloadUrl,
                 onCall = { call -> registerCall(call) },
                 onCallDone = { call -> unregisterCall(call) },
@@ -704,9 +761,9 @@ class UpdateDownloadService : Service() {
             )
 
             val needFullRestart = if (probe.rangesSupported) {
-                runSegmented(client, probe)
+                runSegmented(probe)
             } else {
-                runSingleStream(client)
+                runSingleStream()
                 false
             }
             if (!needFullRestart) return
@@ -768,7 +825,7 @@ class UpdateDownloadService : Service() {
      * @return true, если объект на сервере сменился и нужен ПОЛНЫЙ рестарт
      *   загрузки (все сегменты); false — нормальное завершение/отмена/пауза/ошибка.
      */
-    private suspend fun runSegmented(client: OkHttpClient, probe: UpdateDownloader.Probe): Boolean {
+    private suspend fun runSegmented(probe: UpdateDownloader.Probe): Boolean {
         val plan = SegmentPlan.plan(probe.totalBytes, state.requestedSegments)
         if (plan.isEmpty() || !SegmentPlan.isContiguous(plan, probe.totalBytes)) {
             failDownload("invalid segment plan for total=${probe.totalBytes}")
@@ -800,7 +857,7 @@ class UpdateDownloadService : Service() {
         val results = coroutineScope {
             plan.map { segment ->
                 async(Dispatchers.IO) {
-                    downloadSegmentLoop(client, segment)
+                    downloadSegmentLoop(segment)
                 }
             }.awaitAll()
         }
@@ -824,7 +881,7 @@ class UpdateDownloadService : Service() {
      * ретраятся БЕЗ лимита с паузами («даже на 2G/3G загрузка должна хоть
      * как-то идти»), отсутствие сети — ожидание без отмены задачи.
      */
-    private suspend fun downloadSegmentLoop(client: OkHttpClient, segment: SegmentPlan.Segment): Boolean {
+    private suspend fun downloadSegmentLoop(segment: SegmentPlan.Segment): Boolean {
         val partFile = UpdatePaths.partFile(workDir, state.assetName, segment.index)
         var attempt = 0
         while (coroutineContext.isActive) {
@@ -861,7 +918,10 @@ class UpdateDownloadService : Service() {
             val outcome = try {
                 attempt++
                 UpdateDownloader.downloadSegment(
-                    client = client,
+                    // Клиент берётся заново на КАЖДОЙ итерации ретрая: если
+                    // пользователь переключил профиль, loopback-порт ядра сменился
+                    // и старый клиент упирался бы в мёртвый порт вечно.
+                    client = currentClientFresh(),
                     url = state.browserDownloadUrl,
                     partFile = partFile,
                     segmentStart = segment.start,
@@ -874,6 +934,12 @@ class UpdateDownloadService : Service() {
             } catch (e: CancellationException) {
                 // Пауза/отмена прервали чтение потока — выходим, part сохранён.
                 return false
+            } catch (e: ProfileRequiredException) {
+                // Профиль обязателен, но пропал (переключили/выключили) — это НЕ
+                // переходящая сетевая ошибка: ретраить бессмысленно, иначе сегмент
+                // крутился бы вечно. Пробрасываем наверх, там launchDownload
+                // остановит загрузку через abortProfileLost() (фаза PROFILE_LOST).
+                throw e
             } catch (e: Exception) {
                 UpdateDownloader.SegmentOutcome.Transient("${e.javaClass.simpleName}: ${e.message}")
             } finally {
@@ -943,7 +1009,7 @@ class UpdateDownloadService : Service() {
      * Фолбэк для серверов без поддержки Range (не GitHub): один поток, без
      * докачки (сервер физически не может отдать часть объекта). Ретраи те же.
      */
-    private suspend fun runSingleStream(client: OkHttpClient) {
+    private suspend fun runSingleStream() {
         UpdateDownloadLogger.log(this, "server has no Range support: single-stream download (resume impossible)")
         val target = UpdatePaths.mergeTempFile(workDir, state.assetName)
         while (coroutineContext.isActive) {
@@ -967,7 +1033,7 @@ class UpdateDownloadService : Service() {
                 bytesWrittenTotal.set(0L)
                 speedTracker.reset()
                 UpdateDownloader.downloadWhole(
-                    client = client,
+                    client = currentClientFresh(),
                     url = state.browserDownloadUrl,
                     targetFile = target,
                     onBytes = onBytes,
@@ -976,6 +1042,10 @@ class UpdateDownloadService : Service() {
                 )
             } catch (e: CancellationException) {
                 return
+            } catch (e: ProfileRequiredException) {
+                // См. downloadSegmentLoop: потеря обязательного профиля — не
+                // сетевой сбой, пробрасываем для остановки загрузки.
+                throw e
             } catch (e: Exception) {
                 UpdateDownloader.SegmentOutcome.Transient("${e.javaClass.simpleName}: ${e.message}")
             }
@@ -1524,13 +1594,17 @@ class UpdateDownloadService : Service() {
      * сокет обошёл бы профиль, приложение исключено из собственного туннеля).
      */
     private suspend fun resolveRoute(viaProfile: Boolean): UpdateHttpClient.RouteConfig {
-        val route = ActiveProfileRoute.resolve()
-        ActiveProfileRoute.log("Update download", route)
         if (!viaProfile) {
-            // Прямой канал. Но если профиль поднял loopback-прокси, всё равно
-            // идём напрямую: свитч ВЫКЛ = «скачивание должно идти напрямую».
+            // Прямой канал: свитч ВЫКЛ = «скачивание должно идти напрямую», даже
+            // если профиль поднял loopback-прокси. Возвращаем СРАЗУ, до
+            // ActiveProfileRoute.resolve(): та делает TCP-пробу порта, а
+            // resolveRoute теперь вызывается на КАЖДОМ ретрае каждого сегмента —
+            // долбить пробой loopback-порта 24 параллельными сегментами ради
+            // значения, которое мы всё равно не используем, недопустимо.
             return UpdateHttpClient.RouteConfig()
         }
+        val route = ActiveProfileRoute.resolve()
+        ActiveProfileRoute.log("Update download", route)
         return when (route.mode) {
             ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY -> UpdateHttpClient.RouteConfig(
                 proxyHost = route.httpHost,
@@ -1602,6 +1676,75 @@ class UpdateDownloadService : Service() {
         networkCallback = null
         runCatching {
             (getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).unregisterNetworkCallback(cb)
+        }
+    }
+
+    /**
+     * Ключ маршрута для детекции смены loopback-прокси. Включает адрес, порт и
+     * наличие кредов (сами креды не логируем): при смене профиля ядро поднимает
+     * inbound на другом порту, и ключ меняется.
+     */
+    private fun routeKey(route: UpdateHttpClient.RouteConfig): String =
+        if (route.proxyPort == 0) {
+            KEY_ROUTE_DIRECT
+        } else {
+            "${route.proxyHost}:${route.proxyPort}:${!route.proxyUsername.isNullOrBlank()}"
+        }
+
+    /**
+     * Возвращает клиент, пересозданный под АКТУАЛЬНЫЙ маршрут.
+     *
+     * Вызывается сегментными корутинами на каждой итерации: если профиль
+     * переключили и loopback-порт сменился, следующий ретрай пойдёт уже через
+     * новый прокси, а не в мёртвый порт. При выключенном свитче маршрут всегда
+     * прямой, ключ стабилен и клиент пересоздаётся ровно один раз.
+     *
+     * @throws ProfileRequiredException если профиль обязателен, но сейчас не
+     *   пригоден (выключен / без loopback-прокси) — загрузку останавливает
+     *   [launchDownload].
+     */
+    private suspend fun currentClientFresh(): OkHttpClient {
+        val viaProfile = UpdateDownloadStore.viaActiveProfile()
+
+        // Свитч «через профиль» выключен (или только что выключен): маршрут всегда
+        // прямой, ключ стабилен — возвращаем готовый клиент БЕЗ TCP-пробы и БЕЗ
+        // мьютекса. Это самый частый путь (вызывается на каждом ретрае каждого
+        // сегмента), поэтому он обязан быть максимально дешёвым.
+        if (!viaProfile) {
+            val existing = currentClient
+            if (existing != null && clientRouteKey == KEY_ROUTE_DIRECT) return existing
+            clientRouteKey = KEY_ROUTE_DIRECT
+            return UpdateHttpClient.build(UpdateHttpClient.RouteConfig())
+                .also {
+                    currentClient = it
+                    lastRouteResolveMs = System.currentTimeMillis()
+                }
+        }
+
+        // Через профиль: сериализуем резолв, чтобы 24 сегмента не долбили
+        // loopback-порт одновременно, и троттлим частоту проб через TTL.
+        routeMutex.withLock {
+            val existing = currentClient
+            val now = System.currentTimeMillis()
+            if (existing != null && clientRouteKey != KEY_ROUTE_DIRECT &&
+                now - lastRouteResolveMs < ROUTE_RECHECK_TTL_MS
+            ) {
+                return existing
+            }
+
+            val route = resolveRoute(viaProfile = true)
+            lastRouteResolveMs = System.currentTimeMillis()
+            val key = routeKey(route)
+            if (existing != null && key == clientRouteKey) return existing
+            // this@UpdateDownloadService: внутри withLock голый `this` — это
+            // Mutex (receiver расширения), а логгер требует Context. Та же
+            // ловушка, что с withContext, — квалифицируем явно.
+            UpdateDownloadLogger.log(
+                this@UpdateDownloadService,
+                "route changed ($clientRouteKey -> $key), rebuilding HTTP client"
+            )
+            clientRouteKey = key
+            return UpdateHttpClient.build(route).also { currentClient = it }
         }
     }
 
