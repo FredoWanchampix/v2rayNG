@@ -360,24 +360,27 @@ object UpdateCheckerManager {
                 .orEmpty()
             if (releases.isEmpty()) break
 
-            var sawNotNewer = false
-            for (release in releases) {
-                if (release.draft) continue
-                val newer = ChangelogCollector.isNewer(
-                    release = release,
-                    currentVersion = currentVersion,
-                    gitCommit = BuildConfig.GIT_COMMIT,
-                    includePreRelease = includePreRelease,
-                )
-                if (newer) {
-                    collected += release
-                } else {
-                    sawNotNewer = true
-                }
-            }
-            // Страница целиком старше/равна установленной версии: дальше только
-            // старее, обход бессмысленен.
-            if (sawNotNewer) break
+            // Правило остановки: прерываем обход ТОЛЬКО когда встретили релиз
+            // нашего канала СТРОГО старее установленной версии (список идёт от
+            // нового к старому, значит дальше только старее).
+            //
+            // Почему нельзя останавливаться на «не новее»:
+            //  - релиз чужого канала (prerelease при стабильном канале) не
+            //    новее ДЛЯ НАС, но не означает конец истории нашего канала;
+            //  - релиз ТОЙ ЖЕ версии (cmp == 0) может оказаться новее по
+            //    commitish (бета одной версии), а более ранние беты той же
+            //    версии стоят в списке ПОЗЖЕ стабильной — остановка на ней
+            //    потеряла бы их.
+            // Чистая логика отбора и правила остановки — в ChangelogCollector
+            // (доказана JVM-тестом), менеджер лишь гоняет страницы.
+            val decision = ChangelogCollector.processPage(
+                page = releases,
+                currentVersion = currentVersion,
+                gitCommit = BuildConfig.GIT_COMMIT,
+                includePreRelease = includePreRelease,
+            )
+            collected += decision.collected
+            if (decision.stopAfterPage) break
             // Неполная страница — список кончился.
             if (releases.size < RELEASES_PAGE_SIZE) break
         }

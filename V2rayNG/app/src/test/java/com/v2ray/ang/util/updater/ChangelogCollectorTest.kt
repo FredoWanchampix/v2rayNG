@@ -123,6 +123,62 @@ class ChangelogCollectorTest {
         assertEquals("тело", ChangelogCollector.buildNotes(emptyList(), fallback = "тело"))
     }
 
+    // --- processPage: правило остановки пагинации ---
+
+    @Test
+    fun `page stop does not trigger on foreign-channel prerelease`() {
+        // Стабильный канал: prerelease чужого канала «не новее ДЛЯ НАС», но НЕ
+        // означает конец истории стабильного канала — обход обязан продолжиться.
+        val page = listOf(
+            rel("v3.0.0-beta", "2026-03-01T00:00:00Z", prerelease = true),
+            rel("v2.9.0", "2026-02-20T00:00:00Z"),
+            rel("v2.8.0", "2026-02-10T00:00:00Z"),
+        )
+        val decision = ChangelogCollector.processPage(page, "2.4.2", "", includePreRelease = false)
+        assertEquals(listOf("v2.9.0", "v2.8.0"), decision.collected.map { it.tagName })
+        assertFalse(decision.stopAfterPage, "prerelease чужого канала не должен останавливать обход")
+    }
+
+    @Test
+    fun `page stop does not trigger on same-version releases`() {
+        // Беты ОДНОЙ версии стоят в списке ПОЗЖЕ стабильной той же версии;
+        // остановка на cmp==0 потеряла бы их. Обход продолжается.
+        val page = listOf(
+            rel("v2.5.0", "2026-03-01T00:00:00Z"),
+            rel("v2.4.2-beta.2", "2026-02-20T00:00:00Z", prerelease = true, commitish = "bbb"),
+            rel("v2.4.2-beta.1", "2026-02-10T00:00:00Z", prerelease = true, commitish = "ccc"),
+        )
+        val decision = ChangelogCollector.processPage(page, "2.4.2", "aaa", includePreRelease = true)
+        assertEquals(
+            listOf("v2.5.0", "v2.4.2-beta.2", "v2.4.2-beta.1"),
+            decision.collected.map { it.tagName },
+        )
+        assertFalse(decision.stopAfterPage, "релизы той же версии не должны останавливать обход")
+    }
+
+    @Test
+    fun `page stop triggers on strictly older release of our channel`() {
+        val page = listOf(
+            rel("v2.6.0", "2026-03-01T00:00:00Z"),
+            rel("v2.5.0", "2026-02-20T00:00:00Z"),
+            rel("v2.4.1", "2026-01-05T00:00:00Z"), // строго старее -> стоп
+        )
+        val decision = ChangelogCollector.processPage(page, "2.4.2", "", includePreRelease = false)
+        assertEquals(listOf("v2.6.0", "v2.5.0"), decision.collected.map { it.tagName })
+        assertTrue(decision.stopAfterPage, "строго старший релиз нашего канала останавливает обход")
+    }
+
+    @Test
+    fun `drafts are ignored and do not stop pagination`() {
+        val page = listOf(
+            rel("v9.9.9-draft", "2026-09-09T00:00:00Z", draft = true),
+            rel("v2.5.0", "2026-02-20T00:00:00Z"),
+        )
+        val decision = ChangelogCollector.processPage(page, "2.4.2", "", includePreRelease = false)
+        assertEquals(listOf("v2.5.0"), decision.collected.map { it.tagName })
+        assertFalse(decision.stopAfterPage)
+    }
+
     // --- latestOfChannel ---
 
     @Test

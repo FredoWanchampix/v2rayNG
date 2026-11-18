@@ -95,6 +95,58 @@ object ChangelogCollector {
             .sortedBy { it.publishedAt }
 
     /**
+     * Решение по одной странице списка релизов для пагинации истории.
+     *
+     * @param collected релизы страницы, которые попали в историю (по правилу
+     *   канала и новизны).
+     * @param stopAfterPage true, если обход страниц нужно прекратить: встретился
+     *   релиз НАШЕГО канала СТРОГО старее установленной версии (список идёт от
+     *   нового к старому, значит дальше только старее).
+     *
+     * Правило остановки намеренно НЕ срабатывает на:
+     *  - релизах чужого канала (prerelease при стабильном канале): они «не
+     *    новее для нас», но не означают конец истории нашего канала;
+     *  - релизах ТОЙ ЖЕ версии (cmp == 0): бета одной версии может оказаться
+     *    новее по commitish, а более ранние беты той же версии стоят в списке
+     *    ПОЗЖЕ стабильной — остановка на ней потеряла бы их.
+     * Оба случая доказаны тестами [ChangelogCollectorTest].
+     */
+    data class PageDecision(
+        val collected: List<GitHubRelease>,
+        val stopAfterPage: Boolean,
+    )
+
+    /**
+     * Обрабатывает одну страницу списка релизов (см. [PageDecision]).
+     * Вызывается менеджером проверки обновлений на каждой странице пагинации.
+     */
+    fun processPage(
+        page: List<GitHubRelease>,
+        currentVersion: String,
+        gitCommit: String,
+        includePreRelease: Boolean,
+    ): PageDecision {
+        val collected = ArrayList<GitHubRelease>()
+        var sawOlder = false
+        for (release in page) {
+            if (release.draft) continue
+            if (!includePreRelease && release.prerelease) continue
+            when {
+                compareVersions(parseVersion(release.tagName), currentVersion) > 0 ->
+                    collected += release
+
+                compareVersions(parseVersion(release.tagName), currentVersion) == 0 ->
+                    if (isNewer(release, currentVersion, gitCommit, includePreRelease)) {
+                        collected += release
+                    }
+
+                else -> sawOlder = true
+            }
+        }
+        return PageDecision(collected = collected, stopAfterPage = sawOlder)
+    }
+
+    /**
      * Склеивает changelog пропущенных релизов в один текст для диалога.
      *
      * Формат блока: тег, дата публикации и тело релиза; блоки разделены пустой
