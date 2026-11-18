@@ -482,6 +482,12 @@ class UpdateDownloadService : Service() {
                 if (apk.exists()) {
                     showReadyNotification(apk)
                     broadcastReady(apk.absolutePath)
+                    // Сервис свою работу сделал: файл проверен и готов. Без
+                    // остановки FGS висел бы вечно с не-ongoing уведомлением
+                    // «Готово» (утечка сервиса). DETACH сохраняет уведомление
+                    // с кнопкой «Установить» в шторке после смерти сервиса.
+                    stopForeground(STOP_FOREGROUND_DETACH)
+                    stopSelf()
                     return
                 }
                 // Файл удалён вручную: готовность устарела — качаем заново тем
@@ -559,6 +565,9 @@ class UpdateDownloadService : Service() {
                 ?: UpdatePaths.apkFile(workDir, persisted.assetName)
             if (apk.exists()) {
                 showReadyNotification(apk)
+                // См. handleStart: сервис не нужен, уведомление остаётся.
+                stopForeground(STOP_FOREGROUND_DETACH)
+                stopSelf()
                 return
             }
             // APK действительно удалён: снимаем устаревшую готовность вместе с
