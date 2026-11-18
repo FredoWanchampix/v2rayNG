@@ -268,5 +268,10 @@ dependencies {
     testImplementation(libs.json)
     testImplementation(libs.mockito.core)
     testImplementation(libs.mockito.kotlin)
+    // MockWebServer 5.x для JVM-тестов встроенного загрузчика обновлений:
+    // докачка после обрыва (Range), смена ETag -> рестарт, 416, retry на 503,
+    // редирект за пределы allowlist. Только testImplementation — в APK не
+    // попадает, лицензия Apache-2.0 (та же, что у okhttp).
+    testImplementation(libs.mockwebserver3)
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 }

@@ -8,7 +8,10 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.core.LauncherManager
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SubscriptionUpdater
+import com.v2ray.ang.service.UpdateDownloadService
 import com.v2ray.ang.util.LogUtil
+import com.v2ray.ang.util.updater.DownloadState
+import com.v2ray.ang.util.updater.UpdateDownloadStore
 
 class BootReceiver : BroadcastReceiver() {
     /**
@@ -45,6 +48,13 @@ class BootReceiver : BroadcastReceiver() {
             }
         }
 
+        // Докачка обновления не зависит от автозапуска VPN: возобновляем её
+        // всегда после разблокированной загрузки (не из MY_PACKAGE_REPLACED —
+        // там файлы приложения и так на месте, а сервис поднимет START_STICKY).
+        if (action != Intent.ACTION_MY_PACKAGE_REPLACED) {
+            resumeUpdateDownloadIfActive(context)
+        }
+
         if (!MmkvManager.decodeStartOnBoot()) {
             LogUtil.i(AppConfig.TAG, "BootReceiver: Auto-start on boot is disabled")
             return
@@ -58,5 +68,39 @@ class BootReceiver : BroadcastReceiver() {
         LogUtil.i(AppConfig.TAG, "BootReceiver: Starting V2Ray service")
         LauncherManager.startService(context)
         SubscriptionUpdater.sync(context)
+    }
+
+    companion object {
+        /**
+         * Возобновляет докачку обновления после BOOT_COMPLETED (требование
+         * владельца: докачка должна переживать перезагрузку устройства).
+         *
+         * Вызывается ДО проверки auto-start VPN: загрузка обновления не зависит
+         * от того, включён ли автозапуск профиля. Возобновляются только АКТИВНЫЕ
+         * загрузки (качалась/ждала сеть); PAUSED остаётся паузой — её продолжает
+         * сам пользователь кнопкой «Продолжить»; CANCELLED тоже не трогаем.
+         */
+        fun resumeUpdateDownloadIfActive(context: Context) {
+            val state = UpdateDownloadStore.load() ?: return
+            val resumable = state.phase == DownloadState.Phase.DOWNLOADING ||
+                state.phase == DownloadState.Phase.WAITING_NETWORK ||
+                state.phase == DownloadState.Phase.PROBING ||
+                state.phase == DownloadState.Phase.MERGING
+            if (!resumable || state.browserDownloadUrl.isBlank()) return
+
+            LogUtil.i(
+                AppConfig.TAG,
+                "BootReceiver: resuming update download ${state.releaseTag}/${state.assetName} at ${state.progressPercent()}%"
+            )
+            UpdateDownloadService.startDownload(
+                context = context,
+                releaseTag = state.releaseTag,
+                assetName = state.assetName,
+                downloadUrl = state.browserDownloadUrl,
+                checksumsUrl = state.checksumsUrl.ifBlank { null },
+                expectedSha256 = state.expectedSha256.ifBlank { null },
+                declaredSize = state.declaredSize,
+            )
+        }
     }
 }

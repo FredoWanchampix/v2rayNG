@@ -606,4 +606,50 @@
     <string name="sub_info_open_page">واز کردن صفحه اطلاعات اشتراک</string>
     <string name="sub_info_unlimited">بی‌حد</string>
 
+
+    <!-- Встроенный загрузчик обновлений (util/updater) -->
+    <string name="notification_channel_update_download">بۉرگاری ڤەروزرسانی</string>
+    <string name="update_use_builtin_downloader_title">بۉرگاری ڤا بۉرگار دۉرونی</string>
+    <string name="update_use_builtin_downloader_summary">ڤەروزرسانی نە دۉروڤ کاریار بۉرگاری کۊنین (چەڌنخی، ڤا دۉماڌۉمۉڤ، ڤا سیل ئیتی جمگ) جی ڤاز کردن مروۊرگر. کە خامۉشە، «بۉرگاری» پیوڤند نە د مروۊرگر ڤاز میڌا.</string>
+    <string name="update_download_segments_title">خیتەل بۉرگاری</string>
+    <string name="update_download_segments_summary">خیتەل مووازی سی هر بۉرگاری (1–%1$d). خیتەل بیشترین میڌونه پیوڤند پایڌار نە تیزتەر کۊنه ڤلی د پیوڤند زعیف بڌتر.</string>
+    <string name="update_download_action_start">بۉرگاری</string>
+    <string name="update_download_action_pause">ڤاڌاریڌن</string>
+    <string name="update_download_action_resume">ڌۉماڌن</string>
+    <string name="update_download_action_retry">سی تازه کوشش</string>
+    <string name="update_download_action_install">نسڌ</string>
+    <string name="update_download_notification_title">د هال بۉرگاری ڤەروزرسانی</string>
+    <string name="update_download_preparing">د آموڌه کردن بۉرگاری…</string>
+    <string name="update_download_progress_line">%1$d%% · %2$s</string>
+    <string name="update_download_paused_line">د %1$d%% ڤاڌاریڌ. داتا بۉرگاری ڌۉمه سی دۉماڌۉمۉڤ نیڌا ڤابیه.</string>
+    <string name="update_download_waiting_network_line">د چاڤەڕی شبکه… %1$d%% ئنجوم ڤابی.</string>
+    <string name="update_download_merging">د هال چفت کردن پاره‌ل ڤو سیل کردن جمگ…</string>
+    <string name="update_download_ready_title">ڤەروزرسانی آموڌه سی نسڌ</string>
+    <string name="update_download_ready_text">سیل ڌیا: %1$s. نسڌ نە بکۉڌین.</string>
+    <string name="update_download_ready_toast">ڤەروزرسانی بۉرگاری ڤو سیل ڤابی. میڌین نسڌش کۊنین.</string>
+    <string name="update_download_started">بۉرگاری د پستو زمیڌه شۉرو ڤابی.</string>
+    <string name="update_download_cancelled">بۉرگاری لغو ڤابی. پاره‌ل بۉرگاری ڌیا نیڌا ڤابیڌ.</string>
+    <string name="update_download_failed_title">بۉرگاری ڤەروزرسانی نشکڌ خۉرد</string>
+    <string name="update_download_eta">%1$s موڌه</string>
+    <string name="update_download_eta_hms">%1$ds %2$dd %3$ds</string>
+    <string name="update_download_eta_ms">%1$dd %2$ds</string>
+    <string name="update_download_eta_s">%1$ds</string>
+    <string name="update_download_phase_probing">د سیل کردن ئنڌازه فایلی ڤو پشیڤۉنی دۉماڌۉمۉڤ…</string>
+    <string name="update_download_phase_downloading">د هال بۉرگاری %1$d%% · %2$s</string>
+    <string name="update_download_phase_paused">ڤاڌاریڌ د %1$d%%</string>
+    <string name="update_download_phase_waiting_network">د چاڤەڕی شبکه…</string>
+    <string name="update_download_phase_merging">د هال چفت کردن پاره‌ل ڤو سیل جمگ…</string>
+    <string name="update_download_phase_verifying">د سیل کردن جمگ…</string>
+    <string name="update_download_phase_failed">نشکڌ خۉرد: %1$s</string>
+    <string name="update_download_error_generic">د هال بۉرگاری یە خەتا چاڤەڕی نڌیا ڕۉڌ دا.</string>
+    <string name="update_download_error_storage">نیڌه تۉڌه د پۉشە بۉرگاری بنڤیسه. مجۉز حافیزه نە سیل کۊنین.</string>
+    <string name="update_download_error_no_checksum">سی ئی ڤەرشین جمگ نیڌە؛ جی نسڌ فایلی سیل نڌیا خوداری میڌه.</string>
+    <string name="update_download_error_checksum">جمگ یکسان نڌار: فایلی شایڌ خراڤ بۉ. هیشی نسڌ نڌار; سی تازه بکۉشین.</string>
+    <string name="update_download_error_merge">چفت کردن نشکڌ خۉرد: %1$s</string>
+    <string name="update_download_error_http">خەتا بۉرگاری: %1$s</string>
+    <string name="update_download_error_size_mismatch">ئئنڌازه یکسان نڌار: %1$d بایت چاڤەڕی ڤابی ڤلی سرڤر %2$d گۉڌه.</string>
+    <string name="update_download_error_object_changed">فایل سرڤر د هال بۉرگاری عۉڤض ڌار. بۉرگاری سی تازه شۉرو ڤابی؛ سی تازه بکۉشین.</string>
+    <string name="update_download_error_no_asset">فایلی بۉرگاری سی ئی دسگا نڌیارڌا.</string>
+    <string name="update_via_active_proxy_title">سیل ڤو بۉرگاری ڤا پروفایل فعال</string>
+    <string name="update_via_active_proxy_summary">کە رۉشنە، هەم سیل ڤەروزرسانی هەم بۉرگار دۉرونی دناڤ پروفایل د هال ڕۉڌ شیڌە. کە خامۉشە، راستا شیڌە.</string>
 </resources>

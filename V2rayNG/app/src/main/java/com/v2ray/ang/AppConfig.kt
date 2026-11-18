@@ -81,6 +81,21 @@ object AppConfig {
     const val PREF_IS_BOOTED = "pref_is_booted"
     const val PREF_CHECK_UPDATE_PRE_RELEASE = "pref_check_update_pre_release"
     const val PREF_CHECK_UPDATE_VIA_ACTIVE_PROXY = "pref_check_update_via_active_proxy"
+
+    /**
+     * «Скачивать через встроенный загрузчик» на экране проверки обновлений.
+     * ВЫКЛ (default) — прежнее поведение: «Скачать» открывает браузер внешним
+     * intent. ВКЛ — загрузка APK идёт внутри клиента: многопоточная сегментная
+     * докачка, прогресс в уведомлении, проверка SHA-256 и установка.
+     */
+    const val PREF_UPDATE_USE_BUILTIN_DOWNLOADER = "pref_update_use_builtin_downloader"
+
+    /**
+     * Число параллельных потоков (сегментов) встроенного загрузчика обновлений.
+     * Пользовательская настройка, диапазон 1..[com.v2ray.ang.util.updater.SegmentPlan.MAX_SEGMENTS] (24).
+     * Хранится строкой (паттерн числовых настроек форка), дефолт 8.
+     */
+    const val PREF_UPDATE_DOWNLOAD_SEGMENTS = "pref_update_download_segments"
     /**
      * PID процесса :daemon, в котором реально работает ядро (или fptn-client).
      * Пишется из :daemon при старте/остановке и читается из ЛЮБОГО процесса
@@ -236,6 +251,14 @@ object AppConfig {
 
     const val MSG_SUB_UPDATE_START = 8
     const val MSG_SUB_UPDATE_CANCEL = 81
+
+    // Сообщения встроенного загрузчика обновлений (:tasks сервис -> UI).
+    /** Прогресс загрузки: content = JSON [com.v2ray.ang.util.updater.DownloadState]. */
+    const val MSG_UPDATE_DOWNLOAD_PROGRESS = 90
+    /** Загрузка завершена и проверена: content = путь к готовому APK. UI решает, ставить ли сейчас. */
+    const val MSG_UPDATE_DOWNLOAD_READY = 91
+    /** Ошибка/отмена: content = текст причины. */
+    const val MSG_UPDATE_DOWNLOAD_FAILED = 92
 
     /** Notification channel IDs and names. */
     // Use a new ID because Android does not let an app raise an existing channel's importance.

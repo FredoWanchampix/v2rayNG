@@ -604,4 +604,50 @@
     <string name="sub_info_open_page">打开订阅信息页面</string>
     <string name="sub_info_unlimited">无限制</string>
 
+
+    <!-- Встроенный загрузчик обновлений (util/updater) -->
+    <string name="notification_channel_update_download">更新下载</string>
+    <string name="update_use_builtin_downloader_title">使用内置下载器下载</string>
+    <string name="update_use_builtin_downloader_summary">在应用内下载更新（多线程、可续传、校验和验证），而不是打开浏览器。关闭时，“下载”会在浏览器中打开链接。</string>
+    <string name="update_download_segments_title">下载线程数</string>
+    <string name="update_download_segments_summary">单次下载的并行线程数（1–%1$d）。更多线程可加快稳定连接，但弱网下可能适得其反。</string>
+    <string name="update_download_action_start">下载</string>
+    <string name="update_download_action_pause">暂停</string>
+    <string name="update_download_action_resume">继续</string>
+    <string name="update_download_action_retry">重试</string>
+    <string name="update_download_action_install">安装</string>
+    <string name="update_download_notification_title">正在下载更新</string>
+    <string name="update_download_preparing">正在准备下载…</string>
+    <string name="update_download_progress_line">%1$d%% · %2$s</string>
+    <string name="update_download_paused_line">已暂停于 %1$d%%。已下载的数据会保留以便继续。</string>
+    <string name="update_download_waiting_network_line">等待网络… 已完成 %1$d%%。</string>
+    <string name="update_download_merging">正在合并分块并校验…</string>
+    <string name="update_download_ready_title">更新已就绪，可安装</string>
+    <string name="update_download_ready_text">已校验：%1$s。点按安装。</string>
+    <string name="update_download_ready_toast">更新已下载并校验完成，可以安装。</string>
+    <string name="update_download_started">下载已在后台开始。</string>
+    <string name="update_download_cancelled">下载已取消。已下载的部分会保留。</string>
+    <string name="update_download_failed_title">更新下载失败</string>
+    <string name="update_download_eta">剩余 %1$s</string>
+    <string name="update_download_eta_hms">%1$d时%2$d分%3$d秒</string>
+    <string name="update_download_eta_ms">%1$d分%2$d秒</string>
+    <string name="update_download_eta_s">%1$d秒</string>
+    <string name="update_download_phase_probing">正在检查文件大小与续传支持…</string>
+    <string name="update_download_phase_downloading">正在下载 %1$d%% · %2$s</string>
+    <string name="update_download_phase_paused">已暂停于 %1$d%%</string>
+    <string name="update_download_phase_waiting_network">等待网络…</string>
+    <string name="update_download_phase_merging">正在合并分块并校验…</string>
+    <string name="update_download_phase_verifying">正在校验…</string>
+    <string name="update_download_phase_failed">失败：%1$s</string>
+    <string name="update_download_error_generic">下载过程中发生意外错误。</string>
+    <string name="update_download_error_storage">无法写入下载文件夹。请检查存储权限。</string>
+    <string name="update_download_error_no_checksum">此版本没有校验和清单；拒绝安装未经验证的文件。</string>
+    <string name="update_download_error_checksum">校验和不匹配：文件可能已损坏。未安装任何内容；请重试。</string>
+    <string name="update_download_error_merge">合并失败：%1$s</string>
+    <string name="update_download_error_http">下载错误：%1$s</string>
+    <string name="update_download_error_size_mismatch">大小不匹配：预期 %1$d 字节，但服务器报告 %2$d。</string>
+    <string name="update_download_error_object_changed">下载过程中服务器上的文件发生了变化。下载已重新开始，请重试。</string>
+    <string name="update_download_error_no_asset">未找到适合此设备的可下载文件。</string>
+    <string name="update_via_active_proxy_title">通过活动配置文件检查并下载</string>
+    <string name="update_via_active_proxy_summary">开启时，检查更新和内置下载都严格通过正在运行的配置文件进行；关闭时则直连。</string>
 </resources>

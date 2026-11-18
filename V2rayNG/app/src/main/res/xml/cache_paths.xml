@@ -3,4 +3,17 @@
     <cache-path
         name="cache"
         path="/" />
+    <!-- Встроенный загрузчик обновлений хранит APK в публичном каталоге
+         Download/<app_name>/ (см. util/updater/UpdatePaths). Без этой записи
+         FileProvider.getUriForFile бросает IllegalArgumentException, и кнопка
+         «Установить» не смогла бы передать URI системному установщику. -->
+    <external-path
+        name="external_downloads"
+        path="Download/" />
+    <!-- Резервный путь: если публичный Download недоступен (отозвано
+         разрешение на API≤29 / ограничение OEM), загрузчик уходит в приватный
+         filesDir/updates — он тоже отдаётся установщику через FileProvider. -->
+    <files-path
+        name="private_updates"
+        path="updates/" />
 </paths>

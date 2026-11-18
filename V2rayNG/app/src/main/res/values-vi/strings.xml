@@ -604,4 +604,50 @@
     <string name="sub_info_open_page">Mở trang thông tin đăng ký</string>
     <string name="sub_info_unlimited">Không giới hạn</string>
 
+
+    <!-- Встроенный загрузчик обновлений (util/updater) -->
+    <string name="notification_channel_update_download">Tải bản cập nhật</string>
+    <string name="update_use_builtin_downloader_title">Tải bằng trình tải tích hợp</string>
+    <string name="update_use_builtin_downloader_summary">Tải bản cập nhật ngay trong ứng dụng (đa luồng, tải tiếp được, kiểm tra tổng) thay vì mở trình duyệt. Khi tắt, “Tải xuống” mở liên kết trong trình duyệt.</string>
+    <string name="update_download_segments_title">Số luồng tải</string>
+    <string name="update_download_segments_summary">Số luồng song song cho một lần tải (1–%1$d). Nhiều luồng hơn có thể tăng tốc khi mạng ổn định nhưng lại bất lợi khi mạng yếu.</string>
+    <string name="update_download_action_start">Tải xuống</string>
+    <string name="update_download_action_pause">Tạm dừng</string>
+    <string name="update_download_action_resume">Tiếp tục</string>
+    <string name="update_download_action_retry">Thử lại</string>
+    <string name="update_download_action_install">Cài đặt</string>
+    <string name="update_download_notification_title">Đang tải bản cập nhật</string>
+    <string name="update_download_preparing">Đang chuẩn bị tải…</string>
+    <string name="update_download_progress_line">%1$d%% · %2$s</string>
+    <string name="update_download_paused_line">Đã tạm dừng ở %1$d%%. Dữ liệu đã tải được giữ lại để tải tiếp.</string>
+    <string name="update_download_waiting_network_line">Đang chờ mạng… đã xong %1$d%%.</string>
+    <string name="update_download_merging">Đang ghép các phần và kiểm tra tổng…</string>
+    <string name="update_download_ready_title">Bản cập nhật đã sẵn sàng cài đặt</string>
+    <string name="update_download_ready_text">Đã kiểm tra: %1$s. Nhấn Cài đặt.</string>
+    <string name="update_download_ready_toast">Đã tải và kiểm tra bản cập nhật. Bạn có thể cài đặt.</string>
+    <string name="update_download_started">Đã bắt đầu tải trong nền.</string>
+    <string name="update_download_cancelled">Đã huỷ tải. Các phần đã tải được giữ lại.</string>
+    <string name="update_download_failed_title">Tải bản cập nhật thất bại</string>
+    <string name="update_download_eta">còn %1$s</string>
+    <string name="update_download_eta_hms">%1$d giờ %2$d phút %3$d giây</string>
+    <string name="update_download_eta_ms">%1$d phút %2$d giây</string>
+    <string name="update_download_eta_s">%1$d giây</string>
+    <string name="update_download_phase_probing">Đang kiểm tra kích thước và hỗ trợ tải tiếp…</string>
+    <string name="update_download_phase_downloading">Đang tải %1$d%% · %2$s</string>
+    <string name="update_download_phase_paused">Đã tạm dừng ở %1$d%%</string>
+    <string name="update_download_phase_waiting_network">Đang chờ mạng…</string>
+    <string name="update_download_phase_merging">Đang ghép các phần và kiểm tra tổng…</string>
+    <string name="update_download_phase_verifying">Đang kiểm tra tổng…</string>
+    <string name="update_download_phase_failed">Thất bại: %1$s</string>
+    <string name="update_download_error_generic">Đã xảy ra lỗi không mong muốn khi tải.</string>
+    <string name="update_download_error_storage">Không thể ghi vào thư mục Tải xuống. Hãy kiểm tra quyền lưu trữ.</string>
+    <string name="update_download_error_no_checksum">Không có bảng kiểm cho bản này; từ chối cài tệp chưa xác minh.</string>
+    <string name="update_download_error_checksum">Kiểm tra tổng không khớp: tệp có thể bị hỏng. Không cài gì; hãy thử lại.</string>
+    <string name="update_download_error_merge">Ghép thất bại: %1$s</string>
+    <string name="update_download_error_http">Lỗi tải: %1$s</string>
+    <string name="update_download_error_size_mismatch">Kích thước lệch: mong đợi %1$d byte nhưng máy chủ báo %2$d.</string>
+    <string name="update_download_error_object_changed">Tệp trên máy chủ đã thay đổi trong lúc tải. Quá trình tải đã khởi động lại; hãy thử lại.</string>
+    <string name="update_download_error_no_asset">Không tìm thấy tệp tải được cho thiết bị này.</string>
+    <string name="update_via_active_proxy_title">Kiểm tra và tải qua hồ sơ đang bật</string>
+    <string name="update_via_active_proxy_summary">Khi bật, cả việc kiểm tra cập nhật và tải tích hợp đều đi nghiêm ngặt qua hồ sơ đang chạy. Khi tắt, đi trực tiếp.</string>
 </resources>

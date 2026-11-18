@@ -303,6 +303,22 @@ object HttpUtil {
     }
 
     /**
+     * Применяет к билдеру политику форка «trust-all TLS»: отключает проверку
+     * сертификатов и имени хоста. Это ТОТ ЖЕ trust-all, что используется во всех
+     * остальных загрузках приложения (подписки, проверка обновлений, geo) — см.
+     * [buildOkHttpClient]; вынесен публично, чтобы встроенный загрузчик обновлений
+     * (util/updater) гарантированно работал в той же ограничительной сети, где
+     * middlebox/кастомный CA рвут рукопожатия. Требование владельца: загрузка
+     * обновлений ОБЯЗАНА использовать trust-all, иначе в плохих сетях не пойдёт.
+     *
+     * Возвращает тот же [builder] для удобства цепочки вызовов.
+     */
+    fun applyTrustAll(builder: OkHttpClient.Builder): OkHttpClient.Builder = builder.apply {
+        sslSocketFactory(trustAllSocketFactory(), trustAllManager)
+        hostnameVerifier { _, _ -> true }
+    }
+
+    /**
      * Builds a Basic proxy-authorization header value.
      *
      * OkHttp's Credentials.basic defaults to ISO-8859-1, which mangles every
@@ -311,7 +327,7 @@ object HttpUtil {
      * "Failed to authenticate with proxy". The loopback proxy compares UTF-8,
      * so encode UTF-8 explicitly.
      */
-    private fun basicProxyCredentials(username: String?, password: String?): String =
+    internal fun basicProxyCredentials(username: String?, password: String?): String =
         Credentials.basic(username.orEmpty(), password.orEmpty(), Charsets.UTF_8)
 
     private fun buildOkHttpClient(

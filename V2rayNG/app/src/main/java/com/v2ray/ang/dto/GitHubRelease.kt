@@ -24,6 +24,11 @@ data class GitHubRelease(
         @SerializedName("name")
         val name: String,
         @SerializedName("browser_download_url")
-        val browserDownloadUrl: String
+        val browserDownloadUrl: String,
+        // Размер ассета в байтах из манифеста релиза: используется встроенным
+        // загрузчиком обновлений для сверки с фактически скачанным объёмом
+        // (требование безопасности: «проверка размера против asset.size»).
+        @SerializedName("size")
+        val size: Long = -1L
     )
 }

@@ -40,6 +40,13 @@
     <!-- <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" /> -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Встроенный загрузчик обновлений пишет part-файлы и APK в публичный
+         каталог Download/<app_name>. На Android 11+ (API 30+) File API пишет
+         в Download без разрешений; на API 29 спасает requestLegacyExternalStorage;
+         на API 24-28 нужно классическое разрешение записи. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
     <application
         android:name=".AngApplication"
@@ -48,6 +55,7 @@
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:networkSecurityConfig="@xml/network_security_config"
+        android:requestLegacyExternalStorage="true"
         android:supportsRtl="true"
         android:theme="@style/AppThemeDayNight.NoActionBar"
         android:usesCleartextTraffic="true">
@@ -306,6 +314,20 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="test" />
+        </service>
+
+        <!-- Встроенный загрузчик обновлений: foreground-сервис в :tasks
+             (тот же паттерн, что SubscriptionUpdateService). specialUse уже
+             разрешён FOREGROUND_SERVICE_SPECIAL_USE; подтип — загрузка APK
+             обновления самого клиента. -->
+        <service
+            android:name=".service.UpdateDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":tasks">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="download" />
         </service>
 
         <receiver

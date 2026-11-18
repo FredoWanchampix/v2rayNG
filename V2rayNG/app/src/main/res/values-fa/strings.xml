@@ -606,4 +606,50 @@
     <string name="sub_info_open_page">باز کردن صفحه اطلاعات اشتراک</string>
     <string name="sub_info_unlimited">نامحدود</string>
 
+
+    <!-- Встроенный загрузчик обновлений (util/updater) -->
+    <string name="notification_channel_update_download">بارگیری به‌روزرسانی‌ها</string>
+    <string name="update_use_builtin_downloader_title">بارگیری با بارگیر داخلی</string>
+    <string name="update_use_builtin_downloader_summary">بارگیری به‌روزرسانی درون برنامه (چندنخی، با ادامه‌پذیری و بررسی جمع کنترلی) به‌جای بازکردن مرورگر. وقتی خاموش است، «بارگیری» پیوند را در مرورگر باز می‌کند.</string>
+    <string name="update_download_segments_title">رشته‌های بارگیری</string>
+    <string name="update_download_segments_summary">رشته‌های موازی برای هر بارگیری (۱ تا %1$d). رشته بیشتر می‌تواند اتصال پایدار را سریع‌تر کند اما در اتصال ضعیف نتیجه عکس دارد.</string>
+    <string name="update_download_action_start">بارگیری</string>
+    <string name="update_download_action_pause">مکث</string>
+    <string name="update_download_action_resume">ادامه</string>
+    <string name="update_download_action_retry">تلاش دوباره</string>
+    <string name="update_download_action_install">نصب</string>
+    <string name="update_download_notification_title">در حال بارگیری به‌روزرسانی</string>
+    <string name="update_download_preparing">در حال آماده‌سازی بارگیری…</string>
+    <string name="update_download_progress_line">%1$d%% · %2$s</string>
+    <string name="update_download_paused_line">در %1$d%% متوقف شد. داده‌های بارگیری‌شده برای ادامه نگه داشته می‌شوند.</string>
+    <string name="update_download_waiting_network_line">در انتظار شبکه… %1$d%% انجام شد.</string>
+    <string name="update_download_merging">در حال ادغام بخش‌ها و بررسی جمع کنترلی…</string>
+    <string name="update_download_ready_title">به‌روزرسانی آماده نصب است</string>
+    <string name="update_download_ready_text">تأیید شد: %1$s. برای نصب بزنید.</string>
+    <string name="update_download_ready_toast">به‌روزرسانی بارگیری و تأیید شد. می‌توانید نصبش کنید.</string>
+    <string name="update_download_started">بارگیری در پس‌زمینه آغاز شد.</string>
+    <string name="update_download_cancelled">بارگیری لغو شد. بخش‌های بارگیری‌شده نگه داشته می‌شوند.</string>
+    <string name="update_download_failed_title">بارگیری به‌روزرسانی ناموفق بود</string>
+    <string name="update_download_eta">%1$s باقی‌مانده</string>
+    <string name="update_download_eta_hms">%1$dس %2$dد %3$dث</string>
+    <string name="update_download_eta_ms">%1$dد %2$dث</string>
+    <string name="update_download_eta_s">%1$dث</string>
+    <string name="update_download_phase_probing">در حال بررسی اندازه فایل و پشتیبانی ادامه…</string>
+    <string name="update_download_phase_downloading">در حال بارگیری %1$d%% · %2$s</string>
+    <string name="update_download_phase_paused">متوقف در %1$d%%</string>
+    <string name="update_download_phase_waiting_network">در انتظار شبکه…</string>
+    <string name="update_download_phase_merging">در حال ادغام بخش‌ها و بررسی جمع کنترلی…</string>
+    <string name="update_download_phase_verifying">در حال بررسی جمع کنترلی…</string>
+    <string name="update_download_phase_failed">ناموفق: %1$s</string>
+    <string name="update_download_error_generic">خطای غیرمنتظره‌ای هنگام بارگیری رخ داد.</string>
+    <string name="update_download_error_storage">نمی‌توان در پوشه بارگیری نوشت. مجوز حافظه را بررسی کنید.</string>
+    <string name="update_download_error_no_checksum">فهرست جمع کنترلی برای این نسخه نیست؛ از نصب فایل تأییدنشده خودداری می‌شود.</string>
+    <string name="update_download_error_checksum">جمع کنترلی مطابقت نکرد: فایل ممکن است خراب باشد. چیزی نصب نشد؛ دوباره تلاش کنید.</string>
+    <string name="update_download_error_merge">ادغام ناموفق: %1$s</string>
+    <string name="update_download_error_http">خطای بارگیری: %1$s</string>
+    <string name="update_download_error_size_mismatch">عدم تطابق اندازه: %1$d بایت انتظار می‌رفت اما سرور %2$d گزارش داد.</string>
+    <string name="update_download_error_object_changed">فایل روی سرور هنگام بارگیری تغییر کرد. بارگیری از نو آغاز شد؛ دوباره تلاش کنید.</string>
+    <string name="update_download_error_no_asset">فایل قابل بارگیری برای این دستگاه یافت نشد.</string>
+    <string name="update_via_active_proxy_title">بررسی و بارگیری ازطریق پروفایل فعال</string>
+    <string name="update_via_active_proxy_summary">وقتی روشن است، هم بررسی به‌روزرسانی و هم بارگیر داخلی دقیقاً ازطریق پروفایل درحال‌اجرا می‌روند. وقتی خاموش است، مستقیم.</string>
 </resources>

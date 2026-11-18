@@ -606,4 +606,50 @@
     <string name="sub_info_open_page">সাবস্ক্রিপশন তথ্যের পাতা খুলুন</string>
     <string name="sub_info_unlimited">সীমাহীন</string>
 
+
+    <!-- Встроенный загрузчик обновлений (util/updater) -->
+    <string name="notification_channel_update_download">আপডেট ডাউনলোড</string>
+    <string name="update_use_builtin_downloader_title">অন্তর্নির্মিত ডাউনলোডার দিয়ে ডাউনলোড</string>
+    <string name="update_use_builtin_downloader_summary">ব্রাউজার খোলার পরিবর্তে অ্যাপের ভিতরে আপডেট ডাউনলোড করুন (মাল্টি-থ্রেড, পুনরায় শুরুযোগ্য, চেকসাম যাচাইকৃত)। বন্ধ থাকলে, “ডাউনলোড” ব্রাউজারে লিঙ্ক খুলবে।</string>
+    <string name="update_download_segments_title">ডাউনলোড থ্রেড</string>
+    <string name="update_download_segments_summary">একটি ডাউনলোডের জন্য সমান্তরাল থ্রেড (1–%1$d)। বেশি থ্রেড স্থিতিশীল সংযোগ দ্রুত করতে পারে তবে দুর্বল সংযোগে ক্ষতি করতে পারে।</string>
+    <string name="update_download_action_start">ডাউনলোড</string>
+    <string name="update_download_action_pause">বিরতি</string>
+    <string name="update_download_action_resume">চালিয়ে যান</string>
+    <string name="update_download_action_retry">পুনরায় চেষ্টা</string>
+    <string name="update_download_action_install">ইনস্টল</string>
+    <string name="update_download_notification_title">আপডেট ডাউনলোড হচ্ছে</string>
+    <string name="update_download_preparing">ডাউনলোড প্রস্তুত হচ্ছে…</string>
+    <string name="update_download_progress_line">%1$d%% · %2$s</string>
+    <string name="update_download_paused_line">%1$d%%-এ বিরতি। ডাউনলোড হওয়া ডেটা পুনরায় শুরুর জন্য রাখা হয়েছে।</string>
+    <string name="update_download_waiting_network_line">নেটওয়ার্কের অপেক্ষায়… %1$d%% সম্পন্ন।</string>
+    <string name="update_download_merging">অংশগুলো একত্রিত করে চেকসাম যাচাই হচ্ছে…</string>
+    <string name="update_download_ready_title">আপডেট ইনস্টলের জন্য প্রস্তুত</string>
+    <string name="update_download_ready_text">যাচাইকৃত: %1$s। ইনস্টল চাপুন।</string>
+    <string name="update_download_ready_toast">আপডেট ডাউনলোড ও যাচাই সম্পন্ন। আপনি এটি ইনস্টল করতে পারেন।</string>
+    <string name="update_download_started">ব্যাকগ্রাউন্ডে ডাউনলোড শুরু হয়েছে।</string>
+    <string name="update_download_cancelled">ডাউনলোড বাতিল হয়েছে। ডাউনলোড হওয়া অংশগুলো রাখা হয়েছে।</string>
+    <string name="update_download_failed_title">আপডেট ডাউনলোড ব্যর্থ</string>
+    <string name="update_download_eta">%1$s বাকি</string>
+    <string name="update_download_eta_hms">%1$dঘ %2$dমি %3$dসে</string>
+    <string name="update_download_eta_ms">%1$dমি %2$dসে</string>
+    <string name="update_download_eta_s">%1$dসে</string>
+    <string name="update_download_phase_probing">ফাইলের আকার ও পুনরায় শুরুর সমর্থন যাচাই হচ্ছে…</string>
+    <string name="update_download_phase_downloading">ডাউনলোড হচ্ছে %1$d%% · %2$s</string>
+    <string name="update_download_phase_paused">%1$d%%-এ বিরতি</string>
+    <string name="update_download_phase_waiting_network">নেটওয়ার্কের অপেক্ষায়…</string>
+    <string name="update_download_phase_merging">অংশ একত্রিত করে চেকসাম যাচাই হচ্ছে…</string>
+    <string name="update_download_phase_verifying">চেকসাম যাচাই হচ্ছে…</string>
+    <string name="update_download_phase_failed">ব্যর্থ: %1$s</string>
+    <string name="update_download_error_generic">ডাউনলোডের সময় অপ্রত্যাশিত ত্রুটি ঘটেছে।</string>
+    <string name="update_download_error_storage">ডাউনলোড ফোল্ডারে লেখা যাচ্ছে না। স্টোরেজ অনুমতি পরীক্ষা করুন।</string>
+    <string name="update_download_error_no_checksum">এই রিলিজের জন্য কোনো চেকসাম ম্যানিফেস্ট নেই; যাচাই না করা ফাইল ইনস্টল করা হচ্ছে না।</string>
+    <string name="update_download_error_checksum">চেকসাম মেলেনি: ফাইলটি ক্ষতিগ্রস্ত হতে পারে। কিছু ইনস্টল হয়নি; আবার চেষ্টা করুন।</string>
+    <string name="update_download_error_merge">একত্রিত করা ব্যর্থ: %1$s</string>
+    <string name="update_download_error_http">ডাউনলোড ত্রুটি: %1$s</string>
+    <string name="update_download_error_size_mismatch">আকারের অমিল: %1$d বাইট আশা করা হয়েছিল কিন্তু সার্ভার %2$d জানাচ্ছে।</string>
+    <string name="update_download_error_object_changed">ডাউনলোডের সময় সার্ভারে ফাইল পরিবর্তিত হয়েছে। ডাউনলোড আবার শুরু হয়েছে; আবার চেষ্টা করুন।</string>
+    <string name="update_download_error_no_asset">এই ডিভাইসের জন্য ডাউনলোডযোগ্য ফাইল পাওয়া যায়নি।</string>
+    <string name="update_via_active_proxy_title">সক্রিয় প্রোফাইলের মাধ্যমে পরীক্ষা ও ডাউনলোড</string>
+    <string name="update_via_active_proxy_summary">চালু থাকলে, আপডেট পরীক্ষা ও অন্তর্নির্মিত ডাউনলোড উভয়ই কঠোরভাবে চলমান প্রোফাইলের মাধ্যমে যায়। বন্ধ থাকলে সরাসরি যায়।</string>
 </resources>

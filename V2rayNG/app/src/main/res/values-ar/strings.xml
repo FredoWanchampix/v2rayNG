@@ -614,4 +614,50 @@
     <string name="sub_info_open_page">فتح صفحة معلومات الاشتراك</string>
     <string name="sub_info_unlimited">غير محدود</string>
 
+
+    <!-- Встроенный загрузчик обновлений (util/updater) -->
+    <string name="notification_channel_update_download">تنزيلات التحديث</string>
+    <string name="update_use_builtin_downloader_title">التنزيل بأداة التنزيل المدمجة</string>
+    <string name="update_use_builtin_downloader_summary">تنزيل التحديث داخل التطبيق (متعدد الخيوط، قابل للاستئناف، مع التحقق من المجموع) بدل فتح المتصفح. عند الإيقاف، يفتح «تنزيل» الرابط في المتصفح.</string>
+    <string name="update_download_segments_title">خيوط التنزيل</string>
+    <string name="update_download_segments_summary">الخيوط المتوازية لتنزيل واحد (1–%1$d). المزيد من الخيوط قد يسرّع الاتصال المستقر لكنه قد يضر بالاتصال الضعيف.</string>
+    <string name="update_download_action_start">تنزيل</string>
+    <string name="update_download_action_pause">إيقاف مؤقت</string>
+    <string name="update_download_action_resume">استئناف</string>
+    <string name="update_download_action_retry">إعادة المحاولة</string>
+    <string name="update_download_action_install">تثبيت</string>
+    <string name="update_download_notification_title">جارٍ تنزيل التحديث</string>
+    <string name="update_download_preparing">جارٍ تحضير التنزيل…</string>
+    <string name="update_download_progress_line">%1$d%% · %2$s</string>
+    <string name="update_download_paused_line">أُوقف مؤقتًا عند %1$d%%. تُحفظ البيانات المُنزّلة للاستئناف.</string>
+    <string name="update_download_waiting_network_line">بانتظار الشبكة… أُنجز %1$d%%.</string>
+    <string name="update_download_merging">جارٍ دمج الأجزاء والتحقق من المجموع…</string>
+    <string name="update_download_ready_title">التحديث جاهز للتثبيت</string>
+    <string name="update_download_ready_text">تم التحقق: %1$s. اضغط تثبيت.</string>
+    <string name="update_download_ready_toast">تم تنزيل التحديث والتحقق منه. يمكنك تثبيته.</string>
+    <string name="update_download_started">بدأ التنزيل في الخلفية.</string>
+    <string name="update_download_cancelled">أُلغي التنزيل. تُحفظ الأجزاء المُنزّلة.</string>
+    <string name="update_download_failed_title">فشل تنزيل التحديث</string>
+    <string name="update_download_eta">متبقٍ %1$s</string>
+    <string name="update_download_eta_hms">%1$dس %2$dد %3$dث</string>
+    <string name="update_download_eta_ms">%1$dد %2$dث</string>
+    <string name="update_download_eta_s">%1$dث</string>
+    <string name="update_download_phase_probing">جارٍ فحص الحجم ودعم الاستئناف…</string>
+    <string name="update_download_phase_downloading">جارٍ التنزيل %1$d%% · %2$s</string>
+    <string name="update_download_phase_paused">موقوف مؤقتًا عند %1$d%%</string>
+    <string name="update_download_phase_waiting_network">بانتظار الشبكة…</string>
+    <string name="update_download_phase_merging">جارٍ دمج الأجزاء والتحقق من المجموع…</string>
+    <string name="update_download_phase_verifying">جارٍ التحقق من المجموع…</string>
+    <string name="update_download_phase_failed">فشل: %1$s</string>
+    <string name="update_download_error_generic">حدث خطأ غير متوقع أثناء التنزيل.</string>
+    <string name="update_download_error_storage">تعذّرت الكتابة إلى مجلد التنزيل. تحقّق من إذن التخزين.</string>
+    <string name="update_download_error_no_checksum">لا يوجد بيان مجموع لهذا الإصدار؛ يُرفض تثبيت ملف غير مُتحقَّق منه.</string>
+    <string name="update_download_error_checksum">عدم تطابق المجموع: قد يكون الملف تالفًا. لم يُثبَّت شيء؛ حاول مجددًا.</string>
+    <string name="update_download_error_merge">فشل الدمج: %1$s</string>
+    <string name="update_download_error_http">خطأ التنزيل: %1$s</string>
+    <string name="update_download_error_size_mismatch">عدم تطابق الحجم: المتوقع %1$d بايت لكن الخادم يُبلغ %2$d.</string>
+    <string name="update_download_error_object_changed">تغيّر الملف على الخادم أثناء التنزيل. أُعيد بدء التنزيل؛ حاول مجددًا.</string>
+    <string name="update_download_error_no_asset">لم يُعثر على أصل قابل للتنزيل لهذا الجهاز.</string>
+    <string name="update_via_active_proxy_title">التحقق والتنزيل عبر الملف الشخصي النشط</string>
+    <string name="update_via_active_proxy_summary">عند التشغيل، يسير كلٌّ من فحص التحديث والتنزيل المدمج عبر الملف النشط فقط. وعند الإيقاف، يسيران مباشرةً.</string>
 </resources>

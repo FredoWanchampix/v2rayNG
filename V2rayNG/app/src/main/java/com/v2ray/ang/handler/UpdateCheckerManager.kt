@@ -155,12 +155,20 @@ object UpdateCheckerManager {
             BuildConfig.GIT_COMMIT.isNotEmpty() &&
             !latestRelease.targetCommitish.startsWith(BuildConfig.GIT_COMMIT)
         return@withContext if (compareVersions(latestVersion, currentVersion) > 0 || sameVersionNewerBuild) {
+            val asset = getDownloadAsset(latestRelease, Build.SUPPORTED_ABIS[0])
             CheckUpdateResult(
                 hasUpdate = true,
                 latestVersion = latestVersion,
                 releaseNotes = latestRelease.body,
-                downloadUrl = getDownloadUrl(latestRelease, Build.SUPPORTED_ABIS[0]),
+                downloadUrl = asset.browserDownloadUrl,
                 isPreRelease = latestRelease.prerelease,
+                // Данные для встроенного загрузчика: имя ассета (ключ в
+                // SHA256SUMS.txt), ссылка на манифест хэшей того же релиза и
+                // заявленный размер для сверки целостности скачанного.
+                assetName = asset.name,
+                checksumsUrl = checksumsUrlOf(asset.browserDownloadUrl),
+                declaredSize = asset.size,
+                releaseTag = latestRelease.tagName,
             )
         } else {
             CheckUpdateResult(hasUpdate = false)
@@ -223,7 +231,22 @@ object UpdateCheckerManager {
         return 0
     }
 
-    private fun getDownloadUrl(release: GitHubRelease, abi: String): String {
+    /**
+     * URL манифеста SHA256SUMS.txt того же релиза, что и ассет. Наши релизы
+     * публикуют его рядом с APK, поэтому он отличается только последним
+     * сегментом пути: `.../releases/download/<tag>/SHA256SUMS.txt`.
+     *
+     * @return null, если из ссылки ассета не удалось получить базовый путь
+     *   (не должно случаться для browser_download_url GitHub).
+     */
+    private fun checksumsUrlOf(assetUrl: String): String? {
+        val fileName = "SHA256SUMS.txt"
+        val idx = assetUrl.lastIndexOf('/')
+        if (idx < 0) return null
+        return assetUrl.substring(0, idx + 1) + fileName
+    }
+
+    private fun getDownloadAsset(release: GitHubRelease, abi: String): GitHubRelease.Asset {
         val fDroid = "fdroid"
 
         val assetsByAbi = release.assets.filter {
@@ -236,7 +259,6 @@ object UpdateCheckerManager {
             assetsByAbi.firstOrNull { !it.name.contains(fDroid) }
         }
 
-        return asset?.browserDownloadUrl
-            ?: throw IllegalStateException("No compatible APK found")
+        return asset ?: throw IllegalStateException("No compatible APK found")
     }
 }

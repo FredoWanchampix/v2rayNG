@@ -21,5 +21,17 @@ enum class NotificationChannelType(
         channelId = "core_test_channel",
         channelNameRes = R.string.notification_channel_connection_checks,
         notificationId = 12
+    ),
+
+    /**
+     * Канал встроенного загрузчика обновлений: foreground-уведомление с
+     * прогрессом/скоростью/ETA, кнопками Пауза/Продолжить/Отмена/Установить.
+     * IMPORTANCE_LOW: без звука, но видно в шторке; живёт и после выхода из
+     * клиента (требование владельца).
+     */
+    UPDATE_DOWNLOAD(
+        channelId = "update_download_channel",
+        channelNameRes = R.string.notification_channel_update_download,
+        notificationId = 14
     )
 }

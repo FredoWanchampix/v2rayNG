@@ -119,7 +119,7 @@ object NotificationHelper {
 
     // ====== Private helper methods ======
 
-    private fun getNotificationManager(context: Context): NotificationManager {
+    fun getNotificationManager(context: Context): NotificationManager {
         if (cachedNotificationManager == null) {
             cachedNotificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         }
@@ -133,6 +133,17 @@ object NotificationHelper {
             channelNameRes = channelType.channelNameRes,
             importance = NotificationManager.IMPORTANCE_LOW,
         )
+
+    /**
+     * Публичная гарантия существования канала: нужна тем, кто строит уведомление
+     * САМ (например встроенный загрузчик обновлений с прогрессом и несколькими
+     * действиями), а не через [notify]/[startForeground]. Возвращает channelId,
+     * пригодный для NotificationCompat.Builder.
+     */
+    fun ensureChannel(channelType: NotificationChannelType, context: Context): String {
+        ensureChannelCreated(channelType, context)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) channelType.channelId else ""
+    }
 
     /**
      * Creates a channel or updates only its localized name.

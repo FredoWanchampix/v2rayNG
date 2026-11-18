@@ -607,4 +607,50 @@
     <string name="sub_info_traffic" translatable="false">%1$s / %2$s</string>
     <string name="sub_info_unlimited">Limitsiz</string>
 
+
+    <!-- Встроенный загрузчик обновлений (util/updater) -->
+    <string name="notification_channel_update_download">Yenilənmə yükləmələri</string>
+    <string name="update_use_builtin_downloader_title">Daxili yükləyici ilə yüklə</string>
+    <string name="update_use_builtin_downloader_summary">Yenilənməni brauzer açmadan tətbiq daxilində yüklə (çoxaxınlı, davam etdirilə bilən, yoxlama cəmi ilə). Sönülü olduqda, «Yüklə» keçidi brauzerdə açır.</string>
+    <string name="update_download_segments_title">Yükləmə axınları</string>
+    <string name="update_download_segments_summary">Bir yükləmə üçün paralel axınlar (1–%1$d). Daha çox axın sabit bağlantını sürətləndirə bilər, zəif bağlantıda isə zərər verə bilər.</string>
+    <string name="update_download_action_start">Yüklə</string>
+    <string name="update_download_action_pause">Fasilə</string>
+    <string name="update_download_action_resume">Davam et</string>
+    <string name="update_download_action_retry">Yenidən cəhd et</string>
+    <string name="update_download_action_install">Quraşdır</string>
+    <string name="update_download_notification_title">Yenilənmə yüklənir</string>
+    <string name="update_download_preparing">Yükləmə hazırlanır…</string>
+    <string name="update_download_progress_line">%1$d%% · %2$s</string>
+    <string name="update_download_paused_line">%1$d%%-də dayandırıldı. Yüklənmiş məlumatlar davam üçün saxlanılır.</string>
+    <string name="update_download_waiting_network_line">Şəbəkə gözlənilir… %1$d%% hazırdır.</string>
+    <string name="update_download_merging">Hissələr birləşdirilir və yoxlama cəmi yoxlanılır…</string>
+    <string name="update_download_ready_title">Yenilənmə quraşdırmaya hazırdır</string>
+    <string name="update_download_ready_text">Yoxlanıldı: %1$s. Quraşdır-a toxunun.</string>
+    <string name="update_download_ready_toast">Yenilənmə yükləndi və yoxlanıldı. Quraşdıra bilərsiniz.</string>
+    <string name="update_download_started">Yükləmə arxa planda başladı.</string>
+    <string name="update_download_cancelled">Yükləmə ləğv edildi. Yüklənmiş hissələr saxlanılır.</string>
+    <string name="update_download_failed_title">Yenilənmə yüklənmədi</string>
+    <string name="update_download_eta">%1$s qalıb</string>
+    <string name="update_download_eta_hms">%1$ds %2$dd %3$ds</string>
+    <string name="update_download_eta_ms">%1$dd %2$ds</string>
+    <string name="update_download_eta_s">%1$ds</string>
+    <string name="update_download_phase_probing">Fayl ölçüsü və davam dəstəyi yoxlanılır…</string>
+    <string name="update_download_phase_downloading">Yüklənir %1$d%% · %2$s</string>
+    <string name="update_download_phase_paused">%1$d%%-də dayandırıldı</string>
+    <string name="update_download_phase_waiting_network">Şəbəkə gözlənilir…</string>
+    <string name="update_download_phase_merging">Hissələr birləşdirilir və yoxlanılır…</string>
+    <string name="update_download_phase_verifying">Yoxlama cəmi yoxlanılır…</string>
+    <string name="update_download_phase_failed">Xəta: %1$s</string>
+    <string name="update_download_error_generic">Yükləmə zamanı gözlənilməz xəta baş verdi.</string>
+    <string name="update_download_error_storage">Download qovluğuna yazmaq mümkün deyil. Yaddaş icazəsini yoxlayın.</string>
+    <string name="update_download_error_no_checksum">Bu buraxılış üçün yoxlama cəmi manifesti yoxdur; təsdiqlənməmiş fayl quraşdırılmır.</string>
+    <string name="update_download_error_checksum">Yoxlama cəmi uyğun gəlmədi: fayl zədələnə bilər. Heç nə quraşdırılmadı; yenidən cəhd edin.</string>
+    <string name="update_download_error_merge">Birləşdirmə alınmadı: %1$s</string>
+    <string name="update_download_error_http">Yükləmə xətası: %1$s</string>
+    <string name="update_download_error_size_mismatch">Ölçü uyğunsuzluğu: %1$d bayt gözlənilirdi, server %2$d bildirir.</string>
+    <string name="update_download_error_object_changed">Yükləmə zamanı serverdəki fayl dəyişdi. Yükləmə yenidən başladı; yenidən cəhd edin.</string>
+    <string name="update_download_error_no_asset">Bu cihaz üçün yüklənə bilən fayl tapılmadı.</string>
+    <string name="update_via_active_proxy_title">Aktiv profil ilə yoxla və yüklə</string>
+    <string name="update_via_active_proxy_summary">Açıq olduqda həm yenilənmə yoxlaması, həm daxili yükləmə yalnız işləyən profil üzərindən gedir. Sönülü olduqda birbaşa.</string>
 </resources>
