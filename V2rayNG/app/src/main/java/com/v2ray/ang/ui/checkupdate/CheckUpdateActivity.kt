@@ -92,6 +92,12 @@ fun CheckUpdateScreen(
     viewModel: CheckUpdateViewModel,
     onBackClick: () -> Unit
 ) {
+    // LocalContext доступен ТОЛЬКО в composable-контексте: захватываем
+    // активность здесь, а не в лямбде onCheckedChange (лямбда — не composable,
+    // компилятор ответил бы «@Composable invocations can only happen from the
+    // context of a @Composable function»).
+    val activity = LocalContext.current as? CheckUpdateActivity
+
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val checkPreRelease by viewModel.checkPreRelease.collectAsStateWithLifecycle()
     val updateViaActiveProxy by viewModel.updateViaActiveProxy.collectAsStateWithLifecycle()
@@ -150,7 +156,7 @@ fun CheckUpdateScreen(
                         // классе, а composable не подкласс, поэтому идём через
                         // публичный wrapper активности (LocalContext в setContent
                         // и есть сама активность).
-                        (LocalContext.current as? CheckUpdateActivity)?.requestStorageWrite()
+                        activity?.requestStorageWrite()
                     }
                 }
             )
