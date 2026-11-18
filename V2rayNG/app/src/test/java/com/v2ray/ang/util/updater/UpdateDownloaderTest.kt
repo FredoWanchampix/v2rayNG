@@ -403,6 +403,47 @@ class UpdateDownloaderTest {
         assertTrue(target.readBytes().contentEquals(payload))
     }
 
+    // ========================= CONTENT-TYPE (пункт 10) =========================
+
+    @Test
+    fun `probe reports apk content type from github-like cdn`() = runBlocking {
+        // Реальный ответ CDN релизов GitHub на APK-ассет (замер 18.11.2026):
+        // 206 Partial Content + Content-Type: application/vnd.android.package-archive
+        server.enqueue(
+            MockResponse.Builder()
+                .code(206)
+                .setHeader("Content-Range", "bytes 0-0/${payload.size}")
+                .setHeader("Content-Type", "application/vnd.android.package-archive")
+                .setHeader("ETag", "\"apk\"")
+                .body(Buffer().write(payload, 0, 1))
+                .build()
+        )
+        val probe = UpdateDownloader.probe(client, url(), allowAll)
+        assertTrue(probe.rangesSupported)
+        assertEquals("application/vnd.android.package-archive", probe.contentType)
+        // Проверка безопасности принимает такой MIME.
+        assertTrue(UpdateUrlPolicy.checkApkContentType(probe.contentType) == null)
+    }
+
+    @Test
+    fun `probe reports html content type of a captive portal`() = runBlocking {
+        // Сценарий подмены: captive-portal публичной сети отдаёт 200 + HTML-страницу.
+        // probe обязан донести Content-Type, чтобы сервис отказался качать HTML
+        // вместо APK (иначе узнали бы об этом только на SHA-256 — поздно).
+        server.enqueue(
+            MockResponse.Builder()
+                .code(200)
+                .setHeader("Content-Type", "text/html; charset=utf-8")
+                .body("<html><body>Wi-Fi login</body></html>")
+                .build()
+        )
+        val probe = UpdateDownloader.probe(client, url(), allowAll)
+        assertEquals("text/html; charset=utf-8", probe.contentType)
+        assertTrue(!probe.rangesSupported)
+        // Проверка безопасности такой MIME ОТВЕРГАЕТ.
+        assertTrue(UpdateUrlPolicy.checkApkContentType(probe.contentType) != null)
+    }
+
     // ========================= SHA256SUMS: маленький текстовый запрос =========================
 
     @Test

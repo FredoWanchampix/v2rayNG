@@ -650,6 +650,7 @@
     <string name="update_download_error_http">Yükləmə xətası: %1$s</string>
     <string name="update_download_error_size_mismatch">Ölçü uyğunsuzluğu: %1$d bayt gözlənilirdi, server %2$d bildirir.</string>
     <string name="update_download_error_object_changed">Yükləmə zamanı serverdəki fayl dəyişdi. Yükləmə yenidən başladı; yenidən cəhd edin.</string>
+    <string name="update_download_error_content_type">Server gözlənilməz fayl növü qaytardı — yükləmə dayandırıldı. (%1$s)</string>
     <string name="update_download_profile_lost_toast">Profil sönülüdür — yükləmə dayandırıldı.</string>
     <string name="update_download_profile_lost_notification">Profil söndü — yükləmə dayandı. Yüklənmiş hissələr saxlanılır: profili yandırıb «Yüklə» düyməsinə toxunun.</string>
     <string name="update_check_profile_lost_toast">Profil sönülüdür — yenilənmə yoxlaması dayandı.</string>

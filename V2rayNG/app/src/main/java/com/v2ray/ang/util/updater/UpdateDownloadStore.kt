@@ -45,11 +45,21 @@ object UpdateDownloadStore {
     }
 
     /**
-     * Читает пользовательскую настройку числа потоков (1..24).
-     * Хранится строкой — паттерн числовых настроек форка.
+     * Читает пользовательскую настройку числа потоков, приведённую к 1..24.
+     *
+     * Хранится СЫРАЯ строка (паттерн числовых настроек форка: SettingsActivity
+     * держит mux concurrency как rememberMmkvString и парсит при использовании),
+     * а клампинг выполняется ЗДЕСЬ, в момент чтения. Поэтому UI показывает ровно
+     * то, что набрал пользователь (можно стереть цифру, можно ввести 83), а
+     * загрузчик всегда получает корректное число 1..24.
      */
     fun requestedSegments(): Int =
-        SegmentPlan.parseSegmentCount(MmkvManager.decodeSettingsString(AppConfig.PREF_UPDATE_DOWNLOAD_SEGMENTS))
+        SegmentPlan.parseSegmentCount(rawSegments())
+
+    /** Сырое значение настройки числа потоков (может быть пустым/вне диапазона). */
+    fun rawSegments(): String =
+        MmkvManager.decodeSettingsString(AppConfig.PREF_UPDATE_DOWNLOAD_SEGMENTS)
+            ?: SegmentPlan.DEFAULT_SEGMENT_COUNT.toString()
 
     /** Включён ли встроенный загрузчик (свитч «Скачивать через встроенный загрузчик»). */
     fun useBuiltinDownloader(): Boolean =

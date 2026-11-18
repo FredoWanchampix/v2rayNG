@@ -657,6 +657,7 @@
     <string name="update_download_error_http">خطأ التنزيل: %1$s</string>
     <string name="update_download_error_size_mismatch">عدم تطابق الحجم: المتوقع %1$d بايت لكن الخادم يُبلغ %2$d.</string>
     <string name="update_download_error_object_changed">تغيّر الملف على الخادم أثناء التنزيل. أُعيد بدء التنزيل؛ حاول مجددًا.</string>
+    <string name="update_download_error_content_type">أعاد الخادم نوع ملف غير متوقع — توقّف التنزيل. (%1$s)</string>
     <string name="update_download_profile_lost_toast">الملف الشخصي مُطفأ — توقّف التنزيل.</string>
     <string name="update_download_profile_lost_notification">أُطفئ الملف الشخصي — توقّف التنزيل. تُحفظ الأجزاء المُنزّلة: شغّل الملف الشخصي ثم اضغط «تنزيل» للمتابعة.</string>
     <string name="update_check_profile_lost_toast">الملف الشخصي مُطفأ — توقّف فحص التحديث.</string>

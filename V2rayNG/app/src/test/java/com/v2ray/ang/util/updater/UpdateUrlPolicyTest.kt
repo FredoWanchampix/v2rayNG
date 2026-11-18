@@ -1,6 +1,7 @@
 package com.v2ray.ang.util.updater
 
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -65,6 +66,52 @@ class UpdateUrlPolicyTest {
         assertEqualsHost("release-assets.githubusercontent.com", cdnUrl)
         assertTrue(UpdateUrlPolicy.hostOf("garbage").isNullOrEmpty() ||
             !UpdateUrlPolicy.isHostAllowed(UpdateUrlPolicy.hostOf("garbage")))
+    }
+
+    // --- Проверка Content-Type (пункт 10: «проверка content-type/размера») ---
+
+    @Test
+    fun `apk content type is accepted`() {
+        // Реальный ответ CDN релизов GitHub (замер 18.11.2026).
+        assertNull(UpdateUrlPolicy.checkApkContentType("application/vnd.android.package-archive"))
+        assertNull(UpdateUrlPolicy.checkApkContentType("application/octet-stream"))
+        assertNull(UpdateUrlPolicy.checkApkContentType("application/java-archive"))
+    }
+
+    @Test
+    fun `content type params and case are tolerated`() {
+        assertNull(UpdateUrlPolicy.checkApkContentType("application/vnd.android.package-archive; charset=utf-8"))
+        assertNull(UpdateUrlPolicy.checkApkContentType("APPLICATION/OCTET-STREAM"))
+        assertNull(UpdateUrlPolicy.checkApkContentType("  application/octet-stream  "))
+    }
+
+    @Test
+    fun `missing content type is accepted - sha256 remains the final guarantee`() {
+        // Сервер не обязан отдавать MIME; отказывать в загрузке нельзя.
+        assertNull(UpdateUrlPolicy.checkApkContentType(null))
+        assertNull(UpdateUrlPolicy.checkApkContentType(""))
+        assertNull(UpdateUrlPolicy.checkApkContentType("   "))
+    }
+
+    @Test
+    fun `html is rejected - catches captive portal and error pages`() {
+        // Главная цель проверки: captive-portal публичной сети отдаёт 200 + HTML.
+        // Без проверки мы бы скачали HTML и узнали об этом только на SHA-256.
+        assertTrue(UpdateUrlPolicy.checkApkContentType("text/html") != null)
+        assertTrue(UpdateUrlPolicy.checkApkContentType("text/html; charset=utf-8") != null)
+        assertTrue(UpdateUrlPolicy.checkApkContentType("application/json") != null)
+        assertTrue(UpdateUrlPolicy.checkApkContentType("text/plain") != null)
+    }
+
+    @Test
+    fun `rejection reason mentions the actual content type`() {
+        val reason = UpdateUrlPolicy.checkApkContentType("text/html")
+        assertTrue(reason != null && reason.contains("text/html"), "причина должна содержать фактический MIME: $reason")
+    }
+
+    @Test
+    fun `allowlist contains the github apk mime`() {
+        assertTrue("application/vnd.android.package-archive" in UpdateUrlPolicy.ALLOWED_APK_CONTENT_TYPES)
     }
 
     private fun assertEqualsHost(expected: String, url: String) {

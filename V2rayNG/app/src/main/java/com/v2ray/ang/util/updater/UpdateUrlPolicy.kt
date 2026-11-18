@@ -77,6 +77,59 @@ object UpdateUrlPolicy {
      */
     fun isRedirectAllowed(from: String?, to: String?): Boolean = isAllowed(from) && isAllowed(to)
 
+    // ---------------------------------------------------------------------
+    // Проверка Content-Type (пункт 10 требований: «проверка content-type»)
+    // ---------------------------------------------------------------------
+
+    /**
+     * Допустимые Content-Type для APK.
+     *
+     * Живой замер 18.11.2026 для релиза форка: GitHub отдаёт
+     * `Content-Type: application/vnd.android.package-archive` (CDN
+     * release-assets.githubusercontent.com, 206 Partial Content). Остальные два
+     * значения добавлены потому, что CDN/промежуточные кэши в разных регионах
+     * иногда отдают исполняемые артефакты как generic octet-stream; это не
+     * причина ломать загрузку пользователю.
+     */
+    val ALLOWED_APK_CONTENT_TYPES = setOf(
+        "application/vnd.android.package-archive",
+        "application/octet-stream",
+        "application/java-archive",
+    )
+
+    /**
+     * Проверяет Content-Type скачиваемого APK (требование безопасности 10).
+     *
+     * Смысл проверки — отсечь НЕ apk, а подмену содержимого: если вместо APK
+     * сервер (или подменённый прокси) вернул `text/html` со страницей ошибки или
+     * captive-portal, продолжать закачку бессмысленно, а файл гарантированно не
+     * установится. Особо опасен случай, когда captive-portal отдаёт 200 с HTML:
+     * без этой проверки мы бы честно скачали HTML и обнаружили проблему только
+     * на SHA-256 (поздно и непонятно для пользователя).
+     *
+     * Правила:
+     *  - заголовок отсутствует/пуст -> разрешено (сервер не обязан его отдавать;
+     *    окончательный гарант целостности — SHA-256, а не MIME);
+     *  - параметры после `;` (charset и т.п.) отбрасываются;
+     *  - сравнение регистронезависимое;
+     *  - любой MIME семейства text (html, plain и т.п.), равно как и всё, чего
+     *    нет в [ALLOWED_APK_CONTENT_TYPES], -> отказ.
+     *
+     * ВАЖНО: в этом KDoc намеренно не пишется маска MIME со звёздочкой сразу
+     * после слэша — в Kotlin блочные комментарии ВЛАГАЮТСЯ, поэтому такая
+     * последовательность внутри комментария открыла бы вложенный комментарий и
+     * сломала бы разбор всего файла (эта ловушка уже стоила одного падения CI).
+     *
+     * @return null, если Content-Type приемлем; иначе — человекочитаемая причина.
+     */
+    fun checkApkContentType(contentType: String?): String? {
+        if (contentType.isNullOrBlank()) return null
+        val mime = contentType.substringBefore(';').trim().lowercase()
+        if (mime.isEmpty()) return null
+        if (mime in ALLOWED_APK_CONTENT_TYPES) return null
+        return "unexpected Content-Type: $contentType"
+    }
+
     /**
      * Извлекает хост из URL. Возвращает null для некорректного URL, чтобы
      * «не смогли разобрать» никогда не трактовалось как «разрешено».

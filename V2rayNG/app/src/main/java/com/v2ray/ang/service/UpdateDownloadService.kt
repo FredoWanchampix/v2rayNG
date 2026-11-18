@@ -35,6 +35,7 @@ import com.v2ray.ang.util.updater.UpdateHashVerifier
 import com.v2ray.ang.util.updater.UpdateHttpClient
 import com.v2ray.ang.util.updater.UpdateInstallLauncher
 import com.v2ray.ang.util.updater.UpdatePaths
+import com.v2ray.ang.util.updater.UpdateUrlPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -676,6 +677,17 @@ class UpdateDownloadService : Service() {
                 // Сверка размера против asset.size (требование 10). Расхождение =
                 // объект релиза не тот, за кого себя выдаёт: не качаем.
                 failDownload(getString(R.string.update_download_error_size_mismatch, state.declaredSize, probe.totalBytes))
+                return
+            }
+
+            // Сверка Content-Type (требование 10). Ловит подмену содержимого:
+            // например captive-portal в публичной сети отдаёт 200 + text/html со
+            // своей страницей. Без проверки мы бы честно скачали HTML и узнали о
+            // проблеме только на SHA-256 — поздно и непонятно для пользователя.
+            val contentTypeProblem = UpdateUrlPolicy.checkApkContentType(probe.contentType)
+            if (contentTypeProblem != null) {
+                UpdateDownloadLogger.log(this, "Content-Type rejected: $contentTypeProblem")
+                failDownload(getString(R.string.update_download_error_content_type, contentTypeProblem))
                 return
             }
 

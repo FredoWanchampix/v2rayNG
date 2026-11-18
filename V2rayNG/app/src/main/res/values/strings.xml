@@ -742,6 +742,7 @@
     <string name="update_download_error_http">Download error: %1$s</string>
     <string name="update_download_error_size_mismatch">Size mismatch: expected %1$d bytes but the server reports %2$d.</string>
     <string name="update_download_error_object_changed">The file changed on the server during download. The download restarted; try again.</string>
+    <string name="update_download_error_content_type">The server returned an unexpected file type. The download was stopped. (%1$s)</string>
     <string name="update_download_profile_lost_toast">Profile is off — download interrupted.</string>
     <string name="update_download_profile_lost_notification">Profile turned off — download stopped. Downloaded parts are kept: turn the profile on and tap Download to resume.</string>
     <string name="update_check_profile_lost_toast">Profile is off — update check interrupted.</string>

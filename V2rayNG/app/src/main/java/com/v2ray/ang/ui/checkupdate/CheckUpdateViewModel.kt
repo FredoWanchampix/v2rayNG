@@ -18,7 +18,6 @@ import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
 import com.v2ray.ang.util.updater.DownloadState
-import com.v2ray.ang.util.updater.SegmentPlan
 import com.v2ray.ang.util.updater.UpdateDownloadStore
 import com.v2ray.ang.util.updater.UpdateInstallLauncher
 import kotlinx.coroutines.Dispatchers
@@ -44,9 +43,14 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
     private val _useBuiltinDownloader = MutableStateFlow(UpdateDownloadStore.useBuiltinDownloader())
     val useBuiltinDownloader: StateFlow<Boolean> = _useBuiltinDownloader.asStateFlow()
 
-    /** Число параллельных потоков загрузчика (1..24). */
-    private val _downloadSegments = MutableStateFlow(UpdateDownloadStore.requestedSegments())
-    val downloadSegments: StateFlow<Int> = _downloadSegments.asStateFlow()
+    /**
+     * Число параллельных потоков загрузчика. Хранится СЫРОЙ строкой (паттерн
+     * rememberMmkvString из SettingsActivity), чтобы поле ввода показывало ровно
+     * то, что набрал пользователь; клампинг к 1..24 выполняется при чтении в
+     * [UpdateDownloadStore.requestedSegments].
+     */
+    private val _downloadSegments = MutableStateFlow(UpdateDownloadStore.rawSegments())
+    val downloadSegments: StateFlow<String> = _downloadSegments.asStateFlow()
 
     private val _updateResult = MutableStateFlow<CheckUpdateResult?>(null)
     val updateResult: StateFlow<CheckUpdateResult?> = _updateResult.asStateFlow()
@@ -121,10 +125,15 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
         MmkvManager.encodeSettings(AppConfig.PREF_UPDATE_USE_BUILTIN_DOWNLOADER, enabled)
     }
 
-    fun setDownloadSegments(value: Int) {
-        val clamped = SegmentPlan.clampSegmentCount(value)
-        _downloadSegments.value = clamped
-        MmkvManager.encodeSettings(AppConfig.PREF_UPDATE_DOWNLOAD_SEGMENTS, clamped.toString())
+    /**
+     * Сохраняет введённое число потоков СЫРОЙ строкой (только цифры, как
+     * отфильтровал UI). Пустая строка допустима — это «пользователь стирает
+     * поле», загрузчик прочитает дефолт. Клампинг — на стороне чтения.
+     */
+    fun setDownloadSegments(raw: String) {
+        val digitsOnly = raw.filter { it.isDigit() }
+        _downloadSegments.value = digitsOnly
+        MmkvManager.encodeSettings(AppConfig.PREF_UPDATE_DOWNLOAD_SEGMENTS, digitsOnly)
     }
 
     fun checkForUpdates() {

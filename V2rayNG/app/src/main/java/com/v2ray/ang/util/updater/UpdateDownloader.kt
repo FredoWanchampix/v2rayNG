@@ -61,6 +61,12 @@ object UpdateDownloader {
         val totalBytes: Long,
         val rangesSupported: Boolean,
         val validator: String?,
+        /**
+         * Content-Type из ответа на пробный запрос (может быть null, если сервер
+         * его не отдал). Используется для проверки, что сервер отдаёт APK, а не
+         * HTML-заглушку captive-portal (пункт 10 требований).
+         */
+        val contentType: String? = null,
     )
 
     /** Исход закачки ОДНОГО сегмента. */
@@ -230,20 +236,22 @@ object UpdateDownloader {
                         response.header("ETag"),
                         response.header("Last-Modified"),
                     )
+                    val contentType = response.header("Content-Type")
                     when (response.code) {
                         206 -> {
                             val range = ResumePolicy.parseContentRange(response.header("Content-Range"))
                             val total = range?.second ?: response.body.contentLength()
-                            Probe(totalBytes = total, rangesSupported = true, validator = validator)
+                            Probe(totalBytes = total, rangesSupported = true, validator = validator, contentType = contentType)
                         }
 
                         200 -> Probe(
                             totalBytes = response.body.contentLength(),
                             rangesSupported = false,
                             validator = validator,
+                            contentType = contentType,
                         )
 
-                        else -> Probe(totalBytes = -1L, rangesSupported = false, validator = validator)
+                        else -> Probe(totalBytes = -1L, rangesSupported = false, validator = validator, contentType = contentType)
                     }
                 }
             }

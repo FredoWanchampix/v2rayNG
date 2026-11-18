@@ -649,6 +649,7 @@
     <string name="update_download_error_http">ডাউনলোড ত্রুটি: %1$s</string>
     <string name="update_download_error_size_mismatch">আকারের অমিল: %1$d বাইট আশা করা হয়েছিল কিন্তু সার্ভার %2$d জানাচ্ছে।</string>
     <string name="update_download_error_object_changed">ডাউনলোডের সময় সার্ভারে ফাইল পরিবর্তিত হয়েছে। ডাউনলোড আবার শুরু হয়েছে; আবার চেষ্টা করুন।</string>
+    <string name="update_download_error_content_type">সার্ভার অপ্রত্যাশিত ধরনের ফাইল ফেরত দিয়েছে — ডাউনলোড থামানো হয়েছে। (%1$s)</string>
     <string name="update_download_profile_lost_toast">প্রোফাইল বন্ধ — ডাউনলোড বাধাগ্রস্ত হয়েছে।</string>
     <string name="update_download_profile_lost_notification">প্রোফাইল বন্ধ হয়েছে — ডাউনলোড থেমেছে। ডাউনলোড হওয়া অংশগুলো রাখা আছে: প্রোফাইল চালু করে আবার “ডাউনলোড” চাপুন।</string>
     <string name="update_check_profile_lost_toast">প্রোফাইল বন্ধ — আপডেট পরীক্ষা বাধাগ্রস্ত হয়েছে।</string>

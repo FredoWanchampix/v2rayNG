@@ -22,9 +22,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -126,8 +124,8 @@ fun CheckUpdateScreen(
             )
             if (useBuiltinDownloader) {
                 SegmentsField(
-                    storedValue = downloadSegments,
-                    onCommit = { viewModel.setDownloadSegments(it) },
+                    draftValue = downloadSegments,
+                    onDraftChange = { viewModel.setDownloadSegments(it) },
                 )
                 DownloadProgressBlock(
                     state = downloadState,
@@ -329,25 +327,28 @@ private fun DownloadProgressBlock(
  */
 @Composable
 private fun SegmentsField(
-    storedValue: Int,
-    onCommit: (Int) -> Unit,
+    draftValue: String,
+    onDraftChange: (String) -> Unit,
 ) {
-    var draft by remember(storedValue) { mutableStateOf(storedValue.toString()) }
-    val parsed = draft.trim().toIntOrNull()
+    // Значение приходит СЫРОЙ строкой из MMKV (через ViewModel) — это и есть
+    // черновик, поэтому локальный mutableStateOf не нужен: поле редактирует
+    // сам сохранённый текст (паттерн rememberMmkvString из SettingsActivity).
+    val parsed = draftValue.trim().toIntOrNull()
     val clamped = parsed?.let(SegmentPlan::clampSegmentCount)
+    // Ошибка, когда введено число вне 1..24: показываем красную рамку, но
+    // текст НЕ перезаписываем — пользователь видит, что набрал, и сам правит.
+    val outOfRange = parsed != null && clamped != parsed
 
     FormTextField(
         label = stringResource(R.string.update_download_segments_title),
-        value = draft,
+        value = draftValue,
         onValueChange = { raw ->
             // Принимаем только цифры: KeyboardType.Number не гарантирует
             // фильтрацию на всех клавиатурах (вставляемый текст проходит мимо).
-            draft = raw.filter { it.isDigit() }
-            val value = draft.toIntOrNull()?.let(SegmentPlan::clampSegmentCount)
-            if (value != null) onCommit(value)
+            onDraftChange(raw.filter { it.isDigit() })
         },
         keyboardType = KeyboardType.Number,
-        isError = parsed != null && clamped != parsed,
+        isError = outOfRange,
         supportingText = stringResource(
             R.string.update_download_segments_summary,
             SegmentPlan.MAX_SEGMENTS

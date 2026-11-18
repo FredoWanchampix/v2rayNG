@@ -647,6 +647,7 @@
     <string name="update_download_error_http">下載錯誤：%1$s</string>
     <string name="update_download_error_size_mismatch">大小不相符：預期 %1$d 位元組，但伺服器回報 %2$d。</string>
     <string name="update_download_error_object_changed">下載過程中伺服器上的檔案發生了變化。下載已重新開始，請重試。</string>
+    <string name="update_download_error_content_type">伺服器回傳了非預期的檔案類型，下載已停止。（%1$s）</string>
     <string name="update_download_profile_lost_toast">代理已關閉 — 下載已中止。</string>
     <string name="update_download_profile_lost_notification">代理已關閉 — 下載已停止。已下載的分塊會保留：開啟代理後輕觸「下載」即可繼續。</string>
     <string name="update_check_profile_lost_toast">代理已關閉 — 更新檢查已中止。</string>

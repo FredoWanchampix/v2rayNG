@@ -745,6 +745,7 @@
     <string name="update_download_error_http">Ошибка загрузки: %1$s</string>
     <string name="update_download_error_size_mismatch">Несовпадение размера: ожидалось %1$d байт, а сервер сообщает %2$d.</string>
     <string name="update_download_error_object_changed">Файл на сервере изменился во время загрузки. Загрузка начата заново; попробуйте ещё раз.</string>
+    <string name="update_download_error_content_type">Сервер вернул неожиданный тип файла — загрузка остановлена. (%1$s)</string>
     <string name="update_download_profile_lost_toast">Профиль отключён — загрузка прервана.</string>
     <string name="update_download_profile_lost_notification">Профиль отключился — загрузка остановлена. Скачанные части сохранены: включите профиль и нажмите «Скачать», чтобы продолжить.</string>
     <string name="update_check_profile_lost_toast">Профиль отключён — проверка обновлений прервана.</string>

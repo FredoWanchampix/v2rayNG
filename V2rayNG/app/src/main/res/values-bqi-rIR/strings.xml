@@ -649,6 +649,7 @@
     <string name="update_download_error_http">خەتا بۉرگاری: %1$s</string>
     <string name="update_download_error_size_mismatch">ئئنڌازه یکسان نڌار: %1$d بایت چاڤەڕی ڤابی ڤلی سرڤر %2$d گۉڌه.</string>
     <string name="update_download_error_object_changed">فایل سرڤر د هال بۉرگاری عۉڤض ڌار. بۉرگاری سی تازه شۉرو ڤابی؛ سی تازه بکۉشین.</string>
+    <string name="update_download_error_content_type">سرڤر یە جور فایل چاڤەڕی نڌیا ڤرگردۉن — بۉرگاری ڤاداشت. (%1$s)</string>
     <string name="update_download_profile_lost_toast">پروفایل خامۉشە — بۉرگاری ڤاداریڌ.</string>
     <string name="update_download_profile_lost_notification">پروفایل خامۉش ڤابی — بۉرگاری ڤایساد. پاره‌ل بۉرگاری ڌیا نیڌا ڤابیڌ: پروفایل نە رۉشن کۊنین ڤو «بۉرگاری» نە بکۉڌین تا دۉماڌۉمه.</string>
     <string name="update_check_profile_lost_toast">پروفایل خامۉشە — سیل ڤەروزرسانی ڤاداریڌ.</string>
