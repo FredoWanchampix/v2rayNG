@@ -224,6 +224,10 @@ private fun DownloadProgressBlock(
         DownloadState.Phase.READY_TO_INSTALL -> stringResource(R.string.update_download_ready_toast)
         DownloadState.Phase.FAILED -> stringResource(R.string.update_download_phase_failed, state.lastError)
         DownloadState.Phase.CANCELLED -> stringResource(R.string.update_download_cancelled)
+        // Профиль отключился во время загрузки — операция остановлена
+        // (требование владельца). Показываем отдельный текст, а не «ошибка»:
+        // part-файлы целы и докачка продолжится после включения профиля.
+        DownloadState.Phase.PROFILE_LOST -> stringResource(R.string.update_download_profile_lost_toast)
     }
 
     Column(
@@ -275,6 +279,7 @@ private fun DownloadProgressBlock(
                 DownloadState.Phase.PAUSED,
                 DownloadState.Phase.CANCELLED,
                 DownloadState.Phase.FAILED,
+                DownloadState.Phase.PROFILE_LOST,
                 -> {
                     OutlinedButton(onClick = onResume) {
                         Text(stringResource(R.string.update_download_action_resume))

@@ -104,6 +104,10 @@ object UpdateDecisions {
             DownloadState.Phase.WAITING_NETWORK,
             DownloadState.Phase.CANCELLED,
             DownloadState.Phase.FAILED,
+            // Профиль отключился — загрузка остановлена, но part-файлы целы:
+            // повторное «Скачать» (когда профиль снова включён) возобновит
+            // докачку с того же байта, а не начнёт заново.
+            DownloadState.Phase.PROFILE_LOST,
             DownloadState.Phase.IDLE,
             -> StartDecision.ResumeExisting
 

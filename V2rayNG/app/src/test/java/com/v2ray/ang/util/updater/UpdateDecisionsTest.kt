@@ -67,6 +67,10 @@ class UpdateDecisionsTest {
             DownloadState.Phase.WAITING_NETWORK,
             DownloadState.Phase.CANCELLED,
             DownloadState.Phase.FAILED,
+            // Профиль отключился во время загрузки: part-файлы целы, повторное
+            // «Скачать» (после включения профиля) продолжает докачку, а не
+            // начинает заново (требование владельца).
+            DownloadState.Phase.PROFILE_LOST,
             DownloadState.Phase.IDLE,
         )) {
             assertEquals(

@@ -184,6 +184,11 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
                 } else {
                     toastSuccess(R.string.update_already_latest_version)
                 }
+            } catch (e: UpdateCheckerManager.ProfileTurnedOffException) {
+                // Профиль отключился УЖЕ во время проверки (требование
+                // владельца): проверка прервана, показываем отдельный тост.
+                LogUtil.w(AppConfig.TAG, "Update check aborted, profile turned off: ${e.message}")
+                toast(R.string.update_check_profile_lost_toast)
             } catch (e: UpdateCheckerManager.NoActiveProfileException) {
                 // Raised when the route could not honour "via active profile".
                 LogUtil.w(AppConfig.TAG, "Update check refused: ${e.message}")

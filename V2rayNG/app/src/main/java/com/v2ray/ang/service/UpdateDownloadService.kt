@@ -50,6 +50,7 @@ import kotlin.coroutines.coroutineContext
 import okhttp3.Call
 import okhttp3.OkHttpClient
 import java.io.File
+import java.io.IOException
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -102,6 +103,32 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class UpdateDownloadService : Service() {
 
+    /**
+     * Сигналы паузы/отмены, пробрасываемые из колбэка записи байт.
+     *
+     * ОБА наследуют IOException НАМЕРЕННО, а не CancellationException.
+     *
+     * Почему это важно (найденный аудитом дефект): раньше при паузе колбэк
+     * бросал CancellationException. В [downloadSegmentLoop] такой перехват
+     * делал `return`, то есть сегмент завершался НАВСЕГДА. Но параллельно
+     * [cancelActiveCalls] рвёт сокет, и часть сегментов получала вместо этого
+     * обычный IOException -> Transient -> оставалась ждать в цикле. Возникала
+     * смешанная картина: одни сегменты вышли, другие ждут. После «Продолжить»
+     * дожили бы только ждущие, а вышедшие остались бы недокачанными, и склейка
+     * упала бы с «segment N incomplete», хотя part-файлы целы.
+     *
+     * Теперь оба сигнала идут ЕДИНЫМ путём: IOException -> Transient ->
+     * следующая итерация цикла, где флаг проверяется в самом верху
+     * (пауза -> ожидание, отмена -> выход). Поведение всех сегментов
+     * одинаковое, независимо от того, что успело произойти первым: проверка
+     * флага в колбэке или разрыв сокета.
+     *
+     * Реальная отмена корутины (downloadJob.cancel()) по-прежнему даёт
+     * CancellationException и обрабатывается отдельно.
+     */
+    private class PausedException : IOException("download paused by user")
+    private class CancelledException : IOException("download cancelled by user")
+
     companion object {
         private const val ACTIONS_PREFIX = "${AppConfig.ANG_PACKAGE}.action."
 
@@ -132,6 +159,16 @@ class UpdateDownloadService : Service() {
 
         /** Потолок полных рестартов загрузки (смена объекта на сервере): защита от циклов. */
         private const val MAX_FULL_RESTARTS = 5
+
+        /**
+         * Интервал проверки живости профиля (мс).
+         *
+         * [ActiveProfileRoute.resolve] делает TCP-пробу loopback-порта, поэтому
+         * слишком частый опрос был бы лишней нагрузкой; 2 секунды достаточно,
+         * чтобы пользователь увидел остановку почти сразу после выключения
+         * профиля, и при этом не дёргать сокет постоянно на медленной сети.
+         */
+        private const val PROFILE_WATCH_INTERVAL_MS = 2_000L
 
         /**
          * Запускает загрузку из UI-процесса. Одна активная загрузка на релиз
@@ -210,8 +247,19 @@ class UpdateDownloadService : Service() {
 
     private var progressJob: Job? = null
     private var downloadJob: Job? = null
+    private var profileWatchJob: Job? = null
     private var networkCallback: ConnectivityCallback? = null
     private val networkAvailable = AtomicBoolean(true)
+
+    /**
+     * Загрузка ОБЯЗАНА идти через активный профиль (свитч «через включённый
+     * профиль» включён). Пока флаг true, [profileWatchJob] следит за профилем и
+     * останавливает загрузку при его отключении — требование владельца:
+     * «если профиль отключился во время скачивания, нужно останавливать
+     * загрузку… тост, ошибка в логах и в уведомлении».
+     */
+    @Volatile
+    private var requireProfile = false
 
     /**
      * Рабочая папка загрузки. Выбирается ОДНАЖДЫ штатными средствами (без root):
@@ -237,6 +285,8 @@ class UpdateDownloadService : Service() {
 
     override fun onDestroy() {
         LogUtil.i(AppConfig.TAG, "UpdateDownloadService destroyed")
+        requireProfile = false
+        stopProfileWatch()
         serviceJob.cancel()
         // runBlocking в onDestroy (main thread) недопустим: cancel() у Call
         // неблокирующий, обходимся потокобезопасным множеством.
@@ -255,7 +305,12 @@ class UpdateDownloadService : Service() {
             ensureForeground()
         }
         when (action) {
-            ACTION_START -> handleStart(intent!!)
+            ACTION_START ->
+                // `!!` не нужен: K2 выводит non-null из ветки when, потому что
+                // action = intent?.action и совпадение с не-null константой
+                // возможно только при ненулевом intent. Лишнее утверждение
+                // давало warning «Unnecessary non-null assertion».
+                handleStart(intent)
             ACTION_PAUSE -> handlePause()
             ACTION_RESUME -> handleResume()
             ACTION_CANCEL -> handleCancel()
@@ -434,6 +489,9 @@ class UpdateDownloadService : Service() {
         pausedFlag.set(true)
         persistPhase(DownloadState.Phase.PAUSED)
         UpdateDownloadLogger.log(this, "paused by user at ${state.progressPercent()}% (${state.downloadedBytes()} of ${state.totalBytes} bytes)")
+        // На паузе загрузка не идёт, поэтому терять профиль нечего: наблюдение
+        // приостанавливаем, чтобы оно не превратило ручную паузу в PROFILE_LOST.
+        stopProfileWatch()
         cancelActiveCalls()
         showPausedNotification()
     }
@@ -446,13 +504,22 @@ class UpdateDownloadService : Service() {
         }
         state = persisted
         pausedFlag.set(false)
+        // Возобновление после остановки (пауза, отмена, PROFILE_LOST) всегда
+        // продолжает докачку ТОЙ ЖЕ цели: part-файлы на диске доверенные, их
+        // байты надо учесть в прогрессе (иначе шкала упала бы в ноль, хотя
+        // половина файла уже скачана).
         cancelledFlag.set(false)
+        trustExistingParts = true
+        bytesWrittenTotal.set(persisted.downloadedBytes())
         speedTracker.reset()
         if (downloadJob?.isActive != true) {
             registerNetworkCallback()
             launchDownload()
         } else {
             persistPhase(DownloadState.Phase.DOWNLOADING)
+            // Загрузка продолжается тем же клиентом и маршрутом: восстанавливаем
+            // наблюдение за профилем (на паузе оно было приостановлено).
+            if (requireProfile) startProfileWatch()
         }
         UpdateDownloadLogger.log(this, "resumed by user at ${state.progressPercent()}%")
     }
@@ -463,6 +530,8 @@ class UpdateDownloadService : Service() {
         // Требование владельца: отмена НЕ удаляет скачанное — part-файлы
         // остаются, следующий «Скачать» продолжит докачку с того же байта.
         UpdateDownloadLogger.log(this, "cancelled by user at ${state.progressPercent()}%; part files KEPT in ${workDir.absolutePath}")
+        requireProfile = false
+        stopProfileWatch()
         cancelActiveCalls()
         downloadJob?.cancel()
         downloadJob = null
@@ -527,6 +596,13 @@ class UpdateDownloadService : Service() {
         // Маршрут решается ОДНАЖДЫ на старте: тот же резолвер ActiveProfileRoute,
         // что у проверки обновлений (переиспользование, требование 9 промта).
         val route = resolveRoute(viaProfile)
+        // Требование владельца: если загрузка обязана идти через профиль, а
+        // профиль ОТКЛЮЧИЛСЯ во время скачивания — загрузку остановить (с тостом,
+        // записью в лог и уведомлением), а не продолжать через мёртвый прокси.
+        requireProfile = viaProfile
+        if (viaProfile) {
+            startProfileWatch()
+        }
         val client = UpdateHttpClient.build(route)
         UpdateDownloadLogger.log(
             this,
@@ -716,13 +792,19 @@ class UpdateDownloadService : Service() {
                 delay(TICK_INTERVAL_MS)
                 continue
             }
-            if (state.phase == DownloadState.Phase.PAUSED) {
+            // Сеть есть, а фаза осталась PAUSED/WAITING_NETWORK — восстанавливаем
+            // DOWNLOADING. Полагаться только на ConnectivityCallback нельзя: если
+            // registerNetworkCallback упал (нет ACCESS_NETWORK_STATE / OEM-ограничение),
+            // фаза залипла бы в «ожидание сети» навсегда при реально идущей закачке.
+            if (state.phase == DownloadState.Phase.PAUSED ||
+                state.phase == DownloadState.Phase.WAITING_NETWORK
+            ) {
                 persistPhase(DownloadState.Phase.DOWNLOADING)
             }
 
             val onBytes: (Long) -> Unit = { bytes ->
-                if (cancelledFlag.get()) throw CancellationException("user cancelled")
-                if (pausedFlag.get()) throw CancellationException("user paused")
+                if (cancelledFlag.get()) throw CancelledException()
+                if (pausedFlag.get()) throw PausedException()
                 bytesWrittenTotal.addAndGet(bytes)
             }
             val outcome = try {
@@ -755,6 +837,11 @@ class UpdateDownloadService : Service() {
                 }
 
                 is UpdateDownloader.SegmentOutcome.Transient -> {
+                    // Пауза/отмена пришли через Transient (см. PausedException):
+                    // спать backoff НЕЛЬЗЯ — иначе «Продолжить» сработает с
+                    // задержкой до MAX_RETRY_BACKOFF_MS. Идём сразу в начало
+                    // цикла, где флаги обработаны корректно.
+                    if (pausedFlag.get() || cancelledFlag.get()) continue
                     val backoff = minOf(MAX_RETRY_BACKOFF_MS, 1500L * attempt)
                     UpdateDownloadLogger.log(
                         this,
@@ -775,8 +862,17 @@ class UpdateDownloadService : Service() {
                     // Локальная проблема (416 / сервер проигнорировал Range /
                     // part длиннее сегмента): удаляем ТОЛЬКО этот part и качаем
                     // сегмент заново, остальные не трогаем.
-                    UpdateDownloadLogger.log(this, "segment ${segment.index} restart: ${outcome.reason}")
+                    //
+                    // Обязательно вычитаем удалённые байты из живого счётчика:
+                    // иначе при повторной закачке того же сегмента они попали бы
+                    // в bytesWrittenTotal второй раз, и прогресс/скорость
+                    // завысились бы (вплоть до залипания на 100% при серии
+                    // рестартов). Полный рестарт загрузки сбрасывает счётчик
+                    // целиком, здесь нужен точечный вычет.
+                    val discarded = if (partFile.exists()) partFile.length() else 0L
+                    UpdateDownloadLogger.log(this, "segment ${segment.index} restart: ${outcome.reason} (discarding $discarded bytes)")
                     partFile.delete()
+                    if (discarded > 0L) bytesWrittenTotal.addAndGet(-discarded)
                     persistSegmentProgress(segment.index, 0L)
                     delay(RESTART_DELAY_MS)
                 }
@@ -807,11 +903,17 @@ class UpdateDownloadService : Service() {
                 continue
             }
             val onBytes: (Long) -> Unit = { bytes ->
-                if (cancelledFlag.get()) throw CancellationException("user cancelled")
-                if (pausedFlag.get()) throw CancellationException("user paused")
+                if (cancelledFlag.get()) throw CancelledException()
+                if (pausedFlag.get()) throw PausedException()
                 bytesWrittenTotal.addAndGet(bytes)
             }
             val outcome = try {
+                // Single-stream перезапускается С НУЛЯ на каждой попытке (сервер
+                // без Range не может отдать часть объекта), поэтому счётчик
+                // сброшен: иначе каждая неудача добавляла бы свои байты повторно
+                // и скорость/прогресс завышались бы в разы.
+                bytesWrittenTotal.set(0L)
+                speedTracker.reset()
                 UpdateDownloader.downloadWhole(
                     client = client,
                     url = state.browserDownloadUrl,
@@ -830,6 +932,9 @@ class UpdateDownloadService : Service() {
                     return
                 }
                 is UpdateDownloader.SegmentOutcome.Transient -> {
+                    // Пауза/отмена -> без пятисекундного сна, флаги проверит
+                    // начало цикла.
+                    if (pausedFlag.get() || cancelledFlag.get()) continue
                     UpdateDownloadLogger.log(this, "single-stream transient error, retrying in 5s: ${outcome.reason}")
                     delay(5_000L)
                 }
@@ -940,6 +1045,8 @@ class UpdateDownloadService : Service() {
         )
         UpdateDownloadLogger.log(this, "READY: ${apkFile.absolutePath} sha256=$sha256 size=${apkFile.length()}")
         showReadyNotification(apkFile)
+        requireProfile = false
+        stopProfileWatch()
         stopProgressTicker()
         unregisterNetworkCallback()
         // Авто-установку решает main-процесс по флагу resumed-activity
@@ -947,7 +1054,8 @@ class UpdateDownloadService : Service() {
         broadcastReady(apkFile.absolutePath)
         // Сервис больше не нужен, но уведомление с кнопкой «Установить»
         // обязано жить и после выхода из клиента: DETACH оставляет его в
-        // шторке, а кнопка поднимет сервис заново по ACTION_INSTALL.
+        // шторке, а сама кнопка — это PendingIntent.getActivity прямо в
+        // системный установщик (см. showReadyNotification), сервис ей не нужен.
         stopForeground(STOP_FOREGROUND_DETACH)
         stopSelf()
     }
@@ -1003,7 +1111,28 @@ class UpdateDownloadService : Service() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .build()
-        startForeground(NotificationChannelType.UPDATE_DOWNLOAD.notificationId, notification)
+        // На Android 12+ (API 31) startForeground из запрещённого фона бросает
+        // ForegroundServiceStartNotAllowedException. Мы стартуем корректно
+        // (startForegroundService из UI / тап по уведомлению / BOOT_COMPLETED),
+        // но при sticky-рестарте решение принимает система, и гарантий нет.
+        // Падение сервиса убило бы загрузку, поэтому исключение гасим: part-файлы
+        // и состояние в MMKV целы, докачка продолжится (BootReceiver/«Скачать»).
+        // Двухаргументный startForeground — тот же вызов, что у доказанно
+        // работающих на этом устройстве (Android 16/API 36) sibling-сервисов
+        // SubscriptionUpdateService/CoreTestService через NotificationHelper:
+        // тип specialUse берётся из манифеста, дополнительно его не передаём.
+        try {
+            startForeground(NotificationChannelType.UPDATE_DOWNLOAD.notificationId, notification)
+        } catch (e: Exception) {
+            // На Android 12+ startForeground из запрещённого фона бросает
+            // ForegroundServiceStartNotAllowedException. Мы стартуем корректно
+            // (startForegroundService из UI / тап по уведомлению / BOOT_COMPLETED),
+            // но при sticky-рестарте решение принимает система. Падение сервиса
+            // убило бы загрузку, поэтому гасим исключение: part-файлы и состояние
+            // в MMKV целы, докачка продолжится (BootReceiver / «Скачать»).
+            LogUtil.e(AppConfig.TAG, "startForeground failed; download continues without FGS notification", e)
+            UpdateDownloadLogger.log(this, "startForeground FAILED: ${e.javaClass.simpleName}: ${e.message}", e)
+        }
     }
 
     private fun baseBuilder(): NotificationCompat.Builder {
@@ -1165,7 +1294,7 @@ class UpdateDownloadService : Service() {
                 putExtra(EXTRA_EXPECTED_SHA256, persisted.expectedSha256)
                 putExtra(EXTRA_DECLARED_SIZE, persisted.declaredSize)
             }
-            PendingIntent.getService(this, 1, intent, piFlags)
+            pendingIntentForService(1, intent)
         } else {
             // Нечего возобновлять: открываем экран проверки обновлений.
             checkUpdatePendingIntent()
@@ -1178,14 +1307,29 @@ class UpdateDownloadService : Service() {
     private fun buildMainPendingIntent(): PendingIntent =
         PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), piFlags)
 
-    /** Кнопка-команда самому сервису (пауза/возобновить/отмена/установить). */
+    /**
+     * Кнопка-команда самому сервису (пауза/возобновить/отмена).
+     *
+     * Используется [PendingIntent.getForegroundService], а не getService:
+     * onStartCommand безусловно вызывает ensureForeground() -> startForeground(),
+     * а на Android 12+ (API 31) startForeground в сервисе, запущенном как
+     * обычный фоновый, бросает ForegroundServiceStartNotAllowedException —
+     * кнопка «Пауза» в шторке просто не сработала бы. getForegroundService
+     * запускает сервис как foreground-сервис, что соответствует контракту.
+     * (API доступен с 26; minSdk 24 — ниже остаётся getService.)
+     */
     private fun servicePendingIntent(action: String): PendingIntent =
-        PendingIntent.getService(
-            this,
+        pendingIntentForService(
             action.hashCode(),
             Intent(this, UpdateDownloadService::class.java).setAction(action),
-            piFlags,
         )
+
+    private fun pendingIntentForService(requestCode: Int, intent: Intent): PendingIntent =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            PendingIntent.getForegroundService(this, requestCode, intent, piFlags)
+        } else {
+            PendingIntent.getService(this, requestCode, intent, piFlags)
+        }
 
     /** Открыть экран проверки обновлений (когда возобновлять нечего). */
     private fun checkUpdatePendingIntent(): PendingIntent =
@@ -1206,6 +1350,95 @@ class UpdateDownloadService : Service() {
     // -------------------------------------------------------------------------
     // Сеть, состояние, вспомогательное
     // -------------------------------------------------------------------------
+
+    /**
+     * Наблюдатель профиля: работает только когда [requireProfile] и загрузка
+     * активна. При потере профиля немедленно останавливает загрузку.
+     *
+     * Остановка — НЕ отмена скачанного: part-файлы остаются на диске, поэтому
+     * после включения профиля повторное «Скачать» продолжит докачку с того же
+     * байта (см. [UpdateDecisions.StartDecision.ResumeExisting] для PROFILE_LOST).
+     */
+    private fun startProfileWatch() {
+        profileWatchJob?.cancel()
+        profileWatchJob = serviceScope.launch {
+            while (coroutineContext.isActive) {
+                delay(PROFILE_WATCH_INTERVAL_MS)
+                if (!requireProfile) continue
+                if (cancelledFlag.get()) break
+                if (!state.isActive()) break
+                val route = runCatching { ActiveProfileRoute.resolve() }.getOrNull()
+                if (route == null) continue // не удалось опросить — не дёргаем загрузку
+                val usable = route.mode == ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY ||
+                    route.mode == ActiveProfileRoute.Mode.TUNNEL_DIRECT
+                if (!usable) {
+                    ActiveProfileRoute.log("Update download: profile lost", route)
+                    abortProfileLost()
+                    break
+                }
+            }
+        }
+    }
+
+    private fun stopProfileWatch() {
+        profileWatchJob?.cancel()
+        profileWatchJob = null
+    }
+
+    /**
+     * Останавливает загрузку из-за отключения профиля (требование владельца).
+     *
+     * Делает ВСЕ четыре вещи, которые он просил:
+     *  1. фаза [DownloadState.Phase.PROFILE_LOST] в персистентном состоянии;
+     *  2. причина пишется в лог-файл загрузки;
+     *  3. уведомление в шторке с этой причиной;
+     *  4. broadcast в UI -> тост «Профиль отключён — загрузка прервана».
+     *
+     * Part-файлы НЕ удаляются: докачка продолжится после включения профиля.
+     */
+    private fun abortProfileLost() {
+        requireProfile = false
+        cancelledFlag.set(true) // останавливает сегментные циклы без удаления part
+        val reason = getString(R.string.update_download_profile_lost_reason)
+        persistState(state.copy(phase = DownloadState.Phase.PROFILE_LOST, lastError = reason))
+        UpdateDownloadLogger.log(this, "PROFILE LOST: download stopped. $reason Part files kept at ${workDir.absolutePath}")
+        stopProgressTicker()
+        showProfileLostNotification()
+        MessageHelper.sendMsg2UI(
+            this,
+            AppConfig.MSG_UPDATE_DOWNLOAD_FAILED,
+            getString(R.string.update_download_profile_lost_toast),
+        )
+        serviceScope.launch {
+            cancelActiveCalls()
+            downloadJob?.cancel()
+            downloadJob = null
+            unregisterNetworkCallback()
+            stopForeground(STOP_FOREGROUND_DETACH)
+            stopSelf()
+        }
+    }
+
+    /** Уведомление об остановке из-за профиля: с кнопкой «Продолжить». */
+    private fun showProfileLostNotification() {
+        showNotification(
+            baseBuilder()
+                .setSmallIcon(R.drawable.ic_close_24dp)
+                .setContentTitle(getString(R.string.update_download_notification_title))
+                .setContentText(getString(R.string.update_download_profile_lost_notification))
+                .setStyle(
+                    NotificationCompat.BigTextStyle()
+                        .bigText(getString(R.string.update_download_profile_lost_notification))
+                )
+                .setOngoing(false)
+                .setAutoCancel(false)
+                .addAction(
+                    R.drawable.ic_play_24dp,
+                    getString(R.string.update_download_action_resume),
+                    buildRetryPendingIntent(),
+                )
+        )
+    }
 
     /**
      * Маршрут загрузки. Требование владельца: свитч «через включённый профиль»
@@ -1345,6 +1578,8 @@ class UpdateDownloadService : Service() {
     private fun failDownload(reason: String, keepNotification: Boolean = true) {
         persistState(state.copy(phase = DownloadState.Phase.FAILED, lastError = reason))
         UpdateDownloadLogger.log(this, "FAILED: $reason")
+        requireProfile = false
+        stopProfileWatch()
         stopProgressTicker()
         if (keepNotification) {
             showFailedNotification(reason)

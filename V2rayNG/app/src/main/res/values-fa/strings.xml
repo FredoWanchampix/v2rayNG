@@ -649,6 +649,10 @@
     <string name="update_download_error_http">خطای بارگیری: %1$s</string>
     <string name="update_download_error_size_mismatch">عدم تطابق اندازه: %1$d بایت انتظار می‌رفت اما سرور %2$d گزارش داد.</string>
     <string name="update_download_error_object_changed">فایل روی سرور هنگام بارگیری تغییر کرد. بارگیری از نو آغاز شد؛ دوباره تلاش کنید.</string>
+    <string name="update_download_profile_lost_toast">پروفایل خاموش است — بارگیری متوقف شد.</string>
+    <string name="update_download_profile_lost_notification">پروفایل خاموش شد — بارگیری متوقف شد. بخش‌های بارگیری‌شده نگه داشته می‌شوند: پروفایل را روشن کنید و «بارگیری» را بزنید تا ادامه یابد.</string>
+    <string name="update_check_profile_lost_toast">پروفایل خاموش است — بررسی به‌روزرسانی متوقف شد.</string>
+    <string name="update_download_profile_lost_reason">بارگیری باید ازطریق پروفایل فعال انجام می‌شد، اما پروفایل خاموش شد.</string>
     <string name="update_download_error_no_asset">فایل قابل بارگیری برای این دستگاه یافت نشد.</string>
     <string name="update_via_active_proxy_title">بررسی و بارگیری ازطریق پروفایل فعال</string>
     <string name="update_via_active_proxy_summary">وقتی روشن است، هم بررسی به‌روزرسانی و هم بارگیر داخلی دقیقاً ازطریق پروفایل درحال‌اجرا می‌روند. وقتی خاموش است، مستقیم.</string>

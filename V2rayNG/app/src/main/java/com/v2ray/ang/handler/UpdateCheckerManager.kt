@@ -55,6 +55,17 @@ object UpdateCheckerManager {
     class NoActiveProfileException(message: String) : IllegalStateException(message)
 
     /**
+     * Профиль БЫЛ включён, но ОТКЛЮЧИЛСЯ во время проверки обновлений.
+     *
+     * Требование владельца: в этом случае проверку останавливать, а не
+     * продолжать ретраить через мёртвый loopback-прокси (иначе пользователь
+     * ждал бы все 6 попыток по backoff и получил бы невнятную сетевую ошибку).
+     * Отдельный тип нужен, чтобы UI показал СВОЙ тост «профиль отключён —
+     * проверка прервана», а не «требуется включённый профиль».
+     */
+    class ProfileTurnedOffException(message: String) : IllegalStateException(message)
+
+    /**
      * @param includePreRelease when true, prerelease builds are considered.
      * @param viaActiveProfile when true the request must travel through the
      *   currently running profile; the call fails if no profile is active.
@@ -74,34 +85,23 @@ object UpdateCheckerManager {
         val route = ActiveProfileRoute.resolve()
         ActiveProfileRoute.log("Update check ($url)", route)
 
-        if (viaActiveProfile) {
-            when (route.mode) {
-                ActiveProfileRoute.Mode.NONE ->
-                    throw NoActiveProfileException(
-                        "No profile is running; the update check is configured to run only through the active profile"
-                    )
+        // Первая проверка: профиль должен быть пригоден УЖЕ до запроса.
+        ensureProfileUsable(viaActiveProfile, route)
 
-                ActiveProfileRoute.Mode.PROFILE_WITHOUT_LOCAL_PROXY ->
-                    // Профиль работает, но loopback HTTP inbound не поднят.
-                    // Идти напрямую нельзя: приложение исключено из собственного
-                    // туннеля (addDisallowedApplication / --uid-owner RETURN),
-                    // поэтому прямой сокет обошёл бы профиль.
-                    throw NoActiveProfileException(
-                        "Профиль запущен, но его локальный прокси не слушает порт. " +
-                            "Включите локальный прокси или используйте режим hev-tun/root, " +
-                            "где он включается автоматически."
-                    )
-
-                ActiveProfileRoute.Mode.TUNNEL_DIRECT -> Unit
-                // Профиль FPTN: системный TUN без HTTP-прокси, приложение внутри
-                // туннеля. httpPort == 0 -> запрос идёт напрямую и физически
-                // проходит через fptn0, то есть строго через активный профиль.
-
-                ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY -> Unit
-            }
-        }
-
-        val response = fetchWithRetry(FETCH_ATTEMPTS) {
+        val response = fetchWithRetry(
+            attempts = FETCH_ATTEMPTS,
+            // Перед КАЖДОЙ повторной попыткой проверяем профиль заново: он мог
+            // отключиться уже в процессе. Без этого мы отретраили бы все 6
+            // попыток через мёртвый прокси и выдали бы невнятную сетевую ошибку
+            // вместо честной «профиль отключён — проверка прервана».
+            onBeforeRetry = {
+                if (viaActiveProfile) {
+                    val nowRoute = ActiveProfileRoute.resolve()
+                    ActiveProfileRoute.log("Update check re-check before retry", nowRoute)
+                    ensureProfileUsable(viaActiveProfile, nowRoute, profileWasWorking = true)
+                }
+            },
+        ) {
             HttpUtil.getUrlContentWithUserAgent(
                 UrlContentRequest(
                     url = url,
@@ -119,6 +119,15 @@ object UpdateCheckerManager {
                 )
             )
         }.orEmpty()
+
+        // Профиль мог отключиться прямо во время запроса/чтения ответа: тогда
+        // результат получен НЕ через профиль, и требованию «строго через
+        // профиль» он не удовлетворяет. Прерываем, а не показываем данные,
+        // добытые в обход профиля.
+        if (viaActiveProfile) {
+            val finalRoute = ActiveProfileRoute.resolve()
+            ensureProfileUsable(viaActiveProfile, finalRoute, profileWasWorking = true)
+        }
 
         if (response.isBlank()) {
             throw IllegalStateException("Empty response from $url")
@@ -177,12 +186,62 @@ object UpdateCheckerManager {
     }
 
     /**
+     * Проверяет, что маршрут действительно пригоден для «строго через профиль».
+     *
+     * @param profileWasWorking true, когда профиль ранее уже был пригоден, то
+     *   есть он ОТКЛЮЧИЛСЯ по ходу операции. Тогда бросается
+     *   [ProfileTurnedOffException] (тост «профиль отключён — проверка
+     *   прервана»), а не [NoActiveProfileException] («требуется включённый
+     *   профиль»): это разные ситуации и разные подсказки пользователю.
+     *
+     * Идти напрямую вместо профиля нельзя: приложение исключено из собственного
+     * туннеля (addDisallowedApplication / --uid-owner RETURN), поэтому прямой
+     * сокет обошёл бы профиль — это молчаливое нарушение требования владельца.
+     */
+    private fun ensureProfileUsable(
+        viaActiveProfile: Boolean,
+        route: ActiveProfileRoute.Route,
+        profileWasWorking: Boolean = false,
+    ) {
+        if (!viaActiveProfile) return
+        when (route.mode) {
+            ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY -> Unit
+            // Профиль FPTN: системный TUN без HTTP-прокси, приложение внутри
+            // туннеля. httpPort == 0 -> запрос идёт напрямую и физически
+            // проходит через fptn0, то есть строго через активный профиль.
+            ActiveProfileRoute.Mode.TUNNEL_DIRECT -> Unit
+
+            ActiveProfileRoute.Mode.NONE ->
+                if (profileWasWorking) {
+                    throw ProfileTurnedOffException(
+                        "Profile turned off during the update check; the check was aborted"
+                    )
+                } else {
+                    throw NoActiveProfileException(
+                        "No profile is running; the update check is configured to run only through the active profile"
+                    )
+                }
+
+            ActiveProfileRoute.Mode.PROFILE_WITHOUT_LOCAL_PROXY ->
+                throw NoActiveProfileException(
+                    "Профиль запущен, но его локальный прокси не слушает порт. " +
+                        "Включите локальный прокси или используйте режим hev-tun/root, " +
+                        "где он включается автоматически."
+                )
+        }
+    }
+
+    /**
      * Fetches with retries, reusing the subscription updater's policy: only
      * IOException/SSLException are retried, with a bounded backoff. Restrictive
      * networks drop TLS handshakes for tens of seconds at a time, and a single
      * dropped handshake must not be reported as "already up to date".
      */
-    private fun fetchWithRetry(attempts: Int, fetch: () -> String): String {
+    private fun fetchWithRetry(
+        attempts: Int,
+        onBeforeRetry: (() -> Unit)? = null,
+        fetch: () -> String,
+    ): String {
         var lastError: Exception? = null
         for (attempt in 1..attempts) {
             try {
@@ -195,6 +254,11 @@ object UpdateCheckerManager {
                     "Update check attempt $attempt/$attempts failed: ${e.message}"
                 )
                 if (!transientError || attempt == attempts) break
+                // Перед повтором даём вызывающему коду прервать серию: например,
+                // если обязательный профиль выключился, продолжать бессмысленно.
+                // Исключение из onBeforeRetry (ProfileTurnedOffException)
+                // намеренно НЕ перехватывается — оно должно выйти наружу.
+                onBeforeRetry?.invoke()
                 try {
                     Thread.sleep(minOf(1500L * attempt, 6000L))
                 } catch (_: InterruptedException) {

@@ -647,6 +647,10 @@
     <string name="update_download_error_http">下载错误：%1$s</string>
     <string name="update_download_error_size_mismatch">大小不匹配：预期 %1$d 字节，但服务器报告 %2$d。</string>
     <string name="update_download_error_object_changed">下载过程中服务器上的文件发生了变化。下载已重新开始，请重试。</string>
+    <string name="update_download_profile_lost_toast">代理已关闭 — 下载已中断。</string>
+    <string name="update_download_profile_lost_notification">代理已关闭 — 下载已停止。已下载的分块会保留：开启代理后点按“下载”即可继续。</string>
+    <string name="update_check_profile_lost_toast">代理已关闭 — 更新检查已中断。</string>
+    <string name="update_download_profile_lost_reason">下载要求通过活动配置文件进行，但该配置文件已关闭。</string>
     <string name="update_download_error_no_asset">未找到适合此设备的可下载文件。</string>
     <string name="update_via_active_proxy_title">通过活动配置文件检查并下载</string>
     <string name="update_via_active_proxy_summary">开启时，检查更新和内置下载都严格通过正在运行的配置文件进行；关闭时则直连。</string>

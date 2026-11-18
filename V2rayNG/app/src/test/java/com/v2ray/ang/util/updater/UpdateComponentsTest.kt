@@ -224,6 +224,8 @@ class DownloadStateTest {
         val inactive = listOf(
             DownloadState.Phase.IDLE, DownloadState.Phase.READY_TO_INSTALL,
             DownloadState.Phase.FAILED, DownloadState.Phase.CANCELLED,
+            // Профиль отключился — загрузка остановлена, монитор снят.
+            DownloadState.Phase.PROFILE_LOST,
         )
         active.forEach { assertTrue(state(1L, 2L, it).isActive(), "$it должна быть активной") }
         inactive.forEach { assertFalse(state(1L, 2L, it).isActive(), "$it НЕ должна быть активной") }

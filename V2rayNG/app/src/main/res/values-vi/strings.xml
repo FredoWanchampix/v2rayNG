@@ -647,6 +647,10 @@
     <string name="update_download_error_http">Lỗi tải: %1$s</string>
     <string name="update_download_error_size_mismatch">Kích thước lệch: mong đợi %1$d byte nhưng máy chủ báo %2$d.</string>
     <string name="update_download_error_object_changed">Tệp trên máy chủ đã thay đổi trong lúc tải. Quá trình tải đã khởi động lại; hãy thử lại.</string>
+    <string name="update_download_profile_lost_toast">Hồ sơ đã tắt — quá trình tải bị gián đoạn.</string>
+    <string name="update_download_profile_lost_notification">Hồ sơ đã tắt — tải xuống đã dừng. Các phần đã tải được giữ lại: bật hồ sơ rồi nhấn Tải xuống để tiếp tục.</string>
+    <string name="update_check_profile_lost_toast">Hồ sơ đã tắt — việc kiểm tra cập nhật bị gián đoạn.</string>
+    <string name="update_download_profile_lost_reason">Tải xuống yêu cầu đi qua hồ sơ đang bật, nhưng hồ sơ đó đã tắt.</string>
     <string name="update_download_error_no_asset">Không tìm thấy tệp tải được cho thiết bị này.</string>
     <string name="update_via_active_proxy_title">Kiểm tra và tải qua hồ sơ đang bật</string>
     <string name="update_via_active_proxy_summary">Khi bật, cả việc kiểm tra cập nhật và tải tích hợp đều đi nghiêm ngặt qua hồ sơ đang chạy. Khi tắt, đi trực tiếp.</string>
