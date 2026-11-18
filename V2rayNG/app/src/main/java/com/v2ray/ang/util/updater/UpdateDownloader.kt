@@ -325,9 +325,21 @@ object UpdateDownloader {
         val segmentSize = segmentEndInclusive - segmentStart + 1
         val existing = if (partFile.exists()) partFile.length() else 0L
 
+        // Part ДЛИННЕЕ сегмента — битый (например, прошлая сессия писала по
+        // другой раскладке до проверки подписи, или диск дал дубль). Такой part
+        // нельзя считать готовым: склейка сверяет точный размер и упала бы с
+        // Error НАВСЕГДА (повторные «Повторить» мерджили бы тот же мусор).
+        // Возвращаем Restart без newValidator: вызывающий удалит ТОЛЬКО этот
+        // part и закачает сегмент заново.
+        if (existing > segmentSize) {
+            return@withContext SegmentOutcome.Restart(
+                "part longer than segment: have=$existing want=$segmentSize"
+            )
+        }
+
         // Сегмент уже скачан целиком: успех без запроса (лишний запрос на
         // плохой сети дорог, а повторный вход в цикл докачки безопасен).
-        if (existing >= segmentSize) {
+        if (existing == segmentSize) {
             return@withContext SegmentOutcome.Complete(bytesWritten = 0L, validator = expectedValidator)
         }
 

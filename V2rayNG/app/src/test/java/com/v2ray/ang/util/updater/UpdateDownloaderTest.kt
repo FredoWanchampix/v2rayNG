@@ -214,6 +214,24 @@ class UpdateDownloaderTest {
     }
 
     @Test
+    fun `oversized part restarts instead of poisoning the merge`() = runBlocking {
+        server.dispatcher = RangeDispatcher()
+        val part = File(tempDirPath, "over.part")
+        // Part ДЛИННЕЕ сегмента (битый/чужая раскладка): без защиты merge падал
+        // бы с Error на каждой попытке («segment incomplete»), а повтор не лечил.
+        part.writeBytes(payload.copyOfRange(0, 5000))
+        val outcome = UpdateDownloader.downloadSegment(
+            client, url(), part, 0L, 999L, "\"W/v1"", {}, allowAll,
+        )
+        assertTrue(
+            outcome is UpdateDownloader.SegmentOutcome.Restart,
+            "part длиннее сегмента => Restart (удалить свой part и закачать заново), получили $outcome",
+        )
+        assertTrue((outcome as UpdateDownloader.SegmentOutcome.Restart).newValidator == null,
+            "локальный рестарт сегмента, НЕ полный рестарт загрузки")
+    }
+
+    @Test
     fun `truncated body is transient, never a false complete`() = runBlocking {
         // Сервер обещает Content-Range на весь файл, но присылает лишь 2 МБ.
         server.dispatcher = RangeDispatcher(truncateAt = 2_000_000L)
