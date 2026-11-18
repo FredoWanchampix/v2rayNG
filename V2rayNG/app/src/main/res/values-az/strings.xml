@@ -655,6 +655,8 @@
     <string name="update_download_profile_lost_notification">Profil söndü — yükləmə dayandı. Yüklənmiş hissələr saxlanılır: profili yandırıb «Yüklə» düyməsinə toxunun.</string>
     <string name="update_check_profile_lost_toast">Profil sönülüdür — yenilənmə yoxlaması dayandı.</string>
     <string name="update_skipped_releases_header">Buraxılmış buraxılış sayı: %1$d.</string>
+    <string name="sub_update_via_active_proxy">Yalnız aktiv proksi üzərindən yenilə</string>
+    <string name="sub_update_via_active_proxy_tip">Açıq olduqda yeniləmə yalnız proksi-profil işləyəndə yerinə yetirilir. Trafik ciddi şəkildə proksidən keçir.</string>
     <string name="update_download_error_file_missing">Yüklənmiş yenilənmə faylı yoxdur. Ola bilsin, yükləmə qovluğundan silinib.</string>
     <string name="title_wl_search">Sabit profilləri tap (ağ siyahı yoxlaması)</string>
     <string name="title_sort_by_speed_results">Sürətə görə sırala</string>

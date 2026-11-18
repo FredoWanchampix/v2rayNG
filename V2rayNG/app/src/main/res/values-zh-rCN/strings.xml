@@ -652,6 +652,8 @@
     <string name="update_download_profile_lost_notification">代理已关闭 — 下载已停止。已下载的分块会保留：开启代理后点按“下载”即可继续。</string>
     <string name="update_check_profile_lost_toast">代理已关闭 — 更新检查已中断。</string>
     <string name="update_skipped_releases_header">错过了 %1$d 个版本：</string>
+    <string name="sub_update_via_active_proxy">仅通过活动代理更新</string>
+    <string name="sub_update_via_active_proxy_tip">启用后，仅当代理配置文件正在运行时才会执行更新。流量严格通过代理。</string>
     <string name="update_download_error_file_missing">已下载的更新文件不存在，可能已从下载文件夹中删除。</string>
     <string name="title_wl_search">查找稳定配置（白名单检查）</string>
     <string name="title_sort_by_speed_results">按速度排序</string>

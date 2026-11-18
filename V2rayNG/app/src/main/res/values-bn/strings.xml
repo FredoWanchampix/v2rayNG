@@ -654,6 +654,8 @@
     <string name="update_download_profile_lost_notification">প্রোফাইল বন্ধ হয়েছে — ডাউনলোড থেমেছে। ডাউনলোড হওয়া অংশগুলো রাখা আছে: প্রোফাইল চালু করে আবার “ডাউনলোড” চাপুন।</string>
     <string name="update_check_profile_lost_toast">প্রোফাইল বন্ধ — আপডেট পরীক্ষা বাধাগ্রস্ত হয়েছে।</string>
     <string name="update_skipped_releases_header">%1$d টি রিলিজ মিস হয়েছে:</string>
+    <string name="sub_update_via_active_proxy">শুধুমাত্র সক্রিয় প্রক্সির মাধ্যমে আপডেট</string>
+    <string name="sub_update_via_active_proxy_tip">চালু থাকলে, আপডেট তখনই চলবে যখন প্রক্সি প্রোফাইল চলমান থাকে। ট্রাফিক কঠোরভাবে প্রক্সির মাধ্যমে যায়।</string>
     <string name="update_download_error_file_missing">ডাউনলোড করা আপডেট ফাইলটি নেই। সম্ভবত ডাউনলোড ফোল্ডার থেকে মুছে ফেলা হয়েছে।</string>
     <string name="title_wl_search">স্থিতিশীল প্রোফাইল খুঁজুন (হোয়াইটলিস্ট পরীক্ষা)</string>
     <string name="title_sort_by_speed_results">গতি অনুযায়ী সাজান</string>

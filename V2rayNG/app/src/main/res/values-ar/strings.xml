@@ -662,6 +662,8 @@
     <string name="update_download_profile_lost_notification">أُطفئ الملف الشخصي — توقّف التنزيل. تُحفظ الأجزاء المُنزّلة: شغّل الملف الشخصي ثم اضغط «تنزيل» للمتابعة.</string>
     <string name="update_check_profile_lost_toast">الملف الشخصي مُطفأ — توقّف فحص التحديث.</string>
     <string name="update_skipped_releases_header">فاتك %1$d إصدارًا:</string>
+    <string name="sub_update_via_active_proxy">التحديث فقط عبر الوكيل النشط</string>
+    <string name="sub_update_via_active_proxy_tip">عند التفعيل، لا يجري التحديث إلا إذا كان ملف الوكيل يعمل. تمر الحركة строго عبر الوكيل.</string>
     <string name="update_download_error_file_missing">ملف التحديث المُنزّل غير موجود. ربما حُذف من مجلد التنزيلات.</string>
     <string name="title_wl_search">العثور على ملفات تعريف مستقرة (فحص القائمة البيضاء)</string>
     <string name="title_sort_by_speed_results">فرز حسب السرعة</string>
