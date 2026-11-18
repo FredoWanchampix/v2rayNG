@@ -74,7 +74,10 @@ class UpdateDownloaderTest {
 
     @AfterEach
     fun tearDown() {
-        server.shutdown()
+        // В артефакте mockwebserver3 (линия okhttp 5.x) сервер закрывается через
+        // Closeable.close(): метода shutdown() там НЕТ (он остался только в
+        // legacy-пакете okhttp3.mockwebserver). Проверял по sources-jar 5.5.1.
+        server.close()
     }
 
     private fun url(): String = server.url("/releases/download/x/app.apk").toString()

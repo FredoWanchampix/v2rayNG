@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test
 class SegmentPlanTest {
 
     @Test
-    fun `segment count is clamped to 1..24`() {
+    fun `segment count is clamped to 1 up to 24`() {
         assertEquals(1, SegmentPlan.clampSegmentCount(0))
         assertEquals(1, SegmentPlan.clampSegmentCount(-5))
         assertEquals(24, SegmentPlan.clampSegmentCount(100))
