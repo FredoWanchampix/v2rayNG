@@ -1547,11 +1547,22 @@ class UpdateDownloadService : Service() {
         val speed = speedTracker.bytesPerSecond(System.currentTimeMillis())
         val eta = speedTracker.etaMillis(System.currentTimeMillis(), state.totalBytes)
         val text = buildString {
-            append(getString(R.string.update_download_progress_line, percent, state.assetName))
-            append("\n")
-            append(speed.toSpeedString())
-            if (eta != null && eta > 0L) {
-                append(" • ").append(getString(R.string.update_download_eta, formatEta(eta)))
+            // PROBING: процента ещё физически нет (размер не подтверждён
+            // сервером). Показ «0%» на этом этапе читался пользователем как
+            // «загрузка зависла на 0%» (жалоба 19.11) — честно пишем
+            // «подготовка» и имя цели, процент появится с первой записью байт.
+            if (state.phase == DownloadState.Phase.PROBING) {
+                append(getString(R.string.update_download_preparing))
+                if (state.assetName.isNotEmpty()) append(" ").append(state.assetName)
+            } else {
+                append(getString(R.string.update_download_progress_line, percent, state.assetName))
+            }
+            if (state.phase != DownloadState.Phase.PROBING) {
+                append("\n")
+                append(speed.toSpeedString())
+                if (eta != null && eta > 0L) {
+                    append(" • ").append(getString(R.string.update_download_eta, formatEta(eta)))
+                }
             }
         }
         showNotification(
@@ -1559,7 +1570,9 @@ class UpdateDownloadService : Service() {
                 .setContentTitle(getString(R.string.update_download_notification_title))
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-                .setProgress(100, percent, false)
+                // На PROBING размер ещё не подтверждён сервером: честный
+                // неопределённый (бегущий) индикатор вместо пустой шкалы «0%».
+                .setProgress(100, percent, state.phase == DownloadState.Phase.PROBING)
                 .setOngoing(true)
                 .addAction(R.drawable.ic_pause_24dp, getString(R.string.update_download_action_pause), servicePendingIntent(ACTION_PAUSE))
                 .addAction(R.drawable.ic_close_24dp, getString(R.string.action_cancel), servicePendingIntent(ACTION_CANCEL))
