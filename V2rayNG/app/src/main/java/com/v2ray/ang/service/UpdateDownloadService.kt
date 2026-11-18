@@ -1558,6 +1558,12 @@ class UpdateDownloadService : Service() {
         val speed = speedTracker.bytesPerSecond(System.currentTimeMillis())
         val eta = speedTracker.etaMillis(System.currentTimeMillis(), state.totalBytes)
         val text = buildString {
+            // Тег релиза первой строкой: имя файла одинаково у разных бет
+            // одной версии, без тега пользователь (и возобновление из шторки)
+            // не видит, КАКОЙ релиз качается (дефект 19.11).
+            if (state.releaseTag.isNotEmpty()) {
+                append(state.releaseTag).append("\n")
+            }
             // PROBING: процента ещё физически нет (размер не подтверждён
             // сервером). Показ «0%» на этом этапе читался пользователем как
             // «загрузка зависла на 0%» (жалоба 19.11) — честно пишем
@@ -1592,10 +1598,16 @@ class UpdateDownloadService : Service() {
 
     private fun showPausedNotification() {
         val percent = currentPercent()
+        val line = if (state.releaseTag.isNotEmpty()) {
+            "${state.releaseTag}\n" + getString(R.string.update_download_paused_line, percent)
+        } else {
+            getString(R.string.update_download_paused_line, percent)
+        }
         showNotification(
             baseBuilder()
                 .setContentTitle(getString(R.string.update_download_notification_title))
-                .setContentText(getString(R.string.update_download_paused_line, percent))
+                .setContentText(line)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(line))
                 .setProgress(100, percent, false)
                 .setOngoing(true)
                 .addAction(R.drawable.ic_play_24dp, getString(R.string.update_download_action_resume), servicePendingIntent(ACTION_RESUME))
@@ -1616,10 +1628,16 @@ class UpdateDownloadService : Service() {
 
     private fun showWaitingNetworkNotification() {
         val percent = currentPercent()
+        val line = if (state.releaseTag.isNotEmpty()) {
+            "${state.releaseTag}\n" + getString(R.string.update_download_waiting_network_line, percent)
+        } else {
+            getString(R.string.update_download_waiting_network_line, percent)
+        }
         showNotification(
             baseBuilder()
                 .setContentTitle(getString(R.string.update_download_notification_title))
-                .setContentText(getString(R.string.update_download_waiting_network_line, percent))
+                .setContentText(line)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(line))
                 .setProgress(100, percent, false)
                 .setOngoing(true)
                 .addAction(R.drawable.ic_close_24dp, getString(R.string.action_cancel), servicePendingIntent(ACTION_CANCEL))
