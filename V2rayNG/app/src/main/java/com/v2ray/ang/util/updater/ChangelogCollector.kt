@@ -158,7 +158,12 @@ object ChangelogCollector {
         return skipped.joinToString("\n\n") { release ->
             val date = release.publishedAt.substringBefore('T')
             val header = if (date.isEmpty()) release.tagName else "${release.tagName} ($date)"
-            "$header\n${release.body.trim()}"
+            // Пустое body (релиз без описания) не должно оставлять висячий
+            // перевод строки после заголовка блока. orEmpty() страхует от null,
+            // который Gson способен подставить в non-null поле Kotlin в обход
+            // проверки типов (ответ API с "body": null).
+            val body = release.body.orEmpty().trim()
+            if (body.isEmpty()) header else "$header\n$body"
         }
     }
 }

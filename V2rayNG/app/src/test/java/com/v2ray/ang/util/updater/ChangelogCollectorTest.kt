@@ -119,6 +119,15 @@ class ChangelogCollectorTest {
     }
 
     @Test
+    fun `release with empty body yields header only without dangling newline`() {
+        val notes = ChangelogCollector.buildNotes(
+            listOf(rel("v2.5.0", "2026-02-01T00:00:00Z", body = "   ")),
+            fallback = "fb",
+        )
+        assertEquals("v2.5.0 (2026-02-01)", notes)
+    }
+
+    @Test
     fun `empty skipped falls back to single release body`() {
         assertEquals("тело", ChangelogCollector.buildNotes(emptyList(), fallback = "тело"))
     }
