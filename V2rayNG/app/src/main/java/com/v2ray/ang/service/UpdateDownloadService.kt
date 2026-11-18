@@ -831,17 +831,37 @@ class UpdateDownloadService : Service() {
                 return
             }
 
+            // Part-файлы привязаны к раскладке сегментов. Если между запусками
+            // изменилось число потоков (настройка) или размер объекта (сервер
+            // пересобрал ассет), прежние part чужие: докачка по ним дала бы
+            // битый файл. Подпись «размер:число_сегментов» выявляет это ДО
+            // закачки и чистит устаревшие part.
+            val signature = SegmentPlan.signature(probe.totalBytes, state.requestedSegments)
+            if (trustExistingParts &&
+                !SegmentPlan.partsReusable(state.planSignature, probe.totalBytes, state.requestedSegments)
+            ) {
+                UpdateDownloadLogger.log(
+                    this,
+                    "segment plan changed (stored=${state.planSignature} now=$signature): clearing stale part files before resume"
+                )
+                clearPartFiles(state.assetName)
+                trustExistingParts = false
+                bytesWrittenTotal.set(0L)
+                speedTracker.reset()
+            }
+
             persistState(
                 state.copy(
                     totalBytes = probe.totalBytes,
                     validator = probe.validator,
                     rangesSupported = probe.rangesSupported,
+                    planSignature = signature,
                     phase = DownloadState.Phase.DOWNLOADING,
                 )
             )
             UpdateDownloadLogger.log(
                 this,
-                "probe ok: total=${probe.totalBytes} ranges=${probe.rangesSupported} validator=${probe.validator}"
+                "probe ok: total=${probe.totalBytes} ranges=${probe.rangesSupported} validator=${probe.validator} plan=$signature"
             )
 
             val needFullRestart = if (probe.rangesSupported) {

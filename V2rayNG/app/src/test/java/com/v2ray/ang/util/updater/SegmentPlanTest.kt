@@ -80,6 +80,30 @@ class SegmentPlanTest {
     }
 
     @Test
+    fun `signature changes when size or segment count changes`() {
+        val total = 8_000_000L
+        val s8 = SegmentPlan.signature(total, 8)
+        // То же число сегментов при другой настройке (8 МБ / 1 МБ = 8) — подпись та же.
+        assertEquals(s8, SegmentPlan.signature(total, 24))
+        // Другое число сегментов (больше файл) — подпись другая.
+        assertTrue(s8 != SegmentPlan.signature(24_000_000L, 8))
+        // Другой размер при том же числе сегментов — подпись другая.
+        assertTrue(s8 != SegmentPlan.signature(8_000_001L, 8))
+    }
+
+    @Test
+    fun `parts are reusable only for the same signature`() {
+        val total = 8_000_000L
+        val sig = SegmentPlan.signature(total, 8)
+        assertTrue(SegmentPlan.partsReusable(sig, total, 8))
+        // Настройку поменяли на 4: раскладка другая (4 сегмента по 2 МБ),
+        // прежние part чужие.
+        assertTrue(!SegmentPlan.partsReusable(sig, total, 4))
+        // Пустая подпись (старое состояние без подписи) — доверять нельзя.
+        assertTrue(!SegmentPlan.partsReusable("", total, 8))
+    }
+
+    @Test
     fun `contiguity check rejects broken plans`() {
         // Дыра между сегментами.
         val broken = listOf(
