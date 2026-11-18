@@ -298,24 +298,16 @@ object UpdateCheckerManager {
      * `v2.3.15-engines-ui2`); only the leading dotted version is comparable, so
      * everything from the first '-' is dropped after stripping 'v'.
      */
-    private fun parseVersion(tag: String): String =
-        tag.removePrefix("v").substringBefore("-")
-
     /**
-     * Compares dotted numeric versions. Non-numeric segments are treated as 0
-     * so a malformed tag can never throw and abort the whole check.
+     * Разбор и сравнение версий делегированы [ChangelogCollector]: две
+     * реализации сравнения могли бы разойтись при правке одной из них, а от
+     * этого правила зависит и предложение обновления, и сбор пропущенных
+     * релизов. Логика там же доказана JVM-тестом.
      */
-    private fun compareVersions(version1: String, version2: String): Int {
-        val v1 = version1.split(".")
-        val v2 = version2.split(".")
+    private fun parseVersion(tag: String): String = ChangelogCollector.parseVersion(tag)
 
-        for (i in 0 until maxOf(v1.size, v2.size)) {
-            val num1 = if (i < v1.size) v1[i].toIntOrNull() ?: 0 else 0
-            val num2 = if (i < v2.size) v2[i].toIntOrNull() ?: 0 else 0
-            if (num1 != num2) return num1 - num2
-        }
-        return 0
-    }
+    private fun compareVersions(version1: String, version2: String): Int =
+        ChangelogCollector.compareVersions(version1, version2)
 
     /**
      * Собирает релизы, пропущенные пользователем (строго новее установленного),
