@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.viewModelScope
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.dto.CheckUpdateResult
@@ -26,6 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class CheckUpdateViewModel(application: Application) : BaseViewModel(application) {
@@ -85,7 +87,8 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
                     // (живёт всё время работы main-процесса, даже если этот
                     // экран закрыт). Здесь только обновляем UI-состояние — и
                     // тоже сверяем с фактом на диске (файл могли успеть удалить).
-                    refreshReadyState()
+                    // onReceive выполняется в main-потоке, поэтому сверка — в IO.
+                    viewModelScope.launch(Dispatchers.IO) { refreshReadyState() }
                 }
 
                 AppConfig.MSG_UPDATE_DOWNLOAD_FAILED -> {
@@ -109,8 +112,9 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
         // (Files и т.п.), пока клиента не было в памяти. Персистентное состояние
         // при этом всё ещё READY_TO_INSTALL, и экран показал бы кнопку
         // «Установить» для НЕСУЩЕСТВУЮЩЕГО файла (баг владельца). Поэтому при
-        // открытии экрана готовность сверяется с ФАКТОМ на диске.
-        refreshReadyState()
+        // открытии экрана готовность сверяется с ФАКТОМ на диске — в фоне,
+        // чтобы stat/mkdirs не шли в главном потоке.
+        viewModelScope.launch(Dispatchers.IO) { refreshReadyState() }
     }
 
     /**
@@ -318,7 +322,9 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
         val apkNow = state.apkPath.takeIf { it.isNotBlank() }?.let(::File)
         if (apkNow != null && !apkNow.exists()) {
             toastError(R.string.update_download_error_file_missing)
-            refreshReadyState()
+            _downloadState.value = DownloadState()
+            // Сброс устаревшей готовности (stat/mkdirs) — в фоне, не в main.
+            viewModelScope.launch(Dispatchers.IO) { refreshReadyState() }
             return
         }
         // Берём ФАКТИЧЕСКИЙ путь из состояния: рабочая папка может быть

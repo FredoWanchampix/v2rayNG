@@ -546,13 +546,21 @@ class UpdateDownloadService : Service() {
         }
         if (persisted.phase == DownloadState.Phase.READY_TO_INSTALL) {
             state = persisted
-            val apk = UpdatePaths.apkFile(workDir, persisted.assetName)
+            // Приоритет сохранённому apkPath: рабочая папка могла быть
+            // резервной приватной (filesDir/updates), и пересчёт от workDir
+            // дал бы ложное «файл удалён» с сбросом валидной готовности.
+            val apk = persisted.apkPath.takeIf { it.isNotBlank() }?.let(::File)
+                ?: UpdatePaths.apkFile(workDir, persisted.assetName)
             if (apk.exists()) {
                 showReadyNotification(apk)
                 return
             }
-            // APK удалён: состояние сбрасывается, пользователь запустит заново.
+            // APK действительно удалён: снимаем устаревшую готовность вместе с
+            // уведомлением, чтобы в шторке не висела кнопка для пустоты.
+            UpdateDownloadLogger.log(this, "persisted READY but APK missing (${apk.absolutePath}); clearing")
             UpdateDownloadStore.clear()
+            state = DownloadState()
+            NotificationHelper.cancel(NotificationChannelType.UPDATE_DOWNLOAD, this)
             stopSelfIfIdle()
             return
         }
