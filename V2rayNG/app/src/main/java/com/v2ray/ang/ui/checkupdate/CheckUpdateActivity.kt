@@ -261,11 +261,19 @@ private fun DownloadProgressBlock(
     val phaseText = when (state.phase) {
         DownloadState.Phase.IDLE -> ""
         DownloadState.Phase.PROBING -> stringResource(R.string.update_download_phase_probing)
-        DownloadState.Phase.DOWNLOADING -> stringResource(
-            R.string.update_download_phase_downloading,
-            state.progressPercent(),
-            speed.toSpeedString(),
-        )
+        // DOWNLOADING до пробы (totalBytes неизвестен): процента и скорости
+        // ещё нет физически — честный текст «проба», а не «0% 0 Б/с»
+        // (жалоба 19.11 «застрял на 0%»).
+        DownloadState.Phase.DOWNLOADING ->
+            if (state.totalBytes > 0L) {
+                stringResource(
+                    R.string.update_download_phase_downloading,
+                    state.progressPercent(),
+                    speed.toSpeedString(),
+                )
+            } else {
+                stringResource(R.string.update_download_phase_probing)
+            }
         DownloadState.Phase.PAUSED -> stringResource(
             R.string.update_download_phase_paused,
             state.progressPercent(),
@@ -312,10 +320,17 @@ private fun DownloadProgressBlock(
             state.phase == DownloadState.Phase.WAITING_NETWORK
         ) {
             Spacer(modifier = Modifier.height(8.dp))
-            LinearProgressIndicator(
-                progress = { state.progressFraction().toFloat() },
-                modifier = Modifier.fillMaxWidth(),
-            )
+            // До пробы totalBytes неизвестен (-1): детерминированный бар на 0
+            // читался бы как «завис на 0%» (жалоба 19.11). Без progress —
+            // неопределённый (бегущий) индикатор.
+            if (state.totalBytes > 0L) {
+                LinearProgressIndicator(
+                    progress = { state.progressFraction().toFloat() },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
         }
         Row(
             modifier = Modifier
