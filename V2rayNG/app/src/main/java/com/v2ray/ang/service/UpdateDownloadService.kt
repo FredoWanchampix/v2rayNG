@@ -686,6 +686,10 @@ class UpdateDownloadService : Service() {
         }
         UpdateDownloadLogger.log(this, "stale download state cleared by UI: ${persisted.releaseTag}/${persisted.assetName} at phase ${persisted.phase}")
         cancelledFlag.set(true) // останавливает сегментные циклы идущей загрузки
+        // Смена поколения ОБЯЗАТЕЛЬНА: умирающая блокирующая склейка иначе
+        // дожила бы onVerified/persistSegmentProgress ПОСЛЕ очистки и
+        // воскресила состояние READY (уведомление, store) поверх снятого.
+        downloadGeneration++
         requireProfile = false
         stopProfileWatch()
         cancelActiveCalls()

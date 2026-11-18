@@ -112,6 +112,11 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
             when (intent.getIntExtra("key", 0)) {
                 AppConfig.MSG_UPDATE_DOWNLOAD_PROGRESS -> {
                     val json = intent.getStringExtra("content") ?: return
+                    // Broadcast мог быть в полёте, когда сервис уже снял
+                    // состояние (CLEAR_STATE/отмена): пустой store означает
+                    // «загрузки больше нет», прогресс игнорируем, иначе блок
+                    // мигнул бы на кадр после очистки.
+                    if (UpdateDownloadStore.load() == null) return
                     lastDownloadProgressMs = System.currentTimeMillis()
                     JsonUtil.fromJsonSafe(json, DownloadState::class.java)?.let {
                         _downloadState.value = it
