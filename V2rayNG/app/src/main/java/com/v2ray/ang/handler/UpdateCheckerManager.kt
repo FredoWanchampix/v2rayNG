@@ -11,6 +11,7 @@ import com.v2ray.ang.util.ActiveProfileRoute
 import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
+import com.v2ray.ang.util.updater.AssetSelector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -155,7 +156,7 @@ object UpdateCheckerManager {
             BuildConfig.GIT_COMMIT.isNotEmpty() &&
             !latestRelease.targetCommitish.startsWith(BuildConfig.GIT_COMMIT)
         return@withContext if (compareVersions(latestVersion, currentVersion) > 0 || sameVersionNewerBuild) {
-            val asset = getDownloadAsset(latestRelease, Build.SUPPORTED_ABIS[0])
+            val asset = getDownloadAsset(latestRelease)
             CheckUpdateResult(
                 hasUpdate = true,
                 latestVersion = latestVersion,
@@ -246,19 +247,15 @@ object UpdateCheckerManager {
         return assetUrl.substring(0, idx + 1) + fileName
     }
 
-    private fun getDownloadAsset(release: GitHubRelease, abi: String): GitHubRelease.Asset {
-        val fDroid = "fdroid"
-
-        val assetsByAbi = release.assets.filter {
-            (it.name.contains(abi, true))
-        }
-
-        val asset = if (BuildConfig.APPLICATION_ID.contains(fDroid, ignoreCase = true)) {
-            assetsByAbi.firstOrNull { it.name.contains(fDroid) }
-        } else {
-            assetsByAbi.firstOrNull { !it.name.contains(fDroid) }
-        }
-
-        return asset ?: throw IllegalStateException("No compatible APK found")
-    }
+    /**
+     * Выбор ассета под устройство делегирован [AssetSelector] — ЕДИНОМУ месту в
+     * приложении. Дублировать эту логику нельзя: встроенный загрузчик обновлений
+     * обязан качать ровно тот же ABI, который показала проверка обновлений.
+     */
+    private fun getDownloadAsset(release: GitHubRelease): GitHubRelease.Asset =
+        AssetSelector.select(
+            assets = release.assets,
+            supportedAbis = Build.SUPPORTED_ABIS.toList(),
+            isFdroid = BuildConfig.APPLICATION_ID.contains("fdroid", ignoreCase = true),
+        ) ?: throw IllegalStateException("No compatible APK found")
 }

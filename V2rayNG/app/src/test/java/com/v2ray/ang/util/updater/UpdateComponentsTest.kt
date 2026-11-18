@@ -1,5 +1,6 @@
 package com.v2ray.ang.util.updater
 
+import com.v2ray.ang.dto.GitHubRelease
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -95,45 +96,84 @@ class UpdateHashVerifierTest {
 
 class AssetSelectorTest {
 
-    private val candidates = listOf(
-        AssetSelector.Candidate("v2rayNG_2.4.2_arm64-v8a.apk", "https://github.com/.../arm64.apk", 100L),
-        AssetSelector.Candidate("v2rayNG_2.4.2_armeabi-v7a.apk", "https://github.com/.../armv7.apk", 101L),
-        AssetSelector.Candidate("v2rayNG_2.4.2_x86_64.apk", "https://github.com/.../x86_64.apk", 102L),
-        AssetSelector.Candidate("v2rayNG_2.4.2_universal.apk", "https://github.com/.../uni.apk", 103L),
-        AssetSelector.Candidate("v2rayNG_2.4.2-fdroid_arm64-v8a.apk", "https://github.com/.../fd-arm64.apk", 104L),
+    /** Ассеты ровно в том виде, в каком их публикует CI форка (5 APK на релиз). */
+    private fun asset(name: String, size: Long = 100L) =
+        GitHubRelease.Asset(name = name, browserDownloadUrl = "https://github.com/x/$name", size = size)
+
+    private val assets = listOf(
+        asset("v2rayNG_2.4.2_arm64-v8a.apk"),
+        asset("v2rayNG_2.4.2_armeabi-v7a.apk"),
+        asset("v2rayNG_2.4.2_x86_64.apk"),
+        asset("v2rayNG_2.4.2_x86.apk"),
+        asset("v2rayNG_2.4.2_universal.apk"),
+        asset("v2rayNG_2.4.2-fdroid_arm64-v8a.apk"),
     )
 
     @Test
     fun `picks first matching abi in device order`() {
-        val chosen = AssetSelector.select(candidates, listOf("arm64-v8a", "armeabi-v7a"), isFdroid = false)
+        val chosen = AssetSelector.select(assets, listOf("arm64-v8a", "armeabi-v7a"), isFdroid = false)
         assertEquals("v2rayNG_2.4.2_arm64-v8a.apk", chosen?.name)
     }
 
     @Test
+    fun `device abi order wins over asset order`() {
+        // Устройство 32-битное первым: берём v7a, даже если arm64 лежит раньше.
+        val chosen = AssetSelector.select(assets, listOf("armeabi-v7a", "arm64-v8a"), isFdroid = false)
+        assertEquals("v2rayNG_2.4.2_armeabi-v7a.apk", chosen?.name)
+    }
+
+    @Test
     fun `falls back to next abi when first absent`() {
-        val chosen = AssetSelector.select(candidates, listOf("mips", "armeabi-v7a"), isFdroid = false)
+        val chosen = AssetSelector.select(assets, listOf("mips", "armeabi-v7a"), isFdroid = false)
         assertEquals("v2rayNG_2.4.2_armeabi-v7a.apk", chosen?.name)
     }
 
     @Test
     fun `fdroid build prefers fdroid asset`() {
-        val chosen = AssetSelector.select(candidates, listOf("arm64-v8a"), isFdroid = true)
+        val chosen = AssetSelector.select(assets, listOf("arm64-v8a"), isFdroid = true)
         assertEquals("v2rayNG_2.4.2-fdroid_arm64-v8a.apk", chosen?.name)
     }
 
     @Test
     fun `non-fdroid build never picks fdroid asset`() {
-        // Только fdroid-ассет под ABI, сборка не-fdroid -> не берём его (иначе
-        // поставили бы fdroid-вариант в playstore-клиент). Здесь arm64 есть и
-        // обычный, поэтому выбирается обычный, а не fdroid.
-        val chosen = AssetSelector.select(candidates, listOf("arm64-v8a"), isFdroid = false)
+        // Если под ABI есть ТОЛЬКО fdroid-ассет, playstore-сборка обязана
+        // вернуть null, а не подсунуть fdroid-вариант.
+        val onlyFdroid = listOf(asset("v2rayNG_2.4.2-fdroid_arm64-v8a.apk"))
+        assertNull(AssetSelector.select(onlyFdroid, listOf("arm64-v8a"), isFdroid = false))
+        // А когда есть оба — берётся обычный.
+        val chosen = AssetSelector.select(assets, listOf("arm64-v8a"), isFdroid = false)
         assertTrue(chosen?.name?.contains("fdroid") == false)
     }
 
     @Test
+    fun `x86 does not match x86_64 asset and vice versa`() {
+        // Имя ассета содержит подстроку ABI, поэтому x86_64-ассет содержит "x86"
+        // как подстроку. Порядок ABI устройства это учитывает: x86_64 первым.
+        assertEquals(
+            "v2rayNG_2.4.2_x86_64.apk",
+            AssetSelector.select(assets, listOf("x86_64", "x86"), isFdroid = false)?.name,
+        )
+        // 32-битное устройство получает свой x86, а не x86_64.
+        assertEquals(
+            "v2rayNG_2.4.2_x86.apk",
+            AssetSelector.select(assets, listOf("x86"), isFdroid = false)?.name,
+        )
+    }
+
+    @Test
     fun `no matching abi returns null (no silent universal fallback)`() {
-        val chosen = AssetSelector.select(candidates, listOf("riscv64"), isFdroid = false)
-        assertNull(chosen)
+        assertNull(AssetSelector.select(assets, listOf("riscv64"), isFdroid = false))
+        // Пустой список ABI тоже не должен ничего выбрать молча.
+        assertNull(AssetSelector.select(assets, emptyList(), isFdroid = false))
+        // Universal сам по себе не выбирается (его имя не содержит ABI устройства).
+        val universalOnly = listOf(asset("v2rayNG_2.4.2_universal.apk"))
+        assertNull(AssetSelector.select(universalOnly, listOf("arm64-v8a"), isFdroid = false))
+    }
+
+    @Test
+    fun `declared size is carried through for the size cross-check`() {
+        val chosen = AssetSelector.select(listOf(asset("a_arm64-v8a.apk", 94928909L)), listOf("arm64-v8a"), false)
+        assertEquals(94928909L, chosen?.size)
     }
 
     @Test

@@ -107,9 +107,12 @@ object ResumePolicy {
      * Разбирает `Content-Range: bytes <first>-<last>/<total>` в пару (first, total).
      *
      * `<last>` не нужен: мы пишем тело ответа до конца потока, а общий размер
-     * берём из `<total>`. Ответы вида `bytes * /<total>` (заголовок 416) и
-     * `bytes S-E/*` (total неизвестен) трактуются так: первое — нераспознано
-     * (null), второе — total = -1 (неизвестен), но first валиден.
+     * берём из `<total>`. Особые формы трактуются так:
+     *  - "bytes * slash total" (ответ на 416, диапазона нет) — нераспознано, null;
+     *  - "bytes S-E slash *" (total неизвестен) — first валиден, total = -1.
+     * Формулировка намеренно без символов деления подряд со звёздочкой: в Kotlin
+     * блочные комментарии ВЛАГАЮТСЯ, и последовательность «слэш-звёздочка»
+     * внутри KDoc открывает вложенный комментарий и ломает разбор файла.
      */
     fun parseContentRange(header: String?): Pair<Long, Long>? {
         if (header.isNullOrBlank()) return null

@@ -31,8 +31,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreNativeManager
+import com.v2ray.ang.enums.PermissionType
 import com.v2ray.ang.extension.toSpeedString
-import com.v2ray.ang.ui.base.BaseComponentActivity
+import com.v2ray.ang.ui.base.HelperBaseComponentActivity
 import com.v2ray.ang.ui.compose.AppTopBar
 import com.v2ray.ang.ui.compose.FormTextField
 import com.v2ray.ang.ui.compose.NavigationBarsSpacer
@@ -44,12 +45,17 @@ import com.v2ray.ang.util.updater.DownloadState
 import com.v2ray.ang.util.updater.SegmentPlan
 import com.v2ray.ang.util.updater.SpeedTracker
 
-class CheckUpdateActivity : BaseComponentActivity() {
+class CheckUpdateActivity : HelperBaseComponentActivity() {
 
     private val viewModel: CheckUpdateViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Прогресс загрузки живёт в уведомлении: на Android 13+ без
+        // POST_NOTIFICATIONS пользователь просто не увидит ни прогресс, ни
+        // кнопку «Установить». Запрашиваем так же, как MainActivity (экран
+        // обновлений может быть открыт и напрямую, минуя главный).
+        checkAndRequestPermission(PermissionType.POST_NOTIFICATIONS) {}
         if (savedInstanceState == null) {
             viewModel.checkForUpdates()
         }

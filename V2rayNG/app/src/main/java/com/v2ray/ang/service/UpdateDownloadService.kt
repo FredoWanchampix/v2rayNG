@@ -861,11 +861,19 @@ class UpdateDownloadService : Service() {
             return
         }
         persistPhase(DownloadState.Phase.VERIFYING)
+        // hashFile возвращает null, если файл пропал (чистка каталога/сбой ФС):
+        // это НЕ «хэш не совпал», а невозможность проверить — ставим общий сбой.
         val actual = UpdateHashVerifier.hashFile(tempFile)
+        if (actual == null) {
+            UpdateDownloadLogger.log(this, "single-stream: cannot hash downloaded file (missing?)")
+            tempFile.delete()
+            failDownload(getString(R.string.update_download_error_generic))
+            return
+        }
         if (!UpdateHashVerifier.equalsHex(actual, expected)) {
             tempFile.delete()
-            failDownload(getString(R.string.update_download_error_checksum))
             UpdateDownloadLogger.log(this, "single-stream SHA-256 MISMATCH: actual=$actual expected=$expected")
+            failDownload(getString(R.string.update_download_error_checksum))
             return
         }
         if (apk.exists()) apk.delete()
@@ -903,7 +911,7 @@ class UpdateDownloadService : Service() {
                 // исказил их) — удаляем, чтобы «Повторить» скачал начисто,
                 // а не смержил тот же мусор по кругу.
                 UpdateDownloadLogger.log(
-                    this,
+                    this@UpdateDownloadService,
                     "SHA-256 MISMATCH after merge: actual=${result.actual} expected=${result.expected}; part files DELETED, retry will re-download"
                 )
                 clearPartFiles(state.assetName)
@@ -914,7 +922,7 @@ class UpdateDownloadService : Service() {
             }
 
             is UpdateDownloader.MergeResult.Error -> {
-                UpdateDownloadLogger.log(this, "merge error: ${result.reason}")
+                UpdateDownloadLogger.log(this@UpdateDownloadService, "merge error: ${result.reason}")
                 failDownload(getString(R.string.update_download_error_merge, result.reason))
             }
         }
@@ -1096,15 +1104,29 @@ class UpdateDownloadService : Service() {
      * давно вышел из клиента (требование владельца).
      */
     private fun showReadyNotification(apkFile: File) {
-        showNotification(
-            baseBuilder()
-                .setSmallIcon(R.drawable.ic_check_update_24dp)
-                .setContentTitle(getString(R.string.update_download_ready_title))
-                .setContentText(getString(R.string.update_download_ready_text, apkFile.name))
-                .setOngoing(false)
-                .setAutoCancel(true)
-                .addAction(R.drawable.ic_check_update_24dp, getString(R.string.update_download_action_install), servicePendingIntent(ACTION_INSTALL))
-        )
+        // Кнопка «Установить» ведёт ПРЯМО в системный установщик через
+        // PendingIntent.getActivity. Через сервис (getService) здесь нельзя:
+        // после готовности загрузчик останавливается, а Android 12+ запрещает
+        // startService из фона — нажатие из шторки не сработало бы, если
+        // пользователь вышел из клиента (требование владельца: установка из
+        // уведомления должна работать в любой момент).
+        val installPi = UpdateInstallLauncher.installIntent(this, apkFile)?.let { intent ->
+            PendingIntent.getActivity(this, ACTION_INSTALL.hashCode(), intent, piFlags)
+        }
+        val builder = baseBuilder()
+            .setSmallIcon(R.drawable.ic_check_update_24dp)
+            .setContentTitle(getString(R.string.update_download_ready_title))
+            .setContentText(getString(R.string.update_download_ready_text, apkFile.name))
+            .setOngoing(false)
+            .setAutoCancel(true)
+        if (installPi != null) {
+            builder.addAction(
+                R.drawable.ic_check_update_24dp,
+                getString(R.string.update_download_action_install),
+                installPi,
+            )
+        }
+        showNotification(builder)
     }
 
     private fun showFailedNotification(reason: String) {

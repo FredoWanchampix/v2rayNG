@@ -32,14 +32,24 @@ object UpdateInstallLauncher {
     private const val APK_MIME = "application/vnd.android.package-archive"
 
     /**
-     * Открывает системный установщик для [apkFile].
+     * Строит intent системного установщика для [apkFile] (FileProvider URI +
+     * FLAG_GRANT_READ_URI_PERMISSION), НЕ запуская его.
      *
-     * @return true, если intent успешно отправлен.
+     * Выделен отдельно от [install], потому что этот же intent вкладывается в
+     * PendingIntent кнопки «Установить» в уведомлении. Через PendingIntent
+     * обязателен именно ACTIVITY-путь: после готовности загрузчик останавливает
+     * сервис, а Android 12+ (API 31) ЗАПРЕЩАЕТ startService из фона — кнопка
+     * «Установить» через сервис просто не сработала бы, когда пользователь вышел
+     * из клиента (ровно тот сценарий, который требует владелец). Тап по
+     * уведомлению даёт временное право на запуск Activity, поэтому
+     * PendingIntent.getActivity здесь надёжен и без trampolines.
+     *
+     * @return null, если файла нет/он пуст или URI построить не удалось.
      */
-    fun install(context: Context, apkFile: File): Boolean {
+    fun installIntent(context: Context, apkFile: File): Intent? {
         if (!apkFile.exists() || apkFile.length() <= 0L) {
             LogUtil.w(AppConfig.TAG, "UpdateInstall: APK missing or empty: ${apkFile.absolutePath}")
-            return false
+            return null
         }
         return try {
             val uri = FileProvider.getUriForFile(
@@ -47,11 +57,28 @@ object UpdateInstallLauncher {
                 "${context.packageName}.cache",
                 apkFile,
             )
-            val intent = Intent(Intent.ACTION_VIEW).apply {
+            Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, APK_MIME)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
+        } catch (e: Exception) {
+            // FileProvider бросает IllegalArgumentException, если путь не описан
+            // в cache_paths.xml (публичный Download ИЛИ резервный filesDir).
+            LogUtil.e(AppConfig.TAG, "UpdateInstall: cannot build FileProvider URI", e)
+            UpdateDownloadLogger.log(context, "install intent build FAILED", e)
+            null
+        }
+    }
+
+    /**
+     * Открывает системный установщик для [apkFile].
+     *
+     * @return true, если intent успешно отправлен.
+     */
+    fun install(context: Context, apkFile: File): Boolean {
+        val intent = installIntent(context, apkFile) ?: return false
+        return try {
             context.startActivity(intent)
             UpdateDownloadLogger.log(context, "install intent sent for ${apkFile.name}")
             true
