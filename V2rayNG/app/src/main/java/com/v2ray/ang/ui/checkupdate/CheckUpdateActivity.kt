@@ -1,5 +1,6 @@
 package com.v2ray.ang.ui.checkupdate
 
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Column
@@ -58,6 +59,13 @@ class CheckUpdateActivity : HelperBaseComponentActivity() {
         // кнопку «Установить». Запрашиваем так же, как MainActivity (экран
         // обновлений может быть открыт и напрямую, минуя главный).
         checkAndRequestPermission(PermissionType.POST_NOTIFICATIONS) {}
+        // На Android 8.1 и ниже запись в публичный Download требует runtime-
+        // разрешения WRITE_EXTERNAL_STORAGE: без него загрузчик молча ушёл бы
+        // в резервный приватный каталог. На API 29+ разрешение не нужно
+        // (scoped storage), а на 30+ его запрос всегда denied — не дёргаем.
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P && viewModel.useBuiltinDownloader.value) {
+            checkAndRequestPermission(PermissionType.STORAGE_WRITE) {}
+        }
         if (savedInstanceState == null) {
             viewModel.checkForUpdates()
         }
@@ -120,7 +128,17 @@ fun CheckUpdateScreen(
                 title = stringResource(R.string.update_use_builtin_downloader_title),
                 summary = stringResource(R.string.update_use_builtin_downloader_summary),
                 checked = useBuiltinDownloader,
-                onCheckedChange = { viewModel.toggleUseBuiltinDownloader(it) }
+                onCheckedChange = { enabled ->
+                    viewModel.toggleUseBuiltinDownloader(enabled)
+                    if (enabled && Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+                        // Разрешение на запись в публичный Download запрашиваем
+                        // параллельно со свитчом: свитч включается сразу, а при
+                        // отказе загрузчик честно уйдёт в резервный приватный
+                        // каталог и запишет это в update_download.log — лучше,
+                        // чем «залипший» выключенный свитч без объяснений.
+                        checkAndRequestPermission(PermissionType.STORAGE_WRITE) {}
+                    }
+                }
             )
             if (useBuiltinDownloader) {
                 SegmentsField(

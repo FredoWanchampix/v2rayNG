@@ -628,6 +628,7 @@
     <string name="permission_camera">Camera</string>
     <string name="permission_notification">Notification</string>
     <string name="permission_local_network">Local network</string>
+    <string name="permission_storage">Storage</string>
     <string name="subscription_update_updating">Updating subscription: %1$s</string>
     <string name="subscription_update_progress">Testing %2$s: %1$s</string>
     <string name="tasker_blurb_start">Start %1$s</string>

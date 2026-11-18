@@ -604,6 +604,7 @@
     <string name="permission_camera">الكاميرا</string>
     <string name="permission_notification">الإشعارات</string>
     <string name="permission_local_network">الشبكة المحلية</string>
+    <string name="permission_storage">التخزين</string>
     <string name="subscription_update_updating">جارٍ تحديث الاشتراك: %1$s</string>
     <string name="subscription_update_progress">جارٍ اختبار %2$s: %1$s</string>
     <string name="tasker_blurb_start">تشغيل %1$s</string>

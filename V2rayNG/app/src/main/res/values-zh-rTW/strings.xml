@@ -594,6 +594,7 @@
     <string name="permission_camera">相機</string>
     <string name="permission_notification">通知</string>
     <string name="permission_local_network">區域網路</string>
+    <string name="permission_storage">儲存空間</string>
     <string name="subscription_update_updating">正在更新訂閱：%1$s</string>
     <string name="subscription_update_progress">正在測試 %2$s：%1$s</string>
     <string name="tasker_blurb_start">啟動 %1$s</string>
