@@ -221,7 +221,7 @@ class UpdateDownloaderTest {
         // бы с Error на каждой попытке («segment incomplete»), а повтор не лечил.
         part.writeBytes(payload.copyOfRange(0, 5000))
         val outcome = UpdateDownloader.downloadSegment(
-            client, url(), part, 0L, 999L, "\"W/v1"", {}, allowAll,
+            client, url(), part, 0L, 999L, "\"W/v1\"", {}, allowAll,
         )
         assertTrue(
             outcome is UpdateDownloader.SegmentOutcome.Restart,
