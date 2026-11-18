@@ -607,7 +607,10 @@ class UpdateDownloadService : Service() {
                 // Требование владельца: останавливать загрузку, сообщать причину.
                 // Идём через PROFILE_LOST, а не FAILED: part-файлы сохраняются,
                 // и после включения профиля докачка продолжится с того же байта.
-                UpdateDownloadLogger.log(this, "PROFILE REQUIRED but unavailable: ${e.message}")
+                // this@UpdateDownloadService: catch находится внутри
+                // serviceScope.launch, где голый `this` — это CoroutineScope,
+                // а логгер требует Context.
+                UpdateDownloadLogger.log(this@UpdateDownloadService, "PROFILE REQUIRED but unavailable: ${e.message}")
                 abortProfileLost(detail = e.message)
             } catch (e: Exception) {
                 LogUtil.e(AppConfig.TAG, "UpdateDownloadService: unexpected failure", e)
@@ -1469,15 +1472,20 @@ class UpdateDownloadService : Service() {
 
     /** Уведомление об остановке из-за профиля: с кнопкой «Продолжить». */
     private fun showProfileLostNotification() {
+        val headline = getString(R.string.update_download_profile_lost_notification)
+        // Требование владельца: ПРИЧИНА («почему так произошло») обязана быть не
+        // только в логе, но и в уведомлении. Точная причина лежит в
+        // state.lastError — туда abortProfileLost кладёт профиль-строку плюс
+        // уточнение (профиль выключен / профиль без loopback-прокси). Раскрываем
+        // её в BigText, а в одной строке остаёмся в пределах стандартной ширины.
+        val reason = state.lastError
+        val bigText = if (reason.isNotBlank()) "$headline\n$reason" else headline
         showNotification(
             baseBuilder()
                 .setSmallIcon(R.drawable.ic_close_24dp)
                 .setContentTitle(getString(R.string.update_download_notification_title))
-                .setContentText(getString(R.string.update_download_profile_lost_notification))
-                .setStyle(
-                    NotificationCompat.BigTextStyle()
-                        .bigText(getString(R.string.update_download_profile_lost_notification))
-                )
+                .setContentText(headline)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
                 .setOngoing(false)
                 .setAutoCancel(false)
                 .addAction(

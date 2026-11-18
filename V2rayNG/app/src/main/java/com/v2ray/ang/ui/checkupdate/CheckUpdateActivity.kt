@@ -20,7 +20,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -121,17 +125,9 @@ fun CheckUpdateScreen(
                 onCheckedChange = { viewModel.toggleUseBuiltinDownloader(it) }
             )
             if (useBuiltinDownloader) {
-                FormTextField(
-                    label = stringResource(R.string.update_download_segments_title),
-                    value = downloadSegments.toString(),
-                    onValueChange = { raw ->
-                        raw.trim().toIntOrNull()?.let { viewModel.setDownloadSegments(it) }
-                    },
-                    keyboardType = KeyboardType.Number,
-                    supportingText = stringResource(
-                        R.string.update_download_segments_summary,
-                        SegmentPlan.MAX_SEGMENTS
-                    ),
+                SegmentsField(
+                    storedValue = downloadSegments,
+                    onCommit = { viewModel.setDownloadSegments(it) },
                 )
                 DownloadProgressBlock(
                     state = downloadState,
@@ -314,6 +310,52 @@ private fun DownloadProgressBlock(
 }
 
 /**
+ * Поле «Потоков загрузки» (1..24).
+ *
+ * Текст редактируется ЛОКАЛЬНО (черновик), а в MMKV уходит только валидное
+ * число. Так сделано по двум причинам:
+ *  1. UX: привязка поля напрямую к сохранённому Int не даёт стереть цифру —
+ *     пустая строка не парсится в число, ввод игнорируется, и поле «заедает»;
+ *  2. кламп не должен ломать набор: при вводе «83» сохранится 24, но пользователь
+ *     увидит именно то, что набрал, а подсказка объясняет диапазон.
+ *
+ * Паттерн совпадает с эталоном форка (SettingsActivity хранит числа как сырую
+ * строку через rememberMmkvString и парсит при использовании).
+ *
+ * Черновик синхронизируется с сохранённым значением, когда оно меняется
+ * извне (например, после клампа в другом месте), но НЕ затирается в процессе
+ * ввода: ключ [storedValue] пересоздаёт состояние только при смене сохранённого
+ * значения, а не каждого нажатия клавиши.
+ */
+@Composable
+private fun SegmentsField(
+    storedValue: Int,
+    onCommit: (Int) -> Unit,
+) {
+    var draft by remember(storedValue) { mutableStateOf(storedValue.toString()) }
+    val parsed = draft.trim().toIntOrNull()
+    val clamped = parsed?.let(SegmentPlan::clampSegmentCount)
+
+    FormTextField(
+        label = stringResource(R.string.update_download_segments_title),
+        value = draft,
+        onValueChange = { raw ->
+            // Принимаем только цифры: KeyboardType.Number не гарантирует
+            // фильтрацию на всех клавиатурах (вставляемый текст проходит мимо).
+            draft = raw.filter { it.isDigit() }
+            val value = draft.toIntOrNull()?.let(SegmentPlan::clampSegmentCount)
+            if (value != null) onCommit(value)
+        },
+        keyboardType = KeyboardType.Number,
+        isError = parsed != null && clamped != parsed,
+        supportingText = stringResource(
+            R.string.update_download_segments_summary,
+            SegmentPlan.MAX_SEGMENTS
+        ),
+    )
+}
+
+/**
  * Скорость на экране считается тем же [SpeedTracker], что и в уведомлении:
  * broadcast сервиса приходит раз в секунду с новым downloadedBytes, remember
  * пересоздаёт трекер при смене фазы/цели.
@@ -321,13 +363,13 @@ private fun DownloadProgressBlock(
 @Composable
 private fun rememberSpeedBytesPerSecond(downloadedBytes: Long, targetKey: String): Long {
     // remember(targetKey): трекер живёт ровно в пределах одной загрузки.
-    val tracker = androidx.compose.runtime.remember(targetKey) {
+    val tracker = remember(targetKey) {
         SpeedTracker(windowMillis = 5_000L)
     }
     // Broadcast из сервиса приходит раз в секунду, поэтому recomposition и
     // пересчёт скорости происходят с той же периодичностью — это и есть
     // требование «скорость обновляется каждую секунду».
-    androidx.compose.runtime.LaunchedEffect(downloadedBytes) {
+    LaunchedEffect(downloadedBytes) {
         tracker.record(downloadedBytes, System.currentTimeMillis())
     }
     return tracker.bytesPerSecond(System.currentTimeMillis())
