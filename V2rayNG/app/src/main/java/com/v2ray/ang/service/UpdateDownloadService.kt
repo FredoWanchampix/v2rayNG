@@ -780,6 +780,11 @@ class UpdateDownloadService : Service() {
         cancelActiveCalls()
         downloadJob?.cancel()
         downloadJob = null
+        // Отмена — окончательный финал: умирающий job может доживать
+        // блокирующую склейку. Сменой поколения его onVerified/failDownload/
+        // HashMismatch становятся немыми, иначе отменённая загрузка успела бы
+        // показать «Готово к установке» и позвать установщик.
+        downloadGeneration++
         showCancelledNotification()
         MessageHelper.sendMsg2UI(this, AppConfig.MSG_UPDATE_DOWNLOAD_FAILED, getString(R.string.update_download_cancelled))
         stopProgressTicker()
@@ -1341,6 +1346,13 @@ class UpdateDownloadService : Service() {
             is UpdateDownloader.MergeResult.Verified -> onVerified(result.mergedFile, result.sha256, gen)
 
             is UpdateDownloader.MergeResult.HashMismatch -> {
+                if (gen != downloadGeneration) {
+                    // Устаревшее поколение: его part-файлы носят ТЕ ЖЕ имена,
+                    // что part нового поколения (имя ассета одно), поэтому
+                    // чистка здесь уничтожила бы прогресс живой загрузки.
+                    UpdateDownloadLogger.log(this@UpdateDownloadService, "stale generation $gen: merge mismatch ignored, parts untouched")
+                    return@withContext
+                }
                 // Требование: «несовпадение = удалить part, сообщить, предложить
                 // повтор». Part-файлы битые (докачка порвала байты или диск
                 // исказил их) — удаляем, чтобы «Повторить» скачал начисто,
@@ -1358,6 +1370,8 @@ class UpdateDownloadService : Service() {
 
             is UpdateDownloader.MergeResult.Error -> {
                 UpdateDownloadLogger.log(this@UpdateDownloadService, "merge error: ${result.reason}")
+                // failDownload сам проверит поколение; здесь дополнительных
+                // изменений состояния нет.
                 failDownload(getString(R.string.update_download_error_merge, result.reason), gen = gen)
             }
         }
@@ -1372,6 +1386,14 @@ class UpdateDownloadService : Service() {
             UpdateDownloadLogger.log(this, "stale download generation $gen (current $downloadGeneration): READY notification/broadcast suppressed for ${apkFile.name}")
             return
         }
+        // Отмена/пауза/потеря профиля могли прийти, пока склейка (блокирующий
+        // IO) доживала. Байты к этому моменту УЖЕ скачаны и проверены, поэтому
+        // состояние READY честно и файл не теряется (правило «отмена не
+        // удаляет скачанное»). Но АВТО-установку запрещаем: broadcastReady
+        // триггерит установщик в foreground, а пользователь только что явно
+        // попросил остановиться — решение об установке остаётся за ним
+        // (кнопка «Установить» в уведомлении).
+        val userStopped = cancelledFlag.get() || pausedFlag.get() || profileAbortDone.get()
         // Part-файлы сегментов больше не нужны: APK склеен, хэш совпал, файл
         // опубликован. Оставлять их — мусор в папке загрузки размером с сам
         // APK (жалоба владельца: «мержи не удаляются»). Удаляем ТОЛЬКО part и
@@ -1396,7 +1418,11 @@ class UpdateDownloadService : Service() {
         unregisterNetworkCallback()
         // Авто-установку решает main-процесс по флагу resumed-activity
         // (сервис в :tasks не видит UI главного процесса).
-        broadcastReady(apkFile.absolutePath)
+        if (userStopped) {
+            UpdateDownloadLogger.log(this, "user stop signal during merge: READY kept for ${apkFile.name}, auto-install suppressed")
+        } else {
+            broadcastReady(apkFile.absolutePath)
+        }
         // Сервис больше не нужен, но уведомление с кнопкой «Установить»
         // обязано жить и после выхода из клиента: DETACH оставляет его в
         // шторке, а сама кнопка — это PendingIntent.getActivity прямо в
