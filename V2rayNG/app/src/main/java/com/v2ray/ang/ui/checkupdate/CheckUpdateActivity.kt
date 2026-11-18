@@ -205,7 +205,15 @@ private fun DownloadProgressBlock(
 ) {
     if (state.phase == DownloadState.Phase.IDLE && state.totalBytes <= 0L) return
 
-    val speed = rememberSpeedBytesPerSecond(state.downloadedBytes())
+    val speed = rememberSpeedBytesPerSecond(
+        downloadedBytes = state.downloadedBytes(),
+        // Ключ цели: при смене релиза/ассета трекер пересоздаётся, иначе окно
+        // осталось бы с байтами прежней загрузки. Сброс счётчика ВНУТРИ той же
+        // цели (рестарт сегмента, переход на single-stream) ключ не меняет —
+        // это нормально: SpeedTracker на отрицательной дельте возвращает 0,
+        // то есть скорость честно уходит в ноль и снова растёт.
+        targetKey = "${state.releaseTag}/${state.assetName}",
+    )
     val phaseText = when (state.phase) {
         DownloadState.Phase.IDLE -> ""
         DownloadState.Phase.PROBING -> stringResource(R.string.update_download_phase_probing)
@@ -311,8 +319,14 @@ private fun DownloadProgressBlock(
  * пересоздаёт трекер при смене фазы/цели.
  */
 @Composable
-private fun rememberSpeedBytesPerSecond(downloadedBytes: Long): Long {
-    val tracker = androidx.compose.runtime.remember { SpeedTracker(windowMillis = 5_000L) }
+private fun rememberSpeedBytesPerSecond(downloadedBytes: Long, targetKey: String): Long {
+    // remember(targetKey): трекер живёт ровно в пределах одной загрузки.
+    val tracker = androidx.compose.runtime.remember(targetKey) {
+        SpeedTracker(windowMillis = 5_000L)
+    }
+    // Broadcast из сервиса приходит раз в секунду, поэтому recomposition и
+    // пересчёт скорости происходят с той же периодичностью — это и есть
+    // требование «скорость обновляется каждую секунду».
     androidx.compose.runtime.LaunchedEffect(downloadedBytes) {
         tracker.record(downloadedBytes, System.currentTimeMillis())
     }

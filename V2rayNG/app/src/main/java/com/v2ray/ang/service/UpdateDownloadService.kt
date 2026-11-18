@@ -129,6 +129,18 @@ class UpdateDownloadService : Service() {
     private class PausedException : IOException("download paused by user")
     private class CancelledException : IOException("download cancelled by user")
 
+    /**
+     * Загрузка обязана идти через профиль, но профиль не пригоден прямо сейчас
+     * (выключен, или запущен без loopback-прокси).
+     *
+     * Отдельный тип нужен, чтобы старт/возобновление при выключенном профиле
+     * завершались как PROFILE_LOST (part-файлы сохраняются, показывается
+     * «Профиль отключён — загрузка прервана»), а не как общая FAILED-ошибка:
+     * это разные ситуации с разным продолжением. Возникает, например, при
+     * возобновлении после перезагрузки, когда автозапуск VPN не поднял профиль.
+     */
+    private class ProfileRequiredException(message: String) : IllegalStateException(message)
+
     companion object {
         private const val ACTIONS_PREFIX = "${AppConfig.ANG_PACKAGE}.action."
 
@@ -260,6 +272,17 @@ class UpdateDownloadService : Service() {
      */
     @Volatile
     private var requireProfile = false
+
+    /**
+     * Атомарный флаг «остановка из-за профиля уже выполнена».
+     *
+     * [abortProfileLost] могут вызвать ДВА независимых источника почти
+     * одновременно: наблюдатель профиля ([startProfileWatch]) и перехват
+     * [ProfileRequiredException] в [launchDownload] (старт/возобновление при
+     * выключенном профиле). Без флага пользователь получил бы ДВА одинаковых
+     * тоста, а лог — дубль записи. compareAndSet гарантирует однократность.
+     */
+    private val profileAbortDone = AtomicBoolean(false)
 
     /**
      * Рабочая папка загрузки. Выбирается ОДНАЖДЫ штатными средствами (без root):
@@ -394,6 +417,7 @@ class UpdateDownloadService : Service() {
 
         pausedFlag.set(false)
         cancelledFlag.set(false)
+        profileAbortDone.set(false)
         speedTracker.reset()
 
         val restoredExisting = existing?.takeIf { it.releaseTag == releaseTag && it.assetName == assetName }
@@ -462,6 +486,7 @@ class UpdateDownloadService : Service() {
         }
         state = persisted
         cancelledFlag.set(false)
+        profileAbortDone.set(false)
         // Рестарт сервиса после kill/перезагрузки = докачка ТОЙ ЖЕ цели:
         // доверяем part-файлам на диске (runSegmented подхватит их байты).
         trustExistingParts = true
@@ -504,6 +529,7 @@ class UpdateDownloadService : Service() {
         }
         state = persisted
         pausedFlag.set(false)
+        profileAbortDone.set(false)
         // Возобновление после остановки (пауза, отмена, PROFILE_LOST) всегда
         // продолжает докачку ТОЙ ЖЕ цели: part-файлы на диске доверенные, их
         // байты надо учесть в прогрессе (иначе шкала упала бы в ноль, хотя
@@ -519,6 +545,8 @@ class UpdateDownloadService : Service() {
             persistPhase(DownloadState.Phase.DOWNLOADING)
             // Загрузка продолжается тем же клиентом и маршрутом: восстанавливаем
             // наблюдение за профилем (на паузе оно было приостановлено).
+            // Актуальность требования монитор проверит сам на первом тике.
+            requireProfile = UpdateDownloadStore.viaActiveProfile()
             if (requireProfile) startProfileWatch()
         }
         UpdateDownloadLogger.log(this, "resumed by user at ${state.progressPercent()}%")
@@ -574,11 +602,15 @@ class UpdateDownloadService : Service() {
                 runDownload()
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: ProfileRequiredException) {
+                // Профиль обязателен, но не пригоден (выключен / без loopback).
+                // Требование владельца: останавливать загрузку, сообщать причину.
+                // Идём через PROFILE_LOST, а не FAILED: part-файлы сохраняются,
+                // и после включения профиля докачка продолжится с того же байта.
+                UpdateDownloadLogger.log(this, "PROFILE REQUIRED but unavailable: ${e.message}")
+                abortProfileLost(detail = e.message)
             } catch (e: Exception) {
                 LogUtil.e(AppConfig.TAG, "UpdateDownloadService: unexpected failure", e)
-                // IllegalStateException из resolveRoute несёт ТОЧНУЮ причину
-                // («профиль не запущен», «нет loopback-прокси») — показываем её,
-                // а не общий текст.
                 val reason = if (e is IllegalStateException && !e.message.isNullOrBlank()) {
                     e.message!!
                 } else {
@@ -1364,9 +1396,19 @@ class UpdateDownloadService : Service() {
         profileWatchJob = serviceScope.launch {
             while (coroutineContext.isActive) {
                 delay(PROFILE_WATCH_INTERVAL_MS)
-                if (!requireProfile) continue
                 if (cancelledFlag.get()) break
                 if (!state.isActive()) break
+
+                // Требование «идти строго через профиль» перечитывается из
+                // настройки на КАЖДОМ тике, а не берётся из кэша запуска.
+                // Иначе пользователь, выключивший свитч посреди загрузки,
+                // получил бы остановку по причине, которую сам только что снял.
+                // viaActiveProfile() читает один bool из MMKV — дёшево, в
+                // отличие от resolve() с его TCP-пробой.
+                val stillRequired = UpdateDownloadStore.viaActiveProfile()
+                requireProfile = stillRequired
+                if (!stillRequired) continue
+
                 val route = runCatching { ActiveProfileRoute.resolve() }.getOrNull()
                 if (route == null) continue // не удалось опросить — не дёргаем загрузку
                 val usable = route.mode == ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY ||
@@ -1396,10 +1438,16 @@ class UpdateDownloadService : Service() {
      *
      * Part-файлы НЕ удаляются: докачка продолжится после включения профиля.
      */
-    private fun abortProfileLost() {
+    private fun abortProfileLost(detail: String? = null) {
+        // Однократность: повторный вызов (см. [profileAbortDone]) игнорируется.
+        if (!profileAbortDone.compareAndSet(false, true)) {
+            UpdateDownloadLogger.log(this, "PROFILE LOST abort already in progress, skipping duplicate")
+            return
+        }
         requireProfile = false
         cancelledFlag.set(true) // останавливает сегментные циклы без удаления part
-        val reason = getString(R.string.update_download_profile_lost_reason)
+        val reason = detail?.let { "${getString(R.string.update_download_profile_lost_reason)} ($it)" }
+            ?: getString(R.string.update_download_profile_lost_reason)
         persistState(state.copy(phase = DownloadState.Phase.PROFILE_LOST, lastError = reason))
         UpdateDownloadLogger.log(this, "PROFILE LOST: download stopped. $reason Part files kept at ${workDir.absolutePath}")
         stopProgressTicker()
@@ -1467,7 +1515,13 @@ class UpdateDownloadService : Service() {
 
             ActiveProfileRoute.Mode.TUNNEL_DIRECT -> UpdateHttpClient.RouteConfig()
 
-            else -> throw IllegalStateException(getString(R.string.toast_requires_active_proxy_no_local_proxy))
+            ActiveProfileRoute.Mode.NONE -> throw ProfileRequiredException(
+                getString(R.string.toast_requires_active_proxy)
+            )
+
+            ActiveProfileRoute.Mode.PROFILE_WITHOUT_LOCAL_PROXY -> throw ProfileRequiredException(
+                getString(R.string.toast_requires_active_proxy_no_local_proxy)
+            )
         }
     }
 

@@ -48,6 +48,23 @@ class BootReceiver : BroadcastReceiver() {
             }
         }
 
+        // Сначала поднимаем профиль (если включён автозапуск), и ТОЛЬКО ПОТОМ
+        // возобновляем докачку обновления. Порядок важен: при включённом свитче
+        // «загружать через активный профиль» загрузка обязана идти через профиль,
+        // а сразу после BOOT_COMPLETED он ещё не поднят — возобновление до старта
+        // VPN немедленно остановило бы докачку с «профиль отключён».
+        //
+        // Автозапуск VPN и докачка обновления при этом независимы: докачка
+        // возобновляется в любом случае (см. ниже), просто после попытки старта.
+        val autoStart = MmkvManager.decodeStartOnBoot() &&
+            !MmkvManager.getSelectServer().isNullOrEmpty()
+        if (autoStart) {
+            LogUtil.i(AppConfig.TAG, "BootReceiver: Starting V2Ray service")
+            LauncherManager.startService(context)
+        } else {
+            LogUtil.i(AppConfig.TAG, "BootReceiver: Auto-start on boot is disabled or no server selected")
+        }
+
         // Докачка обновления не зависит от автозапуска VPN: возобновляем её
         // всегда после разблокированной загрузки (не из MY_PACKAGE_REPLACED —
         // там файлы приложения и так на месте, а сервис поднимет START_STICKY).
@@ -55,19 +72,9 @@ class BootReceiver : BroadcastReceiver() {
             resumeUpdateDownloadIfActive(context)
         }
 
-        if (!MmkvManager.decodeStartOnBoot()) {
-            LogUtil.i(AppConfig.TAG, "BootReceiver: Auto-start on boot is disabled")
-            return
+        if (autoStart) {
+            SubscriptionUpdater.sync(context)
         }
-
-        if (MmkvManager.getSelectServer().isNullOrEmpty()) {
-            LogUtil.w(AppConfig.TAG, "BootReceiver: No server selected")
-            return
-        }
-
-        LogUtil.i(AppConfig.TAG, "BootReceiver: Starting V2Ray service")
-        LauncherManager.startService(context)
-        SubscriptionUpdater.sync(context)
     }
 
     companion object {
@@ -75,10 +82,14 @@ class BootReceiver : BroadcastReceiver() {
          * Возобновляет докачку обновления после BOOT_COMPLETED (требование
          * владельца: докачка должна переживать перезагрузку устройства).
          *
-         * Вызывается ДО проверки auto-start VPN: загрузка обновления не зависит
-         * от того, включён ли автозапуск профиля. Возобновляются только АКТИВНЫЕ
-         * загрузки (качалась/ждала сеть); PAUSED остаётся паузой — её продолжает
-         * сам пользователь кнопкой «Продолжить»; CANCELLED тоже не трогаем.
+         * Вызывается ПОСЛЕ попытки автозапуска VPN: если загрузка обязана идти
+         * через профиль, к этому моменту у профиля уже был шанс подняться.
+         * Возобновляются только АКТИВНЫЕ загрузки (качалась/ждала сеть).
+         * НЕ возобновляются автоматически:
+         *  - PAUSED — ручную паузу продолжает сам пользователь;
+         *  - CANCELLED — отмена была явной;
+         *  - PROFILE_LOST — профиль выключен, автозапуск нарушил бы требование
+         *    «строго через профиль»; продолжит пользователь кнопкой «Продолжить».
          */
         fun resumeUpdateDownloadIfActive(context: Context) {
             val state = UpdateDownloadStore.load() ?: return
