@@ -96,7 +96,12 @@ class BootReceiver : BroadcastReceiver() {
             val resumable = state.phase == DownloadState.Phase.DOWNLOADING ||
                 state.phase == DownloadState.Phase.WAITING_NETWORK ||
                 state.phase == DownloadState.Phase.PROBING ||
-                state.phase == DownloadState.Phase.MERGING
+                // MERGING/VERIFYING: процесс убили посреди склейки или проверки.
+                // Part-файлы целы (склейка пишет во временный файл), поэтому
+                // возобновление безопасно: сегментный путь пересклеит и
+                // перепроверит, однопоточный — перезапишет временный файл.
+                state.phase == DownloadState.Phase.MERGING ||
+                state.phase == DownloadState.Phase.VERIFYING
             if (!resumable || state.browserDownloadUrl.isBlank()) return
 
             LogUtil.i(
