@@ -603,11 +603,55 @@ jobs:
           mapfile -t APKS < <(find V2rayNG/app/build/outputs/apk -type f -name '*.apk' -path "*/$SUB/*" | sort)
           [ "${#APKS[@]}" -gt 0 ] || { echo "::error::No APK produced."; exit 1; }
           cp "${APKS[@]}" release-assets/
+          # v4-подпись — парный sidecar-файл <apk>.idsig (как в build.yml): без
+          # него пер-ABI артефакт нельзя проверить apksigner'ом по схеме v4.
+          find V2rayNG/app/build/outputs/apk -type f -name '*.idsig' -path "*/$SUB/*" \
+            -exec cp {} release-assets/ \; 2>/dev/null || true
           ( cd release-assets && sha256sum ./*.apk > SHA256SUMS.txt )
 
           echo "version=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "Merged build produced ${#APKS[@]} APK(s) for version $VERSION_NAME." >> "$GITHUB_STEP_SUMMARY"
           ls -la release-assets
+
+      # Тот же разбор общего архива по архитектурам, что в build.yml: владелец
+      # требует, чтобы КАЖДАЯ компиляция давала и общий архив, и отдельный
+      # артефакт на каждую ABI. Логика идентична (суффикс по списку, длинные
+      # имена первыми, жёсткие ссылки, персональный SHA256SUMS.txt).
+      - name: Split APKs per ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf artifact-per-abi
+          mkdir -p artifact-per-abi
+          found=0
+          for apk in release-assets/*.apk; do
+            [ -e "$apk" ] || continue
+            base="$(basename "$apk" .apk)"
+            abi=""
+            for candidate in armeabi-v7a arm64-v8a x86_64 x86 universal; do
+              case "$base" in
+                *"_${candidate}") abi="$candidate"; break ;;
+              esac
+            done
+            if [ -z "$abi" ]; then
+              echo "::error::Не удалось определить ABI из имени '$base'"
+              exit 1
+            fi
+            dir="artifact-per-abi/$abi"
+            mkdir -p "$dir"
+            cp -l "$apk" "$dir/" 2>/dev/null || cp "$apk" "$dir/"
+            if [ -f "$apk.idsig" ]; then
+              cp -l "$apk.idsig" "$dir/" 2>/dev/null || cp "$apk.idsig" "$dir/"
+            fi
+            ( cd "$dir" && sha256sum ./*.apk > SHA256SUMS.txt )
+            found=$((found+1))
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::Не найдено ни одного APK для разбивки по ABI."
+            exit 1
+          fi
+          echo "Per-ABI artifacts prepared: $found"
+          ls -la artifact-per-abi/*/
 
       - name: Upload artifacts
         if: always()
@@ -617,6 +661,41 @@ jobs:
           path: |
             release-assets/*
             merge-report.md
+          if-no-files-found: warn
+
+      - name: Upload APK artifact (arm64-v8a)
+        uses: actions/upload-artifact@v7
+        with:
+          name: v2rayNG-${{ steps.release.outputs.version }}-arm64-v8a
+          path: artifact-per-abi/arm64-v8a/*
+          if-no-files-found: warn
+
+      - name: Upload APK artifact (armeabi-v7a)
+        uses: actions/upload-artifact@v7
+        with:
+          name: v2rayNG-${{ steps.release.outputs.version }}-armeabi-v7a
+          path: artifact-per-abi/armeabi-v7a/*
+          if-no-files-found: warn
+
+      - name: Upload APK artifact (x86)
+        uses: actions/upload-artifact@v7
+        with:
+          name: v2rayNG-${{ steps.release.outputs.version }}-x86
+          path: artifact-per-abi/x86/*
+          if-no-files-found: warn
+
+      - name: Upload APK artifact (x86_64)
+        uses: actions/upload-artifact@v7
+        with:
+          name: v2rayNG-${{ steps.release.outputs.version }}-x86_64
+          path: artifact-per-abi/x86_64/*
+          if-no-files-found: warn
+
+      - name: Upload APK artifact (universal)
+        uses: actions/upload-artifact@v7
+        with:
+          name: v2rayNG-${{ steps.release.outputs.version }}-universal
+          path: artifact-per-abi/universal/*
           if-no-files-found: warn
 
       - name: Backup previous master
