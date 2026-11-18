@@ -20,12 +20,13 @@ import com.v2ray.ang.util.Utils
 import com.v2ray.ang.util.updater.DownloadState
 import com.v2ray.ang.util.updater.UpdateDownloadStore
 import com.v2ray.ang.util.updater.UpdateInstallLauncher
+import com.v2ray.ang.util.updater.UpdatePaths
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import java.io.File
 
 class CheckUpdateViewModel(application: Application) : BaseViewModel(application) {
 
@@ -123,8 +124,8 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
             return
         }
         val apk = persisted.apkPath.takeIf { it.isNotBlank() }?.let(::File)
-            ?: com.v2ray.ang.util.updater.UpdatePaths.apkFile(
-                com.v2ray.ang.util.updater.UpdatePaths.dir(app), persisted.assetName
+            ?: UpdatePaths.apkFile(
+                UpdatePaths.dir(app), persisted.assetName
             )
         if (apk.exists()) {
             _downloadState.value = persisted
@@ -324,8 +325,8 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
         // резервной приватной (filesDir/updates), если публичный Download
         // недоступен — пересчёт от публичного каталога дал бы несуществующий файл.
         val apk = state.apkPath.takeIf { it.isNotBlank() }?.let(::File)
-            ?: com.v2ray.ang.util.updater.UpdatePaths.apkFile(
-                com.v2ray.ang.util.updater.UpdatePaths.dir(app), state.assetName
+            ?: UpdatePaths.apkFile(
+                UpdatePaths.dir(app), state.assetName
             )
         UpdateInstallLauncher.install(app, apk)
     }
