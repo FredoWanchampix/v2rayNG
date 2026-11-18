@@ -1488,14 +1488,17 @@ class UpdateDownloadService : Service() {
             // «подготовка» и бегущий индикатор вместо «0%» (жалоба 19.11
             // «застрял на 0%» касалась и повторного нажатия «Скачать»).
             .setContentText(
-                if (state.assetName.isEmpty() || state.phase == DownloadState.Phase.PROBING) {
+                if (state.assetName.isEmpty() ||
+                    state.phase == DownloadState.Phase.PROBING ||
+                    state.totalBytes <= 0L
+                ) {
                     getString(R.string.update_download_preparing) +
                         if (state.assetName.isNotEmpty()) " ${state.assetName}" else ""
                 } else {
                     getString(R.string.update_download_progress_line, percent, state.assetName)
                 }
             )
-            .setProgress(100, percent, percent <= 0 || state.phase == DownloadState.Phase.PROBING)
+            .setProgress(100, percent, percent <= 0 || state.phase == DownloadState.Phase.PROBING || state.totalBytes <= 0L)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -1571,13 +1574,16 @@ class UpdateDownloadService : Service() {
             // сервером). Показ «0%» на этом этапе читался пользователем как
             // «загрузка зависла на 0%» (жалоба 19.11) — честно пишем
             // «подготовка» и имя цели, процент появится с первой записью байт.
-            if (state.phase == DownloadState.Phase.PROBING) {
+            // Процента ещё нет не только на PROBING: после возобновления
+            // загрузки, убитой ДО пробы, totalBytes неизвестен (-1) при фазе
+            // DOWNLOADING — «0%» здесь читался бы как «завис» (жалоба 19.11).
+            if (state.phase == DownloadState.Phase.PROBING || state.totalBytes <= 0L) {
                 append(getString(R.string.update_download_preparing))
                 if (state.assetName.isNotEmpty()) append(" ").append(state.assetName)
             } else {
                 append(getString(R.string.update_download_progress_line, percent, state.assetName))
             }
-            if (state.phase != DownloadState.Phase.PROBING) {
+            if (state.phase != DownloadState.Phase.PROBING && state.totalBytes > 0L) {
                 append("\n")
                 append(speed.toSpeedString())
                 if (eta != null && eta > 0L) {
@@ -1590,9 +1596,9 @@ class UpdateDownloadService : Service() {
                 .setContentTitle(getString(R.string.update_download_notification_title))
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-                // На PROBING размер ещё не подтверждён сервером: честный
-                // неопределённый (бегущий) индикатор вместо пустой шкалы «0%».
-                .setProgress(100, percent, state.phase == DownloadState.Phase.PROBING)
+                // Размер ещё не подтверждён сервером: честный неопределённый
+                // (бегущий) индикатор вместо пустой шкалы «0%».
+                .setProgress(100, percent, state.phase == DownloadState.Phase.PROBING || state.totalBytes <= 0L)
                 .setOngoing(true)
                 .addAction(R.drawable.ic_pause_24dp, getString(R.string.update_download_action_pause), servicePendingIntent(ACTION_PAUSE))
                 .addAction(R.drawable.ic_close_24dp, getString(R.string.action_cancel), servicePendingIntent(ACTION_CANCEL))
