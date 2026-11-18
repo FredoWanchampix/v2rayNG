@@ -122,4 +122,34 @@ class UpdateDecisionsTest {
         assertTrue(!UpdateDecisions.isRetriableIo(listOf("java.lang.IllegalStateException")))
         assertTrue(!UpdateDecisions.isRetriableIo(emptyList()))
     }
+
+    // Дефект устройства 19.11: сохранённая цель загрузчика переживала установку
+    // обновления и проверку «обновлений нет», из-за чего блок с «Продолжить»
+    // показывался для релиза, который уже не новее клиента, а «Продолжить»
+    // скачивал старую бету. Правило снятия устаревшей цели обязано быть
+    // доказано JVM-тестом.
+    @Test
+    fun `saved target strictly older than installed is stale`() {
+        assertTrue(UpdateDecisions.savedTargetStaleness("v2.4.1-fork-20261101-000000", "2.4.2") < 0)
+        assertTrue(UpdateDecisions.savedTargetStaleness("v2.3.9", "2.4.2") < 0)
+    }
+
+    @Test
+    fun `saved target same version is not strictly stale`() {
+        // Та же точечная версия: беты одной версии различимы только по коммиту,
+        // решение принимает проверка обновлений, а не слепое снятие.
+        assertEquals(0, UpdateDecisions.savedTargetStaleness("v2.4.2-beta.20261118-105801", "2.4.2"))
+        assertEquals(0, UpdateDecisions.savedTargetStaleness("v2.4.2", "2.4.2"))
+    }
+
+    @Test
+    fun `saved target newer than installed stays alive`() {
+        assertTrue(UpdateDecisions.savedTargetStaleness("v2.4.3-beta.20261119-000000", "2.4.2") > 0)
+    }
+
+    @Test
+    fun `empty saved target means nothing to clear`() {
+        assertTrue(UpdateDecisions.savedTargetStaleness("", "2.4.2") > 0)
+        assertTrue(UpdateDecisions.savedTargetStaleness("   ", "2.4.2") > 0)
+    }
 }

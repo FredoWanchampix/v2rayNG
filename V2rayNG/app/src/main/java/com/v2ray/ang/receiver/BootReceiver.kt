@@ -11,8 +11,8 @@ import com.v2ray.ang.handler.SubscriptionUpdater
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.service.UpdateDownloadService
 import com.v2ray.ang.util.LogUtil
-import com.v2ray.ang.util.updater.ChangelogCollector
 import com.v2ray.ang.util.updater.DownloadState
+import com.v2ray.ang.util.updater.UpdateDecisions
 import com.v2ray.ang.util.updater.UpdateDownloadStore
 
 class BootReceiver : BroadcastReceiver() {
@@ -120,10 +120,7 @@ class BootReceiver : BroadcastReceiver() {
             // цель версии <= V не нужна (та же версия — уже стоит; старше —
             // тем более). Цель СТРОГО новее установленной сохраняется: она
             // ещё актуальна.
-            val cmp = ChangelogCollector.compareVersions(
-                ChangelogCollector.parseVersion(state.releaseTag),
-                BuildConfig.VERSION_NAME,
-            )
+            val cmp = UpdateDecisions.savedTargetStaleness(state.releaseTag, BuildConfig.VERSION_NAME)
             if (cmp > 0) return
             LogUtil.i(
                 AppConfig.TAG,

@@ -19,8 +19,8 @@ import com.v2ray.ang.util.ActiveProfileRoute
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
-import com.v2ray.ang.util.updater.ChangelogCollector
 import com.v2ray.ang.util.updater.DownloadState
+import com.v2ray.ang.util.updater.UpdateDecisions
 import com.v2ray.ang.util.updater.UpdateDownloadStore
 import com.v2ray.ang.util.updater.UpdateInstallLauncher
 import com.v2ray.ang.util.updater.UpdatePaths
@@ -428,10 +428,7 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
     private fun clearStaleDownloadState(onlyStrictlyOlder: Boolean = false) {
         val persisted = UpdateDownloadStore.load() ?: return
         if (persisted.releaseTag.isEmpty()) return
-        val cmp = ChangelogCollector.compareVersions(
-            ChangelogCollector.parseVersion(persisted.releaseTag),
-            BuildConfig.VERSION_NAME,
-        )
+        val cmp = UpdateDecisions.savedTargetStaleness(persisted.releaseTag, BuildConfig.VERSION_NAME)
         if (cmp > 0) return
         // «Та же версия» до проверки не трогаем: беты одной версии различимы
         // только по коммиту (правило проверки обновлений), а при открытии
