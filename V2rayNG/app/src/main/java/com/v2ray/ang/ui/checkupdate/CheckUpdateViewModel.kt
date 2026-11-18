@@ -112,15 +112,25 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
             when (intent.getIntExtra("key", 0)) {
                 AppConfig.MSG_UPDATE_DOWNLOAD_PROGRESS -> {
                     val json = intent.getStringExtra("content") ?: return
-                    // Broadcast мог быть в полёте, когда сервис уже снял
-                    // состояние (CLEAR_STATE/отмена): пустой store означает
-                    // «загрузки больше нет», прогресс игнорируем, иначе блок
-                    // мигнул бы на кадр после очистки.
-                    if (UpdateDownloadStore.load() == null) return
-                    lastDownloadProgressMs = System.currentTimeMillis()
-                    JsonUtil.fromJsonSafe(json, DownloadState::class.java)?.let {
-                        _downloadState.value = it
+                    val parsed = JsonUtil.fromJsonSafe(json, DownloadState::class.java) ?: return
+                    // Прогресс УЖЕ отменённой загрузки (broadcast был в полёте,
+                    // когда пришла отмена) не должен возвращать блок с
+                    // «Продолжить»: отмена — конец операции.
+                    if (parsed.phase == DownloadState.Phase.CANCELLED) {
+                        _downloadState.value = DownloadState()
+                        return
                     }
+                    // Broadcast мог быть в полёте, когда сервис уже снял
+                    // состояние (CLEAR_STATE): пустой store означает «загрузки
+                    // больше нет», прогресс игнорируем, иначе блок мигнул бы
+                    // на кадр после очистки. Проверка нужна ТОЛЬКО когда
+                    // локальный flow пуст: в живой загрузке (flow заполнен)
+                    // не тратим MMKV-чтение на каждый тик.
+                    if (_downloadState.value.releaseTag.isEmpty() &&
+                        UpdateDownloadStore.load() == null
+                    ) return
+                    lastDownloadProgressMs = System.currentTimeMillis()
+                    _downloadState.value = parsed
                 }
 
                 AppConfig.MSG_UPDATE_DOWNLOAD_READY -> {
