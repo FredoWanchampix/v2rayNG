@@ -536,6 +536,12 @@ class UpdateDownloadService : Service() {
             totalBytes = restoredExisting?.totalBytes ?: -1L,
             validator = restoredExisting?.validator,
             rangesSupported = restoredExisting?.rangesSupported == true,
+            // Подпись раскладки обязана восстанавливаться вместе с part-файлами:
+            // без неё partsReusable("") вернула бы false, и докачка после
+            // kill/перезагрузки стирала бы собственные part-файлы на каждой
+            // итерации — прямое нарушение требования «докачка при kill процесса,
+            // перезагрузке устройства».
+            planSignature = restoredExisting?.planSignature.orEmpty(),
             requestedSegments = UpdateDownloadStore.requestedSegments(),
             phase = DownloadState.Phase.PROBING,
             segmentDone = restoredExisting?.segmentDone ?: emptyMap(),
