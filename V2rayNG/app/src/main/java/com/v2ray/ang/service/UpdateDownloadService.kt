@@ -1481,11 +1481,18 @@ class UpdateDownloadService : Service() {
         val notification = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.drawable.ic_cloud_download_24dp)
             .setContentTitle(getString(R.string.update_download_notification_title))
+            // PROBING: процента ещё нет (размер не подтверждён сервером) —
+            // «подготовка» и бегущий индикатор вместо «0%» (жалоба 19.11
+            // «застрял на 0%» касалась и повторного нажатия «Скачать»).
             .setContentText(
-                if (state.assetName.isEmpty()) getString(R.string.update_download_preparing)
-                else getString(R.string.update_download_progress_line, percent, state.assetName)
+                if (state.assetName.isEmpty() || state.phase == DownloadState.Phase.PROBING) {
+                    getString(R.string.update_download_preparing) +
+                        if (state.assetName.isNotEmpty()) " ${state.assetName}" else ""
+                } else {
+                    getString(R.string.update_download_progress_line, percent, state.assetName)
+                }
             )
-            .setProgress(100, percent, percent <= 0)
+            .setProgress(100, percent, percent <= 0 || state.phase == DownloadState.Phase.PROBING)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
