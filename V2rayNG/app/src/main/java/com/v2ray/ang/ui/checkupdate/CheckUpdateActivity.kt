@@ -149,7 +149,19 @@ fun CheckUpdateScreen(
         val result = updateResult!!
         AlertDialog(
             onDismissRequest = { viewModel.dismissUpdateDialog() },
-            title = { Text(stringResource(R.string.update_new_version_found, result.latestVersion ?: "")) },
+            title = {
+                // Если история пропущенных релизов собрана (skippedCount > 1 —
+                // пропущено НЕСКОЛЬКО), показываем это в заголовке: пользователь
+                // понимает, что ниже — сводка нескольких версий, а не одной.
+                val base = stringResource(R.string.update_new_version_found, result.latestVersion ?: "")
+                Text(
+                    if (result.skippedCount > 1) {
+                        stringResource(R.string.update_skipped_releases_header, result.skippedCount) + "\n" + base
+                    } else {
+                        base
+                    }
+                )
+            },
             text = {
                 val scrollState = rememberScrollState()
                 Text(
@@ -165,12 +177,12 @@ fun CheckUpdateScreen(
                     viewModel.dismissUpdateDialog()
                     viewModel.downloadUpdate(result)
                 }) {
-                    Text(
-                        stringResource(
-                            if (useBuiltinDownloader) R.string.update_download_action_start
-                            else R.string.update_now
-                        )
-                    )
+                    // Подпись НЕ зависит от свитча «встроенный загрузчик»:
+                    // действие одно и то же — скачать обновление; свитч меняет
+                    // лишь СПОСОБ (браузер или загрузчик клиента). Раньше
+                    // подпись переключалась «Обновить»/«Скачать», что сбивало
+                    // с толку (жалоба владельца).
+                    Text(stringResource(R.string.update_download_action_start))
                 }
             },
             dismissButton = {

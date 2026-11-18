@@ -746,6 +746,7 @@
     <string name="update_download_profile_lost_toast">Profile is off — download interrupted.</string>
     <string name="update_download_profile_lost_notification">Profile turned off — download stopped. Downloaded parts are kept: turn the profile on and tap Download to resume.</string>
     <string name="update_check_profile_lost_toast">Profile is off — update check interrupted.</string>
+    <string name="update_skipped_releases_header">Missed %1$d releases:</string>
     <string name="update_download_profile_lost_reason">The active profile turned off while the download was required to go through it.</string>
     <string name="update_download_error_no_asset">No downloadable asset found for this device.</string>
     <string name="update_via_active_proxy_title">Download and check via active profile</string>

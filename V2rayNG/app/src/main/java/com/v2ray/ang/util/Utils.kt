@@ -261,7 +261,17 @@ object Utils {
     fun openUri(context: Context, uriString: String) {
         try {
             val uri = uriString.toUri()
-            context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+            val intent = Intent(Intent.ACTION_VIEW, uri)
+            // startActivity из НЕ-Activity контекста (Application, Service) без
+            // FLAG_ACTIVITY_NEW_TASK бросает AndroidRuntimeException, который
+            // раньше молча глотался этим catch: пользователь жал кнопку
+            // «Обновить» при выключенном встроенном загрузчике и НИЧЕГО не
+            // происходило (жалоба владельца). Флаг обязателен вне Activity и
+            // безвреден внутри неё (Activity-контекст его игнорирует по сути).
+            if (context !is android.app.Activity) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to open URI", e)
         }

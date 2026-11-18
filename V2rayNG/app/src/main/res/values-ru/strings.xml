@@ -749,6 +749,7 @@
     <string name="update_download_profile_lost_toast">Профиль отключён — загрузка прервана.</string>
     <string name="update_download_profile_lost_notification">Профиль отключился — загрузка остановлена. Скачанные части сохранены: включите профиль и нажмите «Скачать», чтобы продолжить.</string>
     <string name="update_check_profile_lost_toast">Профиль отключён — проверка обновлений прервана.</string>
+    <string name="update_skipped_releases_header">Пропущено релизов: %1$d:</string>
     <string name="update_download_profile_lost_reason">Загрузка должна была идти через активный профиль, но профиль отключился.</string>
     <string name="update_download_error_no_asset">Не найден загружаемый ассет для этого устройства.</string>
     <string name="update_via_active_proxy_title">Проверять и скачивать через активный профиль</string>

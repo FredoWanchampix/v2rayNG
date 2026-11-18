@@ -653,6 +653,7 @@
     <string name="update_download_profile_lost_toast">پروفایل خاموش است — بارگیری متوقف شد.</string>
     <string name="update_download_profile_lost_notification">پروفایل خاموش شد — بارگیری متوقف شد. بخش‌های بارگیری‌شده نگه داشته می‌شوند: پروفایل را روشن کنید و «بارگیری» را بزنید تا ادامه یابد.</string>
     <string name="update_check_profile_lost_toast">پروفایل خاموش است — بررسی به‌روزرسانی متوقف شد.</string>
+    <string name="update_skipped_releases_header">%1$d نسخه از دست رفته:</string>
     <string name="title_wl_search">یافتن پروفایل‌های پایدار (بررسی فهرست سفید)</string>
     <string name="title_sort_by_speed_results">مرتب‌سازی بر اساس سرعت</string>
     <string name="title_del_zerospeed_config">حذف پیکربندی‌های 0 kB/s</string>

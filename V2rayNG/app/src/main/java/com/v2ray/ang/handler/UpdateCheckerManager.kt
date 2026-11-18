@@ -11,6 +11,7 @@ import com.v2ray.ang.util.ActiveProfileRoute
 import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
+import com.v2ray.ang.util.updater.ChangelogCollector
 import com.v2ray.ang.util.updater.AssetSelector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -46,6 +47,17 @@ object UpdateCheckerManager {
 
     /** Total attempts for one request, including the first one. */
     private const val FETCH_ATTEMPTS = 6
+
+    /** Размер страницы списка релизов GitHub (максимум для публичного API). */
+    private const val RELEASES_PAGE_SIZE = 30
+
+    /**
+     * Потолок страниц списка релизов. 5 × 30 = 150 релизов истории — с запасом
+     * для любого реального «отставания» пользователя; обход останавливается
+     * РАНЬШЕ, как только страница целиком старше установленной версии (список
+     * отсортирован от нового к старому), поэтому обычно хватает 1-2 запросов.
+     */
+    private const val RELEASES_MAX_PAGES = 5
 
     /**
      * Thrown when a "via active profile" check cannot be honoured. Callers turn
@@ -166,10 +178,19 @@ object UpdateCheckerManager {
             !latestRelease.targetCommitish.startsWith(BuildConfig.GIT_COMMIT)
         return@withContext if (compareVersions(latestVersion, currentVersion) > 0 || sameVersionNewerBuild) {
             val asset = getDownloadAsset(latestRelease)
+            // Владелец требует показывать правки ВСЕХ пропущенных релизов:
+            // пользователь мог не обновляться месяцами и пропустить несколько
+            // версий. Тело ОДНОГО релиза (как раньше) эту историю теряло.
+            val skipped = fetchSkippedReleases(
+                includePreRelease = includePreRelease,
+                currentVersion = currentVersion,
+                route = route,
+            )
             CheckUpdateResult(
                 hasUpdate = true,
                 latestVersion = latestVersion,
-                releaseNotes = latestRelease.body,
+                releaseNotes = ChangelogCollector.buildNotes(skipped, fallback = latestRelease.body),
+                skippedCount = skipped.size,
                 downloadUrl = asset.browserDownloadUrl,
                 isPreRelease = latestRelease.prerelease,
                 // Данные для встроенного загрузчика: имя ассета (ключ в
@@ -294,6 +315,79 @@ object UpdateCheckerManager {
             if (num1 != num2) return num1 - num2
         }
         return 0
+    }
+
+    /**
+     * Собирает релизы, пропущенные пользователем (строго новее установленного),
+     * для склейки полного changelog в диалоге обновления.
+     *
+     * Список запрашивается страницами по [RELEASES_PAGE_SIZE]; обход
+     * останавливается, когда страница целиком не новее текущей версии (GitHub
+     * отдаёт релизы от нового к старому) или достигнут [RELEASES_MAX_PAGES].
+     * Каждая страница идёт через тот же маршрут ([route]) и те же ретраи, что и
+     * основная проверка: «через активный профиль» обязано соблюдаться и здесь.
+     *
+     * Ошибка списка НЕ роняет проверку: без истории диалог покажет тело
+     * последнего релиза (прежнее поведение), что лучше, чем ничего.
+     */
+    private fun fetchSkippedReleases(
+        includePreRelease: Boolean,
+        currentVersion: String,
+        route: ActiveProfileRoute.Route,
+    ): List<GitHubRelease> {
+        val collected = ArrayList<GitHubRelease>()
+        for (page in 1..RELEASES_MAX_PAGES) {
+            val pageUrl = "${AppConfig.APP_API_URL}?per_page=$RELEASES_PAGE_SIZE&page=$page"
+            val body = try {
+                fetchWithRetry(FETCH_ATTEMPTS) {
+                    HttpUtil.getUrlContentWithUserAgent(
+                        UrlContentRequest(
+                            url = pageUrl,
+                            timeout = 15000,
+                            httpHost = route.httpHost,
+                            httpPort = route.httpPort,
+                            proxyUsername = route.proxyUsername,
+                            proxyPassword = route.proxyPassword,
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                LogUtil.w(AppConfig.TAG, "Update check: skipped-releases page $page failed: ${e.message}")
+                break
+            }
+            val releases = JsonUtil.fromJsonSafe(body.orEmpty(), Array<GitHubRelease>::class.java)
+                ?.toList()
+                .orEmpty()
+            if (releases.isEmpty()) break
+
+            var sawNotNewer = false
+            for (release in releases) {
+                if (release.draft) continue
+                val newer = ChangelogCollector.isNewer(
+                    release = release,
+                    currentVersion = currentVersion,
+                    gitCommit = BuildConfig.GIT_COMMIT,
+                    includePreRelease = includePreRelease,
+                )
+                if (newer) {
+                    collected += release
+                } else {
+                    sawNotNewer = true
+                }
+            }
+            // Страница целиком старше/равна установленной версии: дальше только
+            // старее, обход бессмысленен.
+            if (sawNotNewer) break
+            // Неполная страница — список кончился.
+            if (releases.size < RELEASES_PAGE_SIZE) break
+        }
+        // Хронологический порядок (старый -> новый) для чтения истории.
+        return ChangelogCollector.skippedReleases(
+            releases = collected,
+            currentVersion = currentVersion,
+            gitCommit = BuildConfig.GIT_COMMIT,
+            includePreRelease = includePreRelease,
+        )
     }
 
     /**
