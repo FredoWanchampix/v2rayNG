@@ -189,7 +189,13 @@ object UpdateCheckerManager {
             CheckUpdateResult(
                 hasUpdate = true,
                 latestVersion = latestVersion,
-                releaseNotes = ChangelogCollector.buildNotes(skipped, fallback = latestRelease.body),
+                releaseNotes = ChangelogCollector.buildNotes(
+                    skipped,
+                    // orEmpty(): Gson способен подставить null в non-null поле
+                    // body в обход проверки типов (ответ с "body": null); без
+                    // защиты buildNotes бросил бы NPE на входе параметра.
+                    fallback = latestRelease.body.orEmpty(),
+                ),
                 skippedCount = skipped.size,
                 downloadUrl = asset.browserDownloadUrl,
                 isPreRelease = latestRelease.prerelease,
