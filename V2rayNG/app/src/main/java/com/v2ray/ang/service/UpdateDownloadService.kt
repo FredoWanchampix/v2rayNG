@@ -1552,6 +1552,12 @@ class UpdateDownloadService : Service() {
             cancelActiveCalls()
             downloadJob?.cancel()
             downloadJob = null
+            // Наблюдатель профиля останавливаем явно. Если abort вызван из него
+            // самого, он и так выходит через break; но если причина пришла из
+            // launchDownload (профиль уже был выключен на старте), наблюдатель
+            // продолжил бы каждые 2 с дёргать ActiveProfileRoute.resolve() с его
+            // TCP-пробой — лишняя работа после остановки загрузки.
+            stopProfileWatch()
             unregisterNetworkCallback()
             stopForeground(STOP_FOREGROUND_DETACH)
             stopSelf()

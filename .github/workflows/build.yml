@@ -584,12 +584,137 @@ jobs:
           ls -la release-assets
           cat release-assets/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload APK artifacts
+      - name: Upload APK artifacts (all in one)
         uses: actions/upload-artifact@v7
         with:
           name: v2rayNG-${{ steps.collect.outputs.version }}
           path: release-assets/*
           if-no-files-found: error
+
+      # ------------------------------------------------------------------
+      # Требование владельца: общий артефакт (~700 МБ, все APK разом) остаётся,
+      # НО каждая архитектура дополнительно публикуется ОТДЕЛЬНЫМ артефактом —
+      # чтобы не тянуть 700 МБ ради одного APK своего устройства. Разбивка
+      # выполняется на КАЖДОЙ сборке (в том числе release_channel=none), а не
+      # только при публикации релиза.
+      #
+      # В артефакт ABI кладётся: сам APK, парный .idsig (v4-подпись — без него
+      # APK не установить инкрементально и не проверить apksigner'ом) и
+      # SHA256SUMS.txt именно этого файла (тот же формат, что в релизе:
+      # "<hex>  ./<имя>", чтобы файл можно было сверить командой sha256sum -c).
+      # universal попадает в список ABI наравне с остальными — это «все слои»
+      # одним файлом, и владельцу он тоже нужен отдельно.
+      # ------------------------------------------------------------------
+      - name: Split APKs per ABI
+        id: split
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf artifact-per-abi
+          mkdir -p artifact-per-abi
+          # Список ABI, которые РЕАЛЬНО собраны (а не захардкоженный): сборка
+          # может идти с ABI_FILTERS и произвести лишь часть архитектур.
+          found=0
+          for apk in release-assets/*.apk; do
+            [ -e "$apk" ] || continue
+            base="$(basename "$apk" .apk)"
+            # ABI определяется СУФФИКСОМ имени файла по известному списку, а не
+            # «последним сегментом после '_'». Последний сегмент НЕЛЬЗЯ брать:
+            # имя x86_64 само содержит подчёркивание (v2rayNG_2.4.2_x86_64), и
+            # ${base##*_} дал бы «64» — шаг упал бы на каждой сборке.
+            # Порядок перечисления важен: сначала более длинные имена
+            # (armeabi-v7a, arm64-v8a, x86_64), иначе «x86» матчится раньше
+            # «x86_64» как его подстрока.
+            abi=""
+            for candidate in armeabi-v7a arm64-v8a x86_64 x86 universal; do
+              case "$base" in
+                *"_${candidate}") abi="$candidate"; break ;;
+              esac
+            done
+            if [ -z "$abi" ]; then
+              echo "::error::Не удалось определить ABI из имени '$base'"
+              echo "::error::Ожидался суффикс из: armeabi-v7a arm64-v8a x86_64 x86 universal"
+              exit 1
+            fi
+            dir="artifact-per-abi/$abi"
+            mkdir -p "$dir"
+            # ЖЁСТКИЕ ССЫЛКИ вместо копирования: общий артефакт весит ~720 МБ,
+            # и его копия удвоила бы расход диска раннера и добавила бы десятки
+            # секунд на каждую сборку. cp -l не расходует место вообще, а
+            # upload-artifact читает содержимое одинаково. Откат на обычное cp —
+            # на случай файловой системы без жёстких ссылок.
+            cp -l "$apk" "$dir/" 2>/dev/null || cp "$apk" "$dir/"
+            # Парный файл v4-подписи, если он есть (релизные сборки).
+            if [ -f "$apk.idsig" ]; then
+              cp -l "$apk.idsig" "$dir/" 2>/dev/null || cp "$apk.idsig" "$dir/"
+            fi
+            # Персональный манифест хэша: тот же формат, что общий SHA256SUMS.txt
+            # ("<hex>  ./<имя>", чтобы файл проверялся командой sha256sum -c).
+            # ГЛОБ НЕ В КАВЫЧКАХ: shell не раскрывает шаблоны внутри двойных
+            # кавычек, и sha256sum получил бы литеральное имя "./*.apk".
+            ( cd "$dir" && sha256sum ./*.apk > SHA256SUMS.txt )
+            found=$((found+1))
+            echo "  $abi: $(du -h "$dir/$(basename "$apk")" | cut -f1)"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "::error::Не найдено ни одного APK для разбивки по ABI."
+            exit 1
+          fi
+          echo "count=$found" >> "$GITHUB_OUTPUT"
+          {
+            echo
+            echo "## Артефакты по архитектурам ($found шт.)"
+            echo
+            echo '| ABI | APK | SHA-256 |'
+            echo '|---|---|---|'
+            for d in artifact-per-abi/*/; do
+              abi="$(basename "$d")"
+              apk_name="$(ls "$d" | grep -E '\.apk$' | head -n1)"
+              hash="$(awk '{print $1}' "$d/SHA256SUMS.txt")"
+              echo "| $abi | $apk_name | \`${hash:0:16}…\` |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+          ls -la artifact-per-abi/*/
+
+      # Пять отдельных артефактов — по одному на архитектуру. Отдельные шаги
+      # (а не matrix) потому, что matrix пересобирал бы весь job пять раз,
+      # а actions/upload-artifact не умеет цикл внутри одного шага.
+      # if-no-files-found: warn — чтобы сборка с ABI_FILTERS (частичный набор
+      # архитектур) не падала на отсутствующем ABI.
+      - name: Upload APK artifact (arm64-v8a)
+        uses: actions/upload-artifact@v7
+        with:
+          name: v2rayNG-${{ steps.collect.outputs.version }}-arm64-v8a
+          path: artifact-per-abi/arm64-v8a/*
+          if-no-files-found: warn
+
+      - name: Upload APK artifact (armeabi-v7a)
+        uses: actions/upload-artifact@v7
+        with:
+          name: v2rayNG-${{ steps.collect.outputs.version }}-armeabi-v7a
+          path: artifact-per-abi/armeabi-v7a/*
+          if-no-files-found: warn
+
+      - name: Upload APK artifact (x86)
+        uses: actions/upload-artifact@v7
+        with:
+          name: v2rayNG-${{ steps.collect.outputs.version }}-x86
+          path: artifact-per-abi/x86/*
+          if-no-files-found: warn
+
+      - name: Upload APK artifact (x86_64)
+        uses: actions/upload-artifact@v7
+        with:
+          name: v2rayNG-${{ steps.collect.outputs.version }}-x86_64
+          path: artifact-per-abi/x86_64/*
+          if-no-files-found: warn
+
+      - name: Upload APK artifact (universal)
+        uses: actions/upload-artifact@v7
+        with:
+          name: v2rayNG-${{ steps.collect.outputs.version }}-universal
+          path: artifact-per-abi/universal/*
+          if-no-files-found: warn
 
       - name: Publish GitHub Release
         if: github.event_name == 'workflow_dispatch' && steps.prepare.outputs.release_tag != ''
