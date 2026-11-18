@@ -26,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -69,6 +70,15 @@ class CheckUpdateActivity : HelperBaseComponentActivity() {
         if (savedInstanceState == null) {
             viewModel.checkForUpdates()
         }
+    }
+
+    /**
+     * Публичная обёртка над защищённым checkAndRequestPermission: нужна
+     * top-level composable CheckUpdateScreen, которая НЕ является подклассом
+     * HelperBaseComponentActivity и потому не видит protected-метод.
+     */
+    fun requestStorageWrite(onGranted: () -> Unit = {}) {
+        checkAndRequestPermission(PermissionType.STORAGE_WRITE, onGranted)
     }
 
     @Composable
@@ -136,7 +146,11 @@ fun CheckUpdateScreen(
                         // отказе загрузчик честно уйдёт в резервный приватный
                         // каталог и запишет это в update_download.log — лучше,
                         // чем «залипший» выключенный свитч без объяснений.
-                        checkAndRequestPermission(PermissionType.STORAGE_WRITE) {}
+                        // checkAndRequestPermission — protected в базовом
+                        // классе, а composable не подкласс, поэтому идём через
+                        // публичный wrapper активности (LocalContext в setContent
+                        // и есть сама активность).
+                        (LocalContext.current as? CheckUpdateActivity)?.requestStorageWrite()
                     }
                 }
             )
