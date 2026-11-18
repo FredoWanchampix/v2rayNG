@@ -653,6 +653,17 @@
     <string name="update_download_profile_lost_toast">پروفایل خاموش است — بارگیری متوقف شد.</string>
     <string name="update_download_profile_lost_notification">پروفایل خاموش شد — بارگیری متوقف شد. بخش‌های بارگیری‌شده نگه داشته می‌شوند: پروفایل را روشن کنید و «بارگیری» را بزنید تا ادامه یابد.</string>
     <string name="update_check_profile_lost_toast">پروفایل خاموش است — بررسی به‌روزرسانی متوقف شد.</string>
+    <string name="title_wl_search">یافتن پروفایل‌های پایدار (بررسی فهرست سفید)</string>
+    <string name="title_sort_by_speed_results">مرتب‌سازی بر اساس سرعت</string>
+    <string name="title_del_zerospeed_config">حذف پیکربندی‌های 0 kB/s</string>
+    <string name="title_icmp_ping_all_server">آزمایش تأخیر ICMP</string>
+    <string name="title_update_config_count_legacy">به‌روزرسانی %d پیکربندی</string>
+    <string name="menu_item_import_config_manually_amneziawg">دستی[AmneziaWG]</string>
+    <string name="menu_item_import_config_manually_naive">دستی[NaiveProxy]</string>
+    <string name="menu_item_import_config_manually_openconnect">دستی[OpenConnect]</string>
+    <string name="menu_item_import_config_manually_fptn">دستی[FPTN]</string>
+    <string name="toast_requires_active_proxy">برای انجام این بررسی/به‌روزرسانی به یک پروفایل پروکسی فعال نیاز است!</string>
+    <string name="toast_requires_active_proxy_no_local_proxy">پروفایل در حال اجراست اما پروکسی محلی آن به پورت گوش نمی‌دهد، بنابراین نمی‌توان درخواست را الزاماً از آن عبور داد. پروکسی محلی را در تنظیمات روشن کنید یا از حالت hev-tun / root استفاده کنید که در آن به‌طور خودکار روشن است.</string>
     <string name="update_download_profile_lost_reason">بارگیری باید ازطریق پروفایل فعال انجام می‌شد، اما پروفایل خاموش شد.</string>
     <string name="update_download_error_no_asset">فایل قابل بارگیری برای این دستگاه یافت نشد.</string>
     <string name="update_via_active_proxy_title">بررسی و بارگیری ازطریق پروفایل فعال</string>

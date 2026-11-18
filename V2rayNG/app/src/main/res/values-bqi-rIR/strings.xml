@@ -653,6 +653,17 @@
     <string name="update_download_profile_lost_toast">پروفایل خامۉشە — بۉرگاری ڤاداریڌ.</string>
     <string name="update_download_profile_lost_notification">پروفایل خامۉش ڤابی — بۉرگاری ڤایساد. پاره‌ل بۉرگاری ڌیا نیڌا ڤابیڌ: پروفایل نە رۉشن کۊنین ڤو «بۉرگاری» نە بکۉڌین تا دۉماڌۉمه.</string>
     <string name="update_check_profile_lost_toast">پروفایل خامۉشە — سیل ڤەروزرسانی ڤاداریڌ.</string>
+    <string name="title_wl_search">پروفایل پایڌار نە پیڌا کۊن (سیل نومگه سفید)</string>
+    <string name="title_sort_by_speed_results">جور کردن دناڤ سرعت</string>
+    <string name="title_del_zerospeed_config">پاک کردن کانفیگ‌ل 0 kB/s</string>
+    <string name="title_icmp_ping_all_server">سیل تأخیر ICMP</string>
+    <string name="title_update_config_count_legacy">ڤەروزرسانی %d کانفیگ</string>
+    <string name="menu_item_import_config_manually_amneziawg">دسی[AmneziaWG]</string>
+    <string name="menu_item_import_config_manually_naive">دسی[NaiveProxy]</string>
+    <string name="menu_item_import_config_manually_openconnect">دسی[OpenConnect]</string>
+    <string name="menu_item_import_config_manually_fptn">دسی[FPTN]</string>
+    <string name="toast_requires_active_proxy">سی ئی سیل/ڤەروزرسانی یە پروفایل پروکسی فعال لازمه!</string>
+    <string name="toast_requires_active_proxy_no_local_proxy">پروفایل د هال کاریه ڤلی پروکسی مهلیش د پورت گوڌ نمیڌە، وه‌مینا نمیشه درخواست نە زور دناڤش برد. پروکسی مهلی نە سامووا رۉشن کۊنین یا جی حالت hev-tun / root استفاده کۊنین که خۉدکار رۉشنه.</string>
     <string name="update_download_profile_lost_reason">بۉرگاری بایڌ دناڤ پروفایل فعال شیڌا، ڤلی پروفایل خامۉش ڤابی.</string>
     <string name="update_download_error_no_asset">فایلی بۉرگاری سی ئی دسگا نڌیارڌا.</string>
     <string name="update_via_active_proxy_title">سیل ڤو بۉرگاری ڤا پروفایل فعال</string>

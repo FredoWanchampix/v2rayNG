@@ -651,6 +651,17 @@
     <string name="update_download_profile_lost_toast">代理已关闭 — 下载已中断。</string>
     <string name="update_download_profile_lost_notification">代理已关闭 — 下载已停止。已下载的分块会保留：开启代理后点按“下载”即可继续。</string>
     <string name="update_check_profile_lost_toast">代理已关闭 — 更新检查已中断。</string>
+    <string name="title_wl_search">查找稳定配置（白名单检查）</string>
+    <string name="title_sort_by_speed_results">按速度排序</string>
+    <string name="title_del_zerospeed_config">删除 0 kB/s 的配置</string>
+    <string name="title_icmp_ping_all_server">测试 ICMP 延迟</string>
+    <string name="title_update_config_count_legacy">更新 %d 个配置</string>
+    <string name="menu_item_import_config_manually_amneziawg">手动[AmneziaWG]</string>
+    <string name="menu_item_import_config_manually_naive">手动[NaiveProxy]</string>
+    <string name="menu_item_import_config_manually_openconnect">手动[OpenConnect]</string>
+    <string name="menu_item_import_config_manually_fptn">手动[FPTN]</string>
+    <string name="toast_requires_active_proxy">执行此检查/更新需要已启用的代理配置文件！</string>
+    <string name="toast_requires_active_proxy_no_local_proxy">配置文件正在运行，但其本地代理未监听端口，因此无法强制请求通过它。请在设置中启用本地代理，或使用自动启用它的 hev-tun / root 模式。</string>
     <string name="update_download_profile_lost_reason">下载要求通过活动配置文件进行，但该配置文件已关闭。</string>
     <string name="update_download_error_no_asset">未找到适合此设备的可下载文件。</string>
     <string name="update_via_active_proxy_title">通过活动配置文件检查并下载</string>

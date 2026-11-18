@@ -654,6 +654,17 @@
     <string name="update_download_profile_lost_toast">Profil sönülüdür — yükləmə dayandırıldı.</string>
     <string name="update_download_profile_lost_notification">Profil söndü — yükləmə dayandı. Yüklənmiş hissələr saxlanılır: profili yandırıb «Yüklə» düyməsinə toxunun.</string>
     <string name="update_check_profile_lost_toast">Profil sönülüdür — yenilənmə yoxlaması dayandı.</string>
+    <string name="title_wl_search">Sabit profilləri tap (ağ siyahı yoxlaması)</string>
+    <string name="title_sort_by_speed_results">Sürətə görə sırala</string>
+    <string name="title_del_zerospeed_config">0 kB/s konfiqləri sil</string>
+    <string name="title_icmp_ping_all_server">ICMP gecikmələrini yoxla</string>
+    <string name="title_update_config_count_legacy">%d konfiqi yenilə</string>
+    <string name="menu_item_import_config_manually_amneziawg">Əl ilə[AmneziaWG]</string>
+    <string name="menu_item_import_config_manually_naive">Əl ilə[NaiveProxy]</string>
+    <string name="menu_item_import_config_manually_openconnect">Əl ilə[OpenConnect]</string>
+    <string name="menu_item_import_config_manually_fptn">Əl ilə[FPTN]</string>
+    <string name="toast_requires_active_proxy">Bu yoxlamanı/yenilənməni yerinə yetirmək üçün işlək proksi-profil tələb olunur!</string>
+    <string name="toast_requires_active_proxy_no_local_proxy">Profil işləyir, lakin onun lokal proksisi porta qulaq asmır, ona görə sorğunu onun üzərindən keçməyə məcbur etmək olmur. Parametrlərdə lokal proksini yandırın və ya avtomatik yandığı hev-tun / root rejimindən istifadə edin.</string>
     <string name="update_download_profile_lost_reason">Yükləmə aktiv profil üzərindən getməli idi, lakin profil söndü.</string>
     <string name="update_download_error_no_asset">Bu cihaz üçün yüklənə bilən fayl tapılmadı.</string>
     <string name="update_via_active_proxy_title">Aktiv profil ilə yoxla və yüklə</string>
