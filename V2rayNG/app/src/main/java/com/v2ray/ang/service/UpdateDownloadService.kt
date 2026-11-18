@@ -695,7 +695,7 @@ class UpdateDownloadService : Service() {
             registerNetworkCallback()
             launchDownload()
         } else {
-            persistPhase(DownloadState.Phase.DOWNLOADING)
+            persistPhaseIfChanged(DownloadState.Phase.DOWNLOADING)
             // Загрузка продолжается тем же клиентом и маршрутом: восстанавливаем
             // наблюдение за профилем (на паузе оно было приостановлено).
             // Актуальность требования монитор проверит сам на первом тике.
@@ -804,7 +804,7 @@ class UpdateDownloadService : Service() {
                 if (cancelledFlag.get()) return
                 if (pausedFlag.get()) { waitWhilePaused(); continue }
                 if (!networkAvailable.get()) {
-                    persistPhase(DownloadState.Phase.WAITING_NETWORK)
+                    persistPhaseIfChanged(DownloadState.Phase.WAITING_NETWORK)
                     delay(TICK_INTERVAL_MS)
                     continue
                 }
@@ -1006,7 +1006,7 @@ class UpdateDownloadService : Service() {
                 continue
             }
             if (!networkAvailable.get()) {
-                persistPhase(DownloadState.Phase.WAITING_NETWORK)
+                persistPhaseIfChanged(DownloadState.Phase.WAITING_NETWORK)
                 delay(TICK_INTERVAL_MS)
                 continue
             }
@@ -1017,7 +1017,7 @@ class UpdateDownloadService : Service() {
             if (state.phase == DownloadState.Phase.PAUSED ||
                 state.phase == DownloadState.Phase.WAITING_NETWORK
             ) {
-                persistPhase(DownloadState.Phase.DOWNLOADING)
+                persistPhaseIfChanged(DownloadState.Phase.DOWNLOADING)
             }
 
             val onBytes: (Long) -> Unit = { bytes ->
@@ -1126,7 +1126,7 @@ class UpdateDownloadService : Service() {
             if (cancelledFlag.get()) return
             if (pausedFlag.get()) { delay(500L); continue }
             if (!networkAvailable.get()) {
-                persistPhase(DownloadState.Phase.WAITING_NETWORK)
+                persistPhaseIfChanged(DownloadState.Phase.WAITING_NETWORK)
                 delay(TICK_INTERVAL_MS)
                 continue
             }
@@ -1754,7 +1754,7 @@ class UpdateDownloadService : Service() {
             if (networkAvailable.compareAndSet(false, true)) {
                 UpdateDownloadLogger.log(this@UpdateDownloadService, "network available again, resuming")
                 if (state.phase == DownloadState.Phase.WAITING_NETWORK && !pausedFlag.get()) {
-                    persistPhase(DownloadState.Phase.DOWNLOADING)
+                    persistPhaseIfChanged(DownloadState.Phase.DOWNLOADING)
                 }
             }
         }
@@ -1764,7 +1764,7 @@ class UpdateDownloadService : Service() {
             // загрузку, ждём появления (требование «не останавливаться»).
             if (networkAvailable.compareAndSet(true, false)) {
                 UpdateDownloadLogger.log(this@UpdateDownloadService, "network lost, waiting (download not cancelled)")
-                persistPhase(DownloadState.Phase.WAITING_NETWORK)
+                persistPhaseIfChanged(DownloadState.Phase.WAITING_NETWORK)
             }
         }
 
@@ -1772,7 +1772,7 @@ class UpdateDownloadService : Service() {
             val validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             if (validated && networkAvailable.compareAndSet(false, true)) {
                 if (state.phase == DownloadState.Phase.WAITING_NETWORK && !pausedFlag.get()) {
-                    persistPhase(DownloadState.Phase.DOWNLOADING)
+                    persistPhaseIfChanged(DownloadState.Phase.DOWNLOADING)
                 }
             }
         }
@@ -1905,6 +1905,20 @@ class UpdateDownloadService : Service() {
 
     private fun persistPhase(phase: DownloadState.Phase) {
         persistState(state.copy(phase = phase))
+    }
+
+    /**
+     * То же, что [persistPhase], но без записи, если фаза не изменилась.
+     *
+     * Циклы ожидания (нет сети, пауза) вызывают это раз в секунду на каждый
+     * сегмент (до 24 параллельно): без защиты каждая итерация писала бы JSON
+     * состояния в MMKV — десятки лишних mmap-записей в секунду на флеш в тот
+     * самый момент, когда сеть и так плохая. Сравнение фазы делает запись
+     * однократной на переход.
+     */
+    private fun persistPhaseIfChanged(phase: DownloadState.Phase) {
+        if (state.phase == phase) return
+        persistPhase(phase)
     }
 
     /**
