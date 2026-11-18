@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewModelScope
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.dto.CheckUpdateResult
 import com.v2ray.ang.handler.MmkvManager
@@ -18,6 +19,7 @@ import com.v2ray.ang.util.ActiveProfileRoute
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
+import com.v2ray.ang.util.updater.ChangelogCollector
 import com.v2ray.ang.util.updater.DownloadState
 import com.v2ray.ang.util.updater.UpdateDownloadStore
 import com.v2ray.ang.util.updater.UpdateInstallLauncher
@@ -75,6 +77,18 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
     private val _downloadState = MutableStateFlow(initialDownloadState())
     val downloadState: StateFlow<DownloadState> = _downloadState.asStateFlow()
 
+    /**
+     * Момент последнего broadcast-прогресса от сервиса. Тикер сервиса шлёт
+     * прогресс КАЖДУЮ секунду, пока загрузка реально идёт (downloadJob жив в
+     * :tasks); значит свежая отметка — достоверный признак «загрузка жива»,
+     * в отличие от фазы в MMKV, которая переживает kill процесса и может
+     * врать (DOWNLOADING при мёртвом job). Используется, чтобы снятие
+     * устаревшей цели не убивало идущую загрузку, которую пользователь
+     * запустил осознанно.
+     */
+    @Volatile
+    private var lastDownloadProgressMs = 0L
+
     private fun initialDownloadState(): DownloadState {
         val persisted = UpdateDownloadStore.load() ?: return DownloadState()
         if (persisted.phase == DownloadState.Phase.READY_TO_INSTALL) {
@@ -98,6 +112,7 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
             when (intent.getIntExtra("key", 0)) {
                 AppConfig.MSG_UPDATE_DOWNLOAD_PROGRESS -> {
                     val json = intent.getStringExtra("content") ?: return
+                    lastDownloadProgressMs = System.currentTimeMillis()
                     JsonUtil.fromJsonSafe(json, DownloadState::class.java)?.let {
                         _downloadState.value = it
                     }
@@ -114,7 +129,17 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
 
                 AppConfig.MSG_UPDATE_DOWNLOAD_FAILED -> {
                     val reason = intent.getStringExtra("content").orEmpty()
-                    _downloadState.value = UpdateDownloadStore.load() ?: _downloadState.value
+                    val persisted = UpdateDownloadStore.load()
+                    // Отмена — это КОНЕЦ операции: блок с кнопками
+                    // «Продолжить/Отмена» на экране не должен оставаться
+                    // (жалоба владельца 19.11). Ошибка (FAILED) блок сохраняет:
+                    // там «Продолжить» осмысленен.
+                    _downloadState.value =
+                        if (persisted == null || persisted.phase == DownloadState.Phase.CANCELLED) {
+                            DownloadState()
+                        } else {
+                            persisted
+                        }
                     LogUtil.w(AppConfig.TAG, "Update download failed: $reason")
                     toastError(reason.ifEmpty { getString(R.string.update_download_failed_title) })
                 }
@@ -147,6 +172,10 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
      * просит сервис сбросить состояние и уведомление, и чистит локальный flow.
      */
     private fun refreshReadyState() {
+        // Безусловно устаревшая цель (строго старее установленной версии)
+        // снимается сразу при открытии экрана: блок с «Продолжить» для
+        // релиза, который заведомо не новее клиента, показывать нельзя.
+        clearStaleDownloadState(onlyStrictlyOlder = true)
         val persisted = UpdateDownloadStore.load() ?: return
         if (persisted.phase != DownloadState.Phase.READY_TO_INSTALL) {
             _downloadState.value = persisted
@@ -252,6 +281,13 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
                     _updateResult.value = result
                     _showUpdateDialog.value = true
                 } else {
+                    // Обновлений нет: сохранённая цель загрузчика той же или
+                    // более старой версии, чем установленная, — УСТАРЕВШАЯ.
+                    // Без этой сверки экран показывал тост «обновлений нет»
+                    // РЯДОМ с блоком загрузчика и кнопкой «Продолжить», а
+                    // «Продолжить» скачивал старый релиз (дефект устройства
+                    // 19.11: докачка ушла на бету, уже перекрытую установленной).
+                    clearStaleDownloadState()
                     toastSuccess(R.string.update_already_latest_version)
                 }
             } catch (e: UpdateCheckerManager.ProfileTurnedOffException) {
@@ -364,5 +400,41 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
 
     fun dismissUpdateDialog() {
         _showUpdateDialog.value = false
+    }
+
+    /**
+     * Снимает сохранённую загрузку, если её цель не новее установленного
+     * клиента (точечная версия тега <= [BuildConfig.VERSION_NAME]): такая цель
+     * либо уже установлена, либо старше — продолжать её нечего. Команда идёт
+     * сервису (он остановит идущую загрузку, почистит MMKV и снимет
+     * уведомление), локальный flow сбрасывается сразу, без мерцания блока.
+     * Цель СТРОГО новее установленной (другой канал проверок) сохраняется.
+     */
+    private fun clearStaleDownloadState(onlyStrictlyOlder: Boolean = false) {
+        val persisted = UpdateDownloadStore.load() ?: return
+        if (persisted.releaseTag.isEmpty()) return
+        val cmp = ChangelogCollector.compareVersions(
+            ChangelogCollector.parseVersion(persisted.releaseTag),
+            BuildConfig.VERSION_NAME,
+        )
+        if (cmp > 0) return
+        // «Та же версия» до проверки не трогаем: беты одной версии различимы
+        // только по коммиту (правило проверки обновлений), а при открытии
+        // экрана результата проверки ещё нет. Строго старшая цель не нужна
+        // никогда — её снимаем сразу, без мерцания блока.
+        if (onlyStrictlyOlder && cmp == 0) return
+        // Живую загрузку (прогресс приходил в последние секунды) НЕ снимаем:
+        // пользователь мог осознанно качать бету своей версии, а «обновлений
+        // нет» пришло из другого канала проверок. Убьём только мёртвое
+        // состояние — ровно то, что показывало ложный блок с «Продолжить».
+        if (!onlyStrictlyOlder &&
+            System.currentTimeMillis() - lastDownloadProgressMs < 5_000L
+        ) return
+        LogUtil.i(
+            AppConfig.TAG,
+            "Update download state is stale (saved ${persisted.releaseTag} vs installed ${BuildConfig.VERSION_NAME}); clearing",
+        )
+        _downloadState.value = DownloadState()
+        UpdateDownloadService.sendCommand(app, UpdateDownloadService.ACTION_CLEAR_STATE)
     }
 }

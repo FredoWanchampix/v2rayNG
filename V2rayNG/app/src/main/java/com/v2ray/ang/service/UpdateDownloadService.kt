@@ -164,6 +164,17 @@ class UpdateDownloadService : Service() {
         const val ACTION_CLEAR_READY = ACTIONS_PREFIX + "update.download.clear_ready"
 
         /**
+         * Полное снятие устаревшего состояния загрузки (любая фаза): состояние
+         * переживало и установку обновления вручную, и проверку «обновлений
+         * нет», из-за чего экран показывал блок с кнопками «Продолжить/Отмена»
+         * для релиза, который уже не новее установленного, а «Продолжить»
+         * скачивал старую цель (дефекты устройства 19.11). Команда останавливает
+         * идущую загрузку, чистит MMKV-состояние и снимает уведомление.
+         * Part-файлы НЕ удаляются (правило «отмена не удаляет скачанное»).
+         */
+        const val ACTION_CLEAR_STATE = ACTIONS_PREFIX + "update.download.clear_state"
+
+        /**
          * requestCode PendingIntent'а кнопки «Установить» в уведомлении.
          *
          * Отдельного действия ACTION_INSTALL для сервиса НЕТ: кнопка ведёт
@@ -353,6 +364,22 @@ class UpdateDownloadService : Service() {
     private val profileAbortDone = AtomicBoolean(false)
 
     /**
+     * Поколение текущей загрузки. Увеличивается в [launchDownload] при каждом
+     * старте/возобновлении.
+     *
+     * Зачем (дефект найден по живому логу устройства 19.11): [launchDownload]
+     * отменяет прежний job, но отменённая корутина может находиться ВНУТРИ
+     * блокирующего IO без suspend-точек (склейка [mergeAndVerify], публикация
+     * [onVerified], [failDownload]) и дожить до своего финала ПОЗЖЕ старта
+     * нового поколения. Без защиты она перезаписала бы state, уведомление и
+     * broadcastReady ЦУЖОЙ целью (старым релизом) поверх новой загрузки.
+     * Проверка поколения в точках записи финального состояния делает такой
+     * «призрак» безопасным: его результат игнорируется и пишется в лог.
+     */
+    @Volatile
+    private var downloadGeneration = 0L
+
+    /**
      * Рабочая папка загрузки. Выбирается ОДНАЖДЫ штатными средствами (без root):
      * публичный `Download/<app_name>`, а если он недоступен для записи —
      * приватный `filesDir/updates` (см. [UpdatePaths.ensureWritableDir]).
@@ -398,7 +425,7 @@ class UpdateDownloadService : Service() {
         // startService (FGS-контракта нет), а задача команды — СНЯТЬ уведомление
         // «Готово к установке». Показ FGS-уведомления здесь дал бы мерцание:
         // уведомление появилось бы на мгновение и тут же было отменено.
-        if (action != ACTION_CLEAR_READY) {
+        if (action != ACTION_CLEAR_READY && action != ACTION_CLEAR_STATE) {
             ensureForeground()
         }
         when (action) {
@@ -412,6 +439,7 @@ class UpdateDownloadService : Service() {
             ACTION_RESUME -> handleResume()
             ACTION_CANCEL -> handleCancel()
             ACTION_CLEAR_READY -> handleClearReady()
+            ACTION_CLEAR_STATE -> handleClearState()
             else -> {
                 // START_STICKY перезапустил сервис после kill процесса без intent:
                 // продолжаем сохранённую загрузку (докачка после перезагрузки).
@@ -644,6 +672,34 @@ class UpdateDownloadService : Service() {
         stopSelfIfIdle()
     }
 
+    /**
+     * Снятие устаревшего состояния ЛЮБОЙ фазы (см. [ACTION_CLEAR_STATE]).
+     * Вызывается UI, когда проверка обновлений установила, что сохранённая
+     * цель загрузчика не новее установленного клиента: продолжать её
+     * бессмысленно, а блок с кнопками вводил пользователя в заблуждение.
+     */
+    private fun handleClearState() {
+        val persisted = UpdateDownloadStore.load()
+        if (persisted == null || persisted.releaseTag.isEmpty()) {
+            stopSelfIfIdle()
+            return
+        }
+        UpdateDownloadLogger.log(this, "stale download state cleared by UI: ${persisted.releaseTag}/${persisted.assetName} at phase ${persisted.phase}")
+        cancelledFlag.set(true) // останавливает сегментные циклы идущей загрузки
+        requireProfile = false
+        stopProfileWatch()
+        cancelActiveCalls()
+        downloadJob?.cancel()
+        downloadJob = null
+        stopProgressTicker()
+        unregisterNetworkCallback()
+        UpdateDownloadStore.clear()
+        state = DownloadState()
+        NotificationHelper.cancel(NotificationChannelType.UPDATE_DOWNLOAD, this)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
     private fun handlePause() {
         if (!state.isActive()) {
             stopSelfIfIdle()
@@ -693,14 +749,22 @@ class UpdateDownloadService : Service() {
         speedTracker.reset()
         if (downloadJob?.isActive != true) {
             registerNetworkCallback()
+            // Уведомление переключаем на прогресс НЕМЕДЛЕННО, до probe: пока
+            // фаза PROBING (до нескольких секунд на плохой сети), в шторке
+            // иначе оставалось бы ПРЕЖНЕЕ уведомление с кнопкой «Продолжить» —
+            // пользователь тапал её повторно и плодил дубли команд (видно в
+            // логе устройства: 5 «resumed by user» за 1.5 секунды).
+            persistPhaseIfChanged(DownloadState.Phase.DOWNLOADING)
+            showProgressNotification()
             launchDownload()
         } else {
             persistPhaseIfChanged(DownloadState.Phase.DOWNLOADING)
+            showProgressNotification()
             // Загрузка продолжается тем же клиентом и маршрутом: восстанавливаем
             // наблюдение за профилем (на паузе оно было приостановлено).
             // Актуальность требования монитор проверит сам на первом тике.
             requireProfile = UpdateDownloadStore.viaActiveProfile()
-            if (requireProfile) startProfileWatch()
+            if (requireProfile) startProfileWatch(downloadGeneration)
         }
         UpdateDownloadLogger.log(this, "resumed by user at ${state.progressPercent()}%")
     }
@@ -732,9 +796,15 @@ class UpdateDownloadService : Service() {
 
     private fun launchDownload() {
         downloadJob?.cancel()
+        val gen = ++downloadGeneration
+        // Временные файлы склейки прошлых поколений больше не нужны никому:
+        // новая склейка создаст свой temp с суффиксом текущего поколения, а
+        // брошенные отменёнными склейками temp — мусор размером с APK.
+        // Part-файлы НЕ трогаем: они источник докачки (требование владельца).
+        clearMergeTemps()
         downloadJob = serviceScope.launch {
             try {
-                runDownload()
+                runDownload(gen)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: ProfileRequiredException) {
@@ -746,7 +816,7 @@ class UpdateDownloadService : Service() {
                 // serviceScope.launch, где голый `this` — это CoroutineScope,
                 // а логгер требует Context.
                 UpdateDownloadLogger.log(this@UpdateDownloadService, "PROFILE REQUIRED but unavailable: ${e.message}")
-                abortProfileLost(detail = e.message)
+                abortProfileLost(detail = e.message, gen = gen)
             } catch (e: Exception) {
                 LogUtil.e(AppConfig.TAG, "UpdateDownloadService: unexpected failure", e)
                 val reason = if (e is IllegalStateException && !e.message.isNullOrBlank()) {
@@ -754,12 +824,12 @@ class UpdateDownloadService : Service() {
                 } else {
                     getString(R.string.update_download_error_generic)
                 }
-                failDownload(reason, keepNotification = true)
+                failDownload(reason, keepNotification = true, gen = gen)
             }
         }
     }
 
-    private suspend fun runDownload() {
+    private suspend fun runDownload(gen: Long) {
         startProgressTicker()
 
         val viaProfile = UpdateDownloadStore.viaActiveProfile()
@@ -768,7 +838,7 @@ class UpdateDownloadService : Service() {
         // записью в лог и уведомлением), а не продолжать через мёртвый прокси.
         requireProfile = viaProfile
         if (viaProfile) {
-            startProfileWatch()
+            startProfileWatch(gen)
         }
         // Клиент собирается через currentClientFresh(): он же решает маршрут тем
         // же резолвером ActiveProfileRoute, что и проверка обновлений (требование
@@ -822,7 +892,7 @@ class UpdateDownloadService : Service() {
             if (state.declaredSize > 0 && probe.totalBytes != state.declaredSize) {
                 // Сверка размера против asset.size (требование 10). Расхождение =
                 // объект релиза не тот, за кого себя выдаёт: не качаем.
-                failDownload(getString(R.string.update_download_error_size_mismatch, state.declaredSize, probe.totalBytes))
+                failDownload(getString(R.string.update_download_error_size_mismatch, state.declaredSize, probe.totalBytes), gen = gen)
                 return
             }
 
@@ -833,7 +903,7 @@ class UpdateDownloadService : Service() {
             val contentTypeProblem = UpdateUrlPolicy.checkApkContentType(probe.contentType)
             if (contentTypeProblem != null) {
                 UpdateDownloadLogger.log(this, "Content-Type rejected: $contentTypeProblem")
-                failDownload(getString(R.string.update_download_error_content_type, contentTypeProblem))
+                failDownload(getString(R.string.update_download_error_content_type, contentTypeProblem), gen = gen)
                 return
             }
 
@@ -871,9 +941,9 @@ class UpdateDownloadService : Service() {
             )
 
             val needFullRestart = if (probe.rangesSupported) {
-                runSegmented(probe)
+                runSegmented(probe, gen)
             } else {
-                runSingleStream()
+                runSingleStream(gen)
                 false
             }
             if (!needFullRestart) return
@@ -882,7 +952,7 @@ class UpdateDownloadService : Service() {
             // Объект на сервере сменился: ВСЕ part-файлы устарели. Чистим их,
             // сбрасываем метаданные и идём на новый круг (свежая проба/хэш).
             if (++fullRestarts > MAX_FULL_RESTARTS) {
-                failDownload(getString(R.string.update_download_error_object_changed))
+                failDownload(getString(R.string.update_download_error_object_changed), gen = gen)
                 return
             }
             UpdateDownloadLogger.log(this, "FULL RESTART $fullRestarts/$MAX_FULL_RESTARTS: server object changed, clearing part files and re-probing")
@@ -935,10 +1005,10 @@ class UpdateDownloadService : Service() {
      * @return true, если объект на сервере сменился и нужен ПОЛНЫЙ рестарт
      *   загрузки (все сегменты); false — нормальное завершение/отмена/пауза/ошибка.
      */
-    private suspend fun runSegmented(probe: UpdateDownloader.Probe): Boolean {
+    private suspend fun runSegmented(probe: UpdateDownloader.Probe, gen: Long): Boolean {
         val plan = SegmentPlan.plan(probe.totalBytes, state.requestedSegments)
         if (plan.isEmpty() || !SegmentPlan.isContiguous(plan, probe.totalBytes)) {
-            failDownload("invalid segment plan for total=${probe.totalBytes}")
+            failDownload("invalid segment plan for total=${probe.totalBytes}", gen = gen)
             return false
         }
         // Прогресс стартует с реально лежащих на диске part-файлов (докачка
@@ -967,7 +1037,7 @@ class UpdateDownloadService : Service() {
         val results = coroutineScope {
             plan.map { segment ->
                 async(Dispatchers.IO) {
-                    downloadSegmentLoop(segment)
+                    downloadSegmentLoop(segment, gen)
                 }
             }.awaitAll()
         }
@@ -982,7 +1052,7 @@ class UpdateDownloadService : Service() {
         }
         if (state.phase == DownloadState.Phase.FAILED) return false
 
-        mergeAndVerify(plan, probe.totalBytes)
+        mergeAndVerify(plan, probe.totalBytes, gen)
         return false
     }
 
@@ -991,7 +1061,7 @@ class UpdateDownloadService : Service() {
      * ретраятся БЕЗ лимита с паузами («даже на 2G/3G загрузка должна хоть
      * как-то идти»), отсутствие сети — ожидание без отмены задачи.
      */
-    private suspend fun downloadSegmentLoop(segment: SegmentPlan.Segment): Boolean {
+    private suspend fun downloadSegmentLoop(segment: SegmentPlan.Segment, gen: Long): Boolean {
         val partFile = UpdatePaths.partFile(workDir, state.assetName, segment.index)
         var attempt = 0
         while (coroutineContext.isActive) {
@@ -1054,8 +1124,12 @@ class UpdateDownloadService : Service() {
                 UpdateDownloader.SegmentOutcome.Transient("${e.javaClass.simpleName}: ${e.message}")
             } finally {
                 // Фактическая длина part — источник истины для прогресса.
-                val have = if (partFile.exists()) partFile.length() else 0L
-                persistSegmentProgress(segment.index, have.coerceAtMost(segment.size))
+                // Только для ТЕКУЩЕГО поколения: finally отменённого сегмента
+                // иначе дописал бы в segmentDone НОВОЙ цели байты чужих part.
+                if (gen == downloadGeneration) {
+                    val have = if (partFile.exists()) partFile.length() else 0L
+                    persistSegmentProgress(segment.index, have.coerceAtMost(segment.size))
+                }
             }
 
             when (outcome) {
@@ -1107,7 +1181,7 @@ class UpdateDownloadService : Service() {
 
                 is UpdateDownloader.SegmentOutcome.Fatal -> {
                     UpdateDownloadLogger.log(this, "segment ${segment.index} FATAL: ${outcome.reason}")
-                    failDownload(getString(R.string.update_download_error_http, outcome.reason))
+                    failDownload(getString(R.string.update_download_error_http, outcome.reason), gen = gen)
                     return false
                 }
             }
@@ -1119,9 +1193,12 @@ class UpdateDownloadService : Service() {
      * Фолбэк для серверов без поддержки Range (не GitHub): один поток, без
      * докачки (сервер физически не может отдать часть объекта). Ретраи те же.
      */
-    private suspend fun runSingleStream() {
+    private suspend fun runSingleStream(gen: Long) {
         UpdateDownloadLogger.log(this, "server has no Range support: single-stream download (resume impossible)")
-        val target = UpdatePaths.mergeTempFile(workDir, state.assetName)
+        // Суффикс поколения: отменённый однопоточный поток может доживать свой
+        // блокирующий read и писать в свой файловый дескриптор; без суффикса он
+        // делил бы один temp-файл с новым поколением и испортил бы его байты.
+        val target = UpdatePaths.mergeTempFile(workDir, state.assetName, "-g$gen")
         while (coroutineContext.isActive) {
             if (cancelledFlag.get()) return
             if (pausedFlag.get()) { delay(500L); continue }
@@ -1161,7 +1238,7 @@ class UpdateDownloadService : Service() {
             }
             when (outcome) {
                 is UpdateDownloader.SegmentOutcome.Complete -> {
-                    verifySingleFile(target)
+                    verifySingleFile(target, gen)
                     return
                 }
                 is UpdateDownloader.SegmentOutcome.Transient -> {
@@ -1174,7 +1251,7 @@ class UpdateDownloadService : Service() {
                 is UpdateDownloader.SegmentOutcome.Restart,
                 is UpdateDownloader.SegmentOutcome.Fatal -> {
                     val reason = if (outcome is UpdateDownloader.SegmentOutcome.Fatal) outcome.reason else (outcome as UpdateDownloader.SegmentOutcome.Restart).reason
-                    failDownload(reason)
+                    failDownload(reason, gen = gen)
                     return
                 }
             }
@@ -1190,12 +1267,17 @@ class UpdateDownloadService : Service() {
      * что этот путь — фолбэк для серверов без Range (наши релизы на GitHub
      * Range поддерживают, см. доказательство в отчёте).
      */
-    private fun verifySingleFile(tempFile: File) {
+    private fun verifySingleFile(tempFile: File, gen: Long) {
+        if (gen != downloadGeneration) {
+            UpdateDownloadLogger.log(this, "stale download generation $gen (current $downloadGeneration): single-stream verify result ignored")
+            tempFile.delete()
+            return
+        }
         val apk = UpdatePaths.apkFile(workDir, state.assetName)
         val expected = state.expectedSha256
         if (expected.isBlank()) {
             tempFile.delete()
-            failDownload(getString(R.string.update_download_error_no_checksum))
+            failDownload(getString(R.string.update_download_error_no_checksum), gen = gen)
             return
         }
         persistPhase(DownloadState.Phase.VERIFYING)
@@ -1205,29 +1287,43 @@ class UpdateDownloadService : Service() {
         if (actual == null) {
             UpdateDownloadLogger.log(this, "single-stream: cannot hash downloaded file (missing?)")
             tempFile.delete()
-            failDownload(getString(R.string.update_download_error_generic))
+            failDownload(getString(R.string.update_download_error_generic), gen = gen)
             return
         }
         if (!UpdateHashVerifier.equalsHex(actual, expected)) {
             tempFile.delete()
             UpdateDownloadLogger.log(this, "single-stream SHA-256 MISMATCH: actual=$actual expected=$expected")
-            failDownload(getString(R.string.update_download_error_checksum))
+            failDownload(getString(R.string.update_download_error_checksum), gen = gen)
+            return
+        }
+        // Повторная проверка поколения ПЕРЕД публикацией файла: между хэшем и
+        // rename могла стартовать новая загрузка — тогда байты устаревшей цели
+        // не должны лечь в итоговый APK.
+        if (gen != downloadGeneration) {
+            UpdateDownloadLogger.log(this, "stale download generation $gen (current $downloadGeneration): single-stream publish aborted")
+            tempFile.delete()
             return
         }
         if (apk.exists()) apk.delete()
         if (!tempFile.renameTo(apk)) {
-            failDownload("cannot publish downloaded file")
+            failDownload("cannot publish downloaded file", gen = gen)
             return
         }
-        onVerified(apk, actual)
+        onVerified(apk, actual, gen)
     }
 
     /** Склейка сегментов + стриминговый SHA-256 за один проход. */
-    private suspend fun mergeAndVerify(plan: List<SegmentPlan.Segment>, totalBytes: Long) = withContext(Dispatchers.IO) {
+    private suspend fun mergeAndVerify(plan: List<SegmentPlan.Segment>, totalBytes: Long, gen: Long) = withContext(Dispatchers.IO) {
+        // Поколение могло смениться, пока сегменты докачивались: склейка
+        // блокирующая и без suspend-точек, поэтому проверяем НА ВХОДЕ.
+        if (gen != downloadGeneration) {
+            UpdateDownloadLogger.log(this@UpdateDownloadService, "stale download generation $gen (current $downloadGeneration): merge aborted, state untouched")
+            return@withContext
+        }
         if (state.expectedSha256.isBlank()) {
             // Без эталона устанавливать нельзя НИКОГДА (требование 4: «никогда
             // не предлагать установку непроверенного файла»).
-            failDownload(getString(R.string.update_download_error_no_checksum))
+            failDownload(getString(R.string.update_download_error_no_checksum), gen = gen)
             return@withContext
         }
         persistPhase(DownloadState.Phase.MERGING)
@@ -1239,9 +1335,10 @@ class UpdateDownloadService : Service() {
             mergedTarget = apk,
             expectedSha256 = state.expectedSha256,
             totalBytes = totalBytes,
+            tempNameSuffix = "-g$gen",
         )
         when (result) {
-            is UpdateDownloader.MergeResult.Verified -> onVerified(result.mergedFile, result.sha256)
+            is UpdateDownloader.MergeResult.Verified -> onVerified(result.mergedFile, result.sha256, gen)
 
             is UpdateDownloader.MergeResult.HashMismatch -> {
                 // Требование: «несовпадение = удалить part, сообщить, предложить
@@ -1256,18 +1353,25 @@ class UpdateDownloadService : Service() {
                 persistState(state.copy(segmentDone = emptyMap()))
                 bytesWrittenTotal.set(0L)
                 speedTracker.reset()
-                failDownload(getString(R.string.update_download_error_checksum))
+                failDownload(getString(R.string.update_download_error_checksum), gen = gen)
             }
 
             is UpdateDownloader.MergeResult.Error -> {
                 UpdateDownloadLogger.log(this@UpdateDownloadService, "merge error: ${result.reason}")
-                failDownload(getString(R.string.update_download_error_merge, result.reason))
+                failDownload(getString(R.string.update_download_error_merge, result.reason), gen = gen)
             }
         }
     }
 
     /** Файл скачан и проверен: уведомление «Установить» + broadcast в UI. */
-    private fun onVerified(apkFile: File, sha256: String) {
+    private fun onVerified(apkFile: File, sha256: String, gen: Long) {
+        if (gen != downloadGeneration) {
+            // Финал УСТАРЕВШЕГО поколения (job отменён новой командой, но склейка
+            // уже дошла до конца): файл на диске валиден, однако состояние,
+            // уведомление и broadcast принадлежат НОВОЙ цели — не перезаписываем.
+            UpdateDownloadLogger.log(this, "stale download generation $gen (current $downloadGeneration): READY notification/broadcast suppressed for ${apkFile.name}")
+            return
+        }
         // Part-файлы сегментов больше не нужны: APK склеен, хэш совпал, файл
         // опубликован. Оставлять их — мусор в папке загрузки размером с сам
         // APK (жалоба владельца: «мержи не удаляются»). Удаляем ТОЛЬКО part и
@@ -1320,7 +1424,11 @@ class UpdateDownloadService : Service() {
                 // (пауза/возобновление/рестарт), делятся на реальное время окна.
                 speedTracker.record(bytesWrittenTotal.get(), now)
                 when (state.phase) {
-                    DownloadState.Phase.DOWNLOADING -> showProgressNotification()
+                    // PROBING включён намеренно: между стартом/возобновлением и
+                    // успешной пробой уведомление обязано быть прогресс-
+                    // уведомлением (с Пауза/Отмена), а не устаревшим «Продолжить».
+                    DownloadState.Phase.DOWNLOADING,
+                    DownloadState.Phase.PROBING -> showProgressNotification()
                     DownloadState.Phase.WAITING_NETWORK -> showWaitingNetworkNotification()
                     DownloadState.Phase.PAUSED -> Unit // уведомление паузы уже показано
                     else -> Unit
@@ -1483,10 +1591,21 @@ class UpdateDownloadService : Service() {
         val installPi = UpdateInstallLauncher.installIntent(this, apkFile)?.let { intent ->
             PendingIntent.getActivity(this, REQUEST_CODE_INSTALL, intent, piFlags)
         }
+        // Дефект с устройства 19.11: имя файла ОДИНАКОВО у разных бет одной
+        // версии (v2rayNG_2.4.2_arm64-v8a.apk), поэтому по одному имени нельзя
+        // понять, КАКОЙ релиз готов. Тег релиза (не локализуется — это идентификатор)
+        // показываем в развёрнутом тексте уведомления.
+        val readyBigText = buildString {
+            append(getString(R.string.update_download_ready_text, apkFile.name))
+            if (state.releaseTag.isNotEmpty()) {
+                append("\n").append(state.releaseTag)
+            }
+        }
         val builder = baseBuilder()
             .setSmallIcon(R.drawable.ic_check_update_24dp)
             .setContentTitle(getString(R.string.update_download_ready_title))
             .setContentText(getString(R.string.update_download_ready_text, apkFile.name))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(readyBigText))
             .setOngoing(false)
             .setAutoCancel(true)
         if (installPi != null) {
@@ -1600,7 +1719,7 @@ class UpdateDownloadService : Service() {
      * после включения профиля повторное «Скачать» продолжит докачку с того же
      * байта (см. [UpdateDecisions.StartDecision.ResumeExisting] для PROFILE_LOST).
      */
-    private fun startProfileWatch() {
+    private fun startProfileWatch(gen: Long) {
         profileWatchJob?.cancel()
         profileWatchJob = serviceScope.launch {
             while (coroutineContext.isActive) {
@@ -1624,7 +1743,7 @@ class UpdateDownloadService : Service() {
                     route.mode == ActiveProfileRoute.Mode.TUNNEL_DIRECT
                 if (!usable) {
                     ActiveProfileRoute.log("Update download: profile lost", route)
-                    abortProfileLost()
+                    abortProfileLost(gen = gen)
                     break
                 }
             }
@@ -1647,7 +1766,13 @@ class UpdateDownloadService : Service() {
      *
      * Part-файлы НЕ удаляются: докачка продолжится после включения профиля.
      */
-    private fun abortProfileLost(detail: String? = null) {
+    private fun abortProfileLost(detail: String? = null, gen: Long = downloadGeneration) {
+        // Устаревшее поколение (наблюдатель профиля прежней загрузки дожил до
+        // новой команды) не вправе останавливать НОВУЮ загрузку.
+        if (gen != downloadGeneration) {
+            UpdateDownloadLogger.log(this, "stale download generation $gen (current $downloadGeneration): profile-lost abort ignored")
+            return
+        }
         // Однократность: повторный вызов (см. [profileAbortDone]) игнорируется.
         if (!profileAbortDone.compareAndSet(false, true)) {
             UpdateDownloadLogger.log(this, "PROFILE LOST abort already in progress, skipping duplicate")
@@ -1941,7 +2066,11 @@ class UpdateDownloadService : Service() {
         UpdateDownloadStore.save(state)
     }
 
-    private fun failDownload(reason: String, keepNotification: Boolean = true) {
+    private fun failDownload(reason: String, keepNotification: Boolean = true, gen: Long = downloadGeneration) {
+        if (gen != downloadGeneration) {
+            UpdateDownloadLogger.log(this, "stale download generation $gen (current $downloadGeneration): failure of an aborted download ignored ($reason)")
+            return
+        }
         persistState(state.copy(phase = DownloadState.Phase.FAILED, lastError = reason))
         UpdateDownloadLogger.log(this, "FAILED: $reason")
         requireProfile = false
@@ -1987,12 +2116,30 @@ class UpdateDownloadService : Service() {
      * при старте НОВОЙ цели (не докачки), чтобы чужие байты не попали в склейку.
      * Итоговый проверенный APK не трогается.
      */
+    /**
+     * Удаляет ВСЕ временные файлы склейки (`*.merging.tmp`) рабочей папки.
+     *
+     * Это не только гигиена: отменённое поколение может доживать блокирующую
+     * склейку. Удалив её temp сейчас, мы делаем невозможным её финальный
+     * rename в итоговый APK (renameTo вернёт false -> MergeResult.Error), то
+     * есть байты УСТАРЕВШЕЙ цели физически не могут затереть APK нового
+     * поколения. Part-файлы здесь НЕ удаляются.
+     */
+    private fun clearMergeTemps() {
+        workDir.listFiles()?.forEach { f ->
+            if (f.name.endsWith(".merging.tmp")) f.delete()
+        }
+    }
+
     private fun clearPartFiles(assetName: String) {
         val removed = (0 until SegmentPlan.MAX_SEGMENTS).count { idx ->
             UpdatePaths.partFile(workDir, assetName, idx).delete()
         }
-        UpdatePaths.mergeTempFile(workDir, assetName).delete()
-        UpdateDownloadLogger.log(this, "cleared $removed stale part files for new target $assetName")
+        // Временные файлы склейки ВСЕХ поколений (имена несут суффикс -gN):
+        // брошенный отменённой склейкой temp не должен оставаться мусором
+        // размером с APK в папке загрузки.
+        clearMergeTemps()
+        UpdateDownloadLogger.log(this, "cleared $removed part files and merge temp files for $assetName")
     }
 
     /** Останавливает сервис, если активной загрузки нет. */

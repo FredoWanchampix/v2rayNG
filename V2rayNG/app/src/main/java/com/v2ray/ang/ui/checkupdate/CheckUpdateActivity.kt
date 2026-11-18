@@ -291,6 +291,16 @@ private fun DownloadProgressBlock(
             text = state.assetName.ifEmpty { stringResource(R.string.update_download_notification_title) },
             style = MaterialTheme.typography.bodyLarge,
         )
+        // Тег релиза: имя файла одинаково у разных бет одной версии, поэтому
+        // без тега пользователь не видит, КАКОЙ именно релиз качается/готов
+        // (дефект с устройства 19.11: докачка ушла на устаревшую бету).
+        if (state.releaseTag.isNotEmpty()) {
+            Text(
+                text = state.releaseTag,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = phaseText,

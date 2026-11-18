@@ -120,8 +120,8 @@ object UpdatePaths {
     fun partFileName(assetName: String, segmentIndex: Int): String =
         "$assetName.seg%02d$PART_SUFFIX".format(segmentIndex)
 
-    /** Имя временного файла склейки. */
-    fun mergeTempFileName(assetName: String): String = "$assetName.merging.tmp"
+    /** Имя временного файла склейки. [suffix] отличает параллельные поколения загрузки. */
+    fun mergeTempFileName(assetName: String, suffix: String = ""): String = "$assetName$suffix.merging.tmp"
 
     /** Полный путь part-файла сегмента в рабочей папке. */
     fun partFile(dir: File, assetName: String, segmentIndex: Int): File =
@@ -131,7 +131,8 @@ object UpdatePaths {
     fun apkFile(dir: File, assetName: String): File = File(dir, assetName)
 
     /** Полный путь временного файла склейки. */
-    fun mergeTempFile(dir: File, assetName: String): File = File(dir, mergeTempFileName(assetName))
+    fun mergeTempFile(dir: File, assetName: String, suffix: String = ""): File =
+        File(dir, mergeTempFileName(assetName, suffix))
 
     /** Полный путь файла лога ошибок. */
     fun logFile(dir: File): File = File(dir, LOG_FILE_NAME)

@@ -550,6 +550,7 @@ object UpdateDownloader {
         mergedTarget: File,
         expectedSha256: String?,
         totalBytes: Long,
+        tempNameSuffix: String = "",
     ): MergeResult {
         if (segments.isEmpty()) return MergeResult.Error("no segments to merge")
         if (!SegmentPlan.isContiguous(segments, totalBytes)) {
@@ -569,7 +570,11 @@ object UpdateDownloader {
             }
         }
 
-        val temp = File(mergedTarget.parentFile, mergedTarget.name + ".merging.tmp")
+        // Суффикс обязателен при смене поколения загрузки: две склейки одного
+        // имени ассета (старое поколение доживает отмену внутри блокирующего
+        // IO) иначе писали бы ОДИН временный файл одновременно и обе дали бы
+        // битый результат.
+        val temp = File(mergedTarget.parentFile, mergedTarget.name + tempNameSuffix + ".merging.tmp")
         val digest = UpdateHashVerifier.newDigest()
         var total = 0L
         try {

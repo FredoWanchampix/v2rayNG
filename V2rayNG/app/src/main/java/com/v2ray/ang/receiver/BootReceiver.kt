@@ -111,12 +111,23 @@ class BootReceiver : BroadcastReceiver() {
          */
         private fun clearInstalledUpdateState(context: Context) {
             val state = UpdateDownloadStore.load() ?: return
-            if (state.phase != DownloadState.Phase.READY_TO_INSTALL) return
-            val tagVersion = ChangelogCollector.parseVersion(state.releaseTag)
-            if (tagVersion != BuildConfig.VERSION_NAME) return
+            if (state.releaseTag.isEmpty()) return
+            // Раньше чистилась ТОЛЬКО фаза READY_TO_INSTALL, из-за чего
+            // состояние в фазах DOWNLOADING/PAUSED/… переживало ручную
+            // установку обновления: экран показывал блок с «Продолжить», а
+            // «Продолжить» скачивал УЖЕ перекрытый релиз (дефект устройства
+            // 19.11). Правило шире: после установки сборки версии V сохранённая
+            // цель версии <= V не нужна (та же версия — уже стоит; старше —
+            // тем более). Цель СТРОГО новее установленной сохраняется: она
+            // ещё актуальна.
+            val cmp = ChangelogCollector.compareVersions(
+                ChangelogCollector.parseVersion(state.releaseTag),
+                BuildConfig.VERSION_NAME,
+            )
+            if (cmp > 0) return
             LogUtil.i(
                 AppConfig.TAG,
-                "BootReceiver: update ${state.releaseTag} is installed; clearing stale download state"
+                "BootReceiver: saved download target ${state.releaseTag} (phase ${state.phase}) is not newer than installed ${BuildConfig.VERSION_NAME}; clearing stale state"
             )
             UpdateDownloadStore.clear()
         }
