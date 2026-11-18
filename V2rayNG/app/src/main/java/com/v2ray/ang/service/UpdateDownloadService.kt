@@ -524,8 +524,11 @@ class UpdateDownloadService : Service() {
             }
 
             UpdateDecisions.StartDecision.SwitchTarget -> {
-                // Другой релиз: part-файлы старого НЕ удаляем (правило «отмена не
-                // удаляет», а очистка — только явная), начинаем новое состояние.
+                // Другой релиз: начинаем новое состояние. Part-файлы старого
+                // релиза с тем же именем ассета ЧУЖИЕ новой цели и удаляются
+                // ниже общим путём (clearPartFiles при !trustExistingParts):
+                // иначе их байты попали бы в склейку нового релиза. Правило
+                // «отмена не удаляет» относится к ACTION_CANCEL, не к смене цели.
                 UpdateDownloadLogger.log(
                     this,
                     "switch target: ${existing?.releaseTag}/${existing?.assetName} -> $releaseTag/$assetName (old parts kept)"
@@ -1687,12 +1690,16 @@ class UpdateDownloadService : Service() {
     }
 
     private fun showFailedNotification(reason: String) {
+        // Тег цели в развёрнутом тексте: «Повторить» из шторки возобновляет
+        // ИМЕННО эту цель, пользователь обязан видеть какую (дефект 19.11 —
+        // невидимость цели).
+        val big = if (state.releaseTag.isNotEmpty()) "${state.releaseTag}\n$reason" else reason
         showNotification(
             baseBuilder()
                 .setSmallIcon(R.drawable.ic_close_24dp)
                 .setContentTitle(getString(R.string.update_download_failed_title))
                 .setContentText(reason)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(reason))
+                .setStyle(NotificationCompat.BigTextStyle().bigText(big))
                 .setOngoing(false)
                 .setAutoCancel(false)
                 .addAction(R.drawable.ic_refresh_24dp, getString(R.string.update_download_action_retry), buildRetryPendingIntent())
@@ -1700,10 +1707,16 @@ class UpdateDownloadService : Service() {
     }
 
     private fun showCancelledNotification() {
+        val line = if (state.releaseTag.isNotEmpty()) {
+            "${state.releaseTag}\n" + getString(R.string.update_download_cancelled)
+        } else {
+            getString(R.string.update_download_cancelled)
+        }
         showNotification(
             baseBuilder()
                 .setContentTitle(getString(R.string.update_download_notification_title))
-                .setContentText(getString(R.string.update_download_cancelled))
+                .setContentText(line)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(line))
                 .setOngoing(false)
                 .setAutoCancel(true)
                 .addAction(R.drawable.ic_refresh_24dp, getString(R.string.update_download_action_resume), buildRetryPendingIntent())
