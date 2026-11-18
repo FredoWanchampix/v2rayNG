@@ -1896,7 +1896,14 @@ class UpdateDownloadService : Service() {
 
     /** Уведомление об остановке из-за профиля: с кнопкой «Продолжить». */
     private fun showProfileLostNotification() {
-        val headline = getString(R.string.update_download_profile_lost_notification)
+        // Кнопка «Продолжить» этого уведомления возобновляет ИМЕННО эту цель:
+        // тег релиза обязан быть виден (имя файла одинаково у бет одной
+        // версии, дефект невидимости цели 19.11).
+        val headline = if (state.releaseTag.isNotEmpty()) {
+            "${state.releaseTag}\n" + getString(R.string.update_download_profile_lost_notification)
+        } else {
+            getString(R.string.update_download_profile_lost_notification)
+        }
         // Требование владельца: ПРИЧИНА («почему так произошло») обязана быть не
         // только в логе, но и в уведомлении. Точная причина лежит в
         // state.lastError — туда abortProfileLost кладёт профиль-строку плюс
