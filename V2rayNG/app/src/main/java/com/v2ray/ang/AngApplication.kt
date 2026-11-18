@@ -13,7 +13,6 @@ import com.v2ray.ang.handler.AppLocaleManager
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.ui.compose.ThemeManager
-import com.v2ray.ang.util.Utils
 import com.v2ray.ang.util.updater.AppForegroundTracker
 import com.v2ray.ang.util.updater.UpdateInstallReceiver
 
@@ -67,11 +66,18 @@ class AngApplication : Application() {
         // попыток установки. Решение «ставить сейчас» принимает
         // UpdateInstallReceiver по AppForegroundTracker (живёт здесь же, в main).
         if (isMainProcess()) {
+            // RECEIVER_NOT_EXPORTED намеренно, а не Utils.receiverFlags()
+            // (который даёт EXPORTED на API 33+): сообщения загрузчика —
+            // ВНУТРИприложенческие (сервис :tasks -> main того же UID). С
+            // EXPORTED любое стороннее приложение могло бы послать broadcast с
+            // этим action и, например, триггерить попытку установки или снять
+            // уведомление. NOT_EXPORTED принимает broadcast только от системы и
+            // того же UID, то есть от наших же процессов.
             ContextCompat.registerReceiver(
                 this,
                 UpdateInstallReceiver(),
                 IntentFilter(AppConfig.BROADCAST_ACTION_ACTIVITY),
-                Utils.receiverFlags()
+                ContextCompat.RECEIVER_NOT_EXPORTED
             )
         }
     }

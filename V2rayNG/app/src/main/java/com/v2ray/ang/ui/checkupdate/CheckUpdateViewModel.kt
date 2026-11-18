@@ -123,11 +123,15 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
     }
 
     init {
+        // RECEIVER_NOT_EXPORTED: сообщения загрузчика внутриприложенческие
+        // (сервис :tasks -> main того же UID). С EXPORTED стороннее приложение
+        // могло бы слать фейковый прогресс/ошибки в этот экран. См. комментарий
+        // в AngApplication.
         ContextCompat.registerReceiver(
             app,
             downloadReceiver,
             IntentFilter(AppConfig.BROADCAST_ACTION_ACTIVITY),
-            Utils.receiverFlags()
+            ContextCompat.RECEIVER_NOT_EXPORTED
         )
         // Пользователь мог удалить проверенный APK из папки загрузки вручную
         // (Files и т.п.), пока клиента не было в памяти. Персистентное состояние
