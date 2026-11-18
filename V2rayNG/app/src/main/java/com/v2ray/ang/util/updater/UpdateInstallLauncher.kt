@@ -89,26 +89,4 @@ object UpdateInstallLauncher {
         }
     }
 
-    /**
-     * Авто-установка после успешной проверки: только когда пользователь ещё
-     * внутри клиента (пункт 6). Решение принимает [UpdateDecisions.decideInstall],
-     * чтобы правило было доказано JVM-тестом.
-     *
-     * @return true, если установка была запущена.
-     */
-    fun installIfForeground(context: Context, apkFile: File): Boolean {
-        val decision = UpdateDecisions.decideInstall(
-            appInForeground = AppForegroundTracker.isAppInForeground,
-        )
-        return when (decision) {
-            UpdateDecisions.InstallDecision.InstallNow -> install(context, apkFile)
-            UpdateDecisions.InstallDecision.DeferToNotification -> {
-                UpdateDownloadLogger.log(
-                    context,
-                    "app not in foreground: install deferred to the notification action"
-                )
-                false
-            }
-        }
-    }
 }

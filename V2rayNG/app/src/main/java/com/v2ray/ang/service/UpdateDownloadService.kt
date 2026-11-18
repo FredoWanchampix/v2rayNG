@@ -151,8 +151,17 @@ class UpdateDownloadService : Service() {
         const val ACTION_RESUME = ACTIONS_PREFIX + "update.download.resume"
         /** Отмена: НЕ удаляет part-файлы (докачка продолжится при следующем старте). */
         const val ACTION_CANCEL = ACTIONS_PREFIX + "update.download.cancel"
-        /** Установка из уведомления (кнопка «Установить»). */
-        const val ACTION_INSTALL = ACTIONS_PREFIX + "update.download.install"
+
+        /**
+         * requestCode PendingIntent'а кнопки «Установить» в уведомлении.
+         *
+         * Отдельного действия ACTION_INSTALL для сервиса НЕТ: кнопка ведёт
+         * PendingIntent.getActivity прямо в системный установщик (см.
+         * showReadyNotification). Команда сервису была бы недостижимым кодом, а
+         * на Android 12+ startService из фона ещё и бросал бы исключение —
+         * именно поэтому установка из шторки сделана через Activity-intent.
+         */
+        private const val REQUEST_CODE_INSTALL = 3
 
         const val EXTRA_RELEASE_TAG = "extra_release_tag"
         const val EXTRA_ASSET_NAME = "extra_asset_name"
@@ -323,11 +332,10 @@ class UpdateDownloadService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
         // Foreground-контракт: startForegroundService (ACTION_START) обязан
-        // получить startForeground быстро. Для INSTALL foreground не нужен:
-        // сервис лишь запускает системный установщик и останавливается.
-        if (action != ACTION_INSTALL) {
-            ensureForeground()
-        }
+        // получить startForeground быстро. Команды паузы/отмены приходят в уже
+        // поднятый сервис, и повторный startForeground просто обновляет
+        // уведомление — это безопасно и соответствует контракту.
+        ensureForeground()
         when (action) {
             ACTION_START ->
                 // `!!` не нужен: K2 выводит non-null из ветки when, потому что
@@ -338,7 +346,6 @@ class UpdateDownloadService : Service() {
             ACTION_PAUSE -> handlePause()
             ACTION_RESUME -> handleResume()
             ACTION_CANCEL -> handleCancel()
-            ACTION_INSTALL -> handleInstall()
             else -> {
                 // START_STICKY перезапустил сервис после kill процесса без intent:
                 // продолжаем сохранённую загрузку (докачка после перезагрузки).
@@ -574,24 +581,6 @@ class UpdateDownloadService : Service() {
         stopSelf()
     }
 
-    /** Кнопка «Установить» в уведомлении: запускает установщик прямо оттуда. */
-    private fun handleInstall() {
-        val persisted = UpdateDownloadStore.load() ?: state
-        // Предпочитаем сохранённый фактический путь (может быть резервный
-        // приватный каталог), иначе вычисляем от текущей рабочей папки.
-        val apk = persisted.apkPath.takeIf { it.isNotBlank() }?.let(::File)
-            ?: UpdatePaths.apkFile(workDir, persisted.assetName)
-        if (persisted.assetName.isEmpty() || !apk.exists()) {
-            LogUtil.w(AppConfig.TAG, "UpdateDownloadService: install requested but no verified APK")
-            stopSelfIfIdle()
-            return
-        }
-        UpdateInstallLauncher.install(this, apk)
-        // Пользователь сам нажал «Установить»: уведомление больше не нужно.
-        NotificationHelper.cancel(NotificationChannelType.UPDATE_DOWNLOAD, this)
-        stopSelfIfIdle()
-    }
-
     // -------------------------------------------------------------------------
     // Основной цикл загрузки
     // -------------------------------------------------------------------------
@@ -658,7 +647,12 @@ class UpdateDownloadService : Service() {
 
             // 2) Проба: размер объекта и поддержка Range. Повторяется до успеха —
             //    «загрузка не должна останавливаться» даже на старте.
-            var probe = UpdateDownloader.probe(client, state.browserDownloadUrl) { call -> registerCall(call) }
+            var probe = UpdateDownloader.probe(
+                client = client,
+                url = state.browserDownloadUrl,
+                onCall = { call -> registerCall(call) },
+                onCallDone = { call -> unregisterCall(call) },
+            )
             while (probe.totalBytes <= 0L) {
                 if (cancelledFlag.get()) return
                 if (pausedFlag.get()) { waitWhilePaused(); continue }
@@ -669,7 +663,12 @@ class UpdateDownloadService : Service() {
                 }
                 UpdateDownloadLogger.log(this, "probe failed, retrying in 5s")
                 delay(5_000L)
-                probe = UpdateDownloader.probe(client, state.browserDownloadUrl) { call -> registerCall(call) }
+                probe = UpdateDownloader.probe(
+                client = client,
+                url = state.browserDownloadUrl,
+                onCall = { call -> registerCall(call) },
+                onCallDone = { call -> unregisterCall(call) },
+            )
             }
             if (cancelledFlag.get()) return
 
@@ -745,7 +744,12 @@ class UpdateDownloadService : Service() {
             UpdateDownloadLogger.log(this, "no checksums URL known; will refuse to install unverified APK")
             return
         }
-        val manifest = UpdateDownloader.fetchSmallText(client, sumsUrl) { call -> registerCall(call) }
+        val manifest = UpdateDownloader.fetchSmallText(
+            client = client,
+            url = sumsUrl,
+            onCall = { call -> registerCall(call) },
+            onCallDone = { call -> unregisterCall(call) },
+        )
         if (manifest.isNullOrBlank()) {
             UpdateDownloadLogger.log(this, "WARNING: SHA256SUMS.txt fetch failed from $sumsUrl")
             return
@@ -865,6 +869,7 @@ class UpdateDownloadService : Service() {
                     expectedValidator = state.validator,
                     onBytes = onBytes,
                     onCall = { call -> registerCall(call) },
+                    onCallDone = { call -> unregisterCall(call) },
                 )
             } catch (e: CancellationException) {
                 // Пауза/отмена прервали чтение потока — выходим, part сохранён.
@@ -967,6 +972,7 @@ class UpdateDownloadService : Service() {
                     targetFile = target,
                     onBytes = onBytes,
                     onCall = { call -> registerCall(call) },
+                    onCallDone = { call -> unregisterCall(call) },
                 )
             } catch (e: CancellationException) {
                 return
@@ -1287,7 +1293,7 @@ class UpdateDownloadService : Service() {
         // пользователь вышел из клиента (требование владельца: установка из
         // уведомления должна работать в любой момент).
         val installPi = UpdateInstallLauncher.installIntent(this, apkFile)?.let { intent ->
-            PendingIntent.getActivity(this, ACTION_INSTALL.hashCode(), intent, piFlags)
+            PendingIntent.getActivity(this, REQUEST_CODE_INSTALL, intent, piFlags)
         }
         val builder = baseBuilder()
             .setSmallIcon(R.drawable.ic_check_update_24dp)
@@ -1601,15 +1607,20 @@ class UpdateDownloadService : Service() {
 
     private fun registerCall(call: Call) {
         activeCalls.add(call)
-        // Одновременно активных вызовов не больше числа сегментов (<=24):
-        // каждый сегмент держит один запрос за раз. Отменённые call'ы точно
-        // мертвы — подчищаем их, чтобы множество не росло на длинных загрузках
-        // с сотнями ретраев. НЕ трогаем isExecuted(): onCall вызывается ДО
-        // execute(), поэтому свежий call ещё «не выполнен» и его удаление было
-        // бы ошибкой (проверка isCanceled() от таких защищена).
-        if (activeCalls.size > 64) {
-            activeCalls.removeAll { it.isCanceled() }
-        }
+    }
+
+    /**
+     * Снимает завершённый call из набора активных.
+     *
+     * Обязателен: без него набор рос бы на каждый редирект и ретрай — GitHub
+     * отдаёт 302 на КАЖДЫЙ сегментный запрос, а на плохой сети ретраев сотни,
+     * поэтому cancelActiveCalls() перебирал бы тысячи мёртвых объектов.
+     * Снимать можно только ПОСЛЕ закрытия тела ответа: пока тело читается, call
+     * обязан оставаться в наборе, иначе пауза/отмена не смогут прервать
+     * блокирующий InputStream.read.
+     */
+    private fun unregisterCall(call: Call) {
+        activeCalls.remove(call)
     }
 
     private fun cancelActiveCalls() {

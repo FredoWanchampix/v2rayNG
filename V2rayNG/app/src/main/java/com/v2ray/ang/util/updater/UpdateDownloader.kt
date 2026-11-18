@@ -109,8 +109,12 @@ object UpdateDownloader {
      * ретраиться как IOException. Поэтому он выделен в отдельный случай.
      */
     sealed interface Redirected {
-        /** Ответ получен (вызывающий ОБЯЗАН закрыть его use{}). */
-        data class Ok(val response: Response) : Redirected
+        /**
+         * Ответ получен. Вызывающий ОБЯЗАН закрыть его через use{}, а затем
+         * снять [call] из набора активных ([onCallDone]) — иначе набор растёт
+         * на каждый ретрай и редирект без предела.
+         */
+        data class Ok(val response: Response, val call: okhttp3.Call) : Redirected
 
         /** Редирект/стартовый URL вне allowlist — фатально. */
         data class Disallowed(val reason: String) : Redirected
@@ -135,6 +139,7 @@ object UpdateDownloader {
         request: Request,
         isAllowed: (String) -> Boolean = { url -> UpdateUrlPolicy.isAllowed(url) },
         onCall: (okhttp3.Call) -> Unit = {},
+        onCallDone: (okhttp3.Call) -> Unit = {},
     ): Redirected {
         if (!isAllowed(request.url.toString())) {
             return Redirected.Disallowed("URL outside the allowlist: ${request.url.host}")
@@ -147,10 +152,31 @@ object UpdateDownloader {
             // паузе/отмене: блокирующий InputStream.read не прерывается одной
             // отменой корутины, а call.cancel() рвёт сокет немедленно.
             onCall(call)
-            val response = call.execute()
-            if (!response.isRedirect) return Redirected.Ok(response)
+            // Если execute() сам бросает (обрыв соединения, отмена по паузе,
+            // таймаут), ответ не создан и снять call некому ниже. Без этого
+            // блока каждый сетевой сбой навсегда оставлял бы мёртвый call в
+            // наборе активных — а на плохой сети с сотнями ретраев набор рос бы
+            // неограниченно.
+            val response = try {
+                call.execute()
+            } catch (e: IOException) {
+                onCallDone(call)
+                throw e
+            }
+            if (!response.isRedirect) {
+                // Последний call: его тело читает ВЫЗЫВАЮЩИЙ код, поэтому снимать
+                // call из набора здесь НЕЛЬЗЯ — иначе пауза/отмена не смогут
+                // прервать блокирующий InputStream.read. Вызывающий снимет его
+                // в finally после закрытия ответа (onCallDone(redirected.call)).
+                return Redirected.Ok(response, call)
+            }
             val location = response.header("Location")
             response.close()
+            // Промежуточный call завершён и тело закрыто — снимаем из набора.
+            // Без этого набор активных call'ов рос бы на каждом редиректе
+            // (GitHub отдаёт 302 на каждый сегментный запрос), а отменять
+            // завершённый call бессмысленно.
+            onCallDone(call)
             if (location.isNullOrBlank()) {
                 throw IOException("redirect without Location header")
             }
@@ -165,6 +191,7 @@ object UpdateDownloader {
             current = current.newBuilder().url(resolved).build()
         }
     }
+
 
     /** Резолвит Location (абсолютный или относительный) против базового URL. */
     fun resolveUrl(baseUrl: String, location: String): String? = try {
@@ -192,16 +219,21 @@ object UpdateDownloader {
         url: String,
         isAllowed: (String) -> Boolean = { u -> UpdateUrlPolicy.isAllowed(u) },
         onCall: (okhttp3.Call) -> Unit = {},
+        onCallDone: (okhttp3.Call) -> Unit = {},
     ): String? = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", USER_AGENT)
             .build()
         try {
-            when (val redirected = executeWithRedirects(client, request, isAllowed, onCall)) {
+            when (val redirected = executeWithRedirects(client, request, isAllowed, onCall, onCallDone)) {
                 is Redirected.Disallowed -> null
-                is Redirected.Ok -> redirected.response.use { response ->
-                    if (response.isSuccessful) response.body.string() else null
+                is Redirected.Ok -> try {
+                    redirected.response.use { response ->
+                            if (response.isSuccessful) response.body.string() else null
+                    }
+                } finally {
+                    onCallDone(redirected.call)
                 }
             }
         } catch (e: IOException) {
@@ -220,6 +252,7 @@ object UpdateDownloader {
         url: String,
         isAllowed: (String) -> Boolean = { u -> UpdateUrlPolicy.isAllowed(u) },
         onCall: (okhttp3.Call) -> Unit = {},
+        onCallDone: (okhttp3.Call) -> Unit = {},
     ): Probe = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(url)
@@ -227,32 +260,36 @@ object UpdateDownloader {
             .header("User-Agent", USER_AGENT)
             .build()
         try {
-            when (val redirected = executeWithRedirects(client, request, isAllowed, onCall)) {
+            when (val redirected = executeWithRedirects(client, request, isAllowed, onCall, onCallDone)) {
                 is Redirected.Disallowed ->
                     Probe(totalBytes = -1L, rangesSupported = false, validator = null)
 
-                is Redirected.Ok -> redirected.response.use { response ->
-                    val validator = ResumePolicy.validatorOf(
-                        response.header("ETag"),
-                        response.header("Last-Modified"),
-                    )
-                    val contentType = response.header("Content-Type")
-                    when (response.code) {
-                        206 -> {
-                            val range = ResumePolicy.parseContentRange(response.header("Content-Range"))
-                            val total = range?.second ?: response.body.contentLength()
-                            Probe(totalBytes = total, rangesSupported = true, validator = validator, contentType = contentType)
-                        }
+                is Redirected.Ok -> try {
+                    redirected.response.use { response ->
+                            val validator = ResumePolicy.validatorOf(
+                                response.header("ETag"),
+                                response.header("Last-Modified"),
+                            )
+                            val contentType = response.header("Content-Type")
+                            when (response.code) {
+                                206 -> {
+                                    val range = ResumePolicy.parseContentRange(response.header("Content-Range"))
+                                    val total = range?.second ?: response.body.contentLength()
+                                    Probe(totalBytes = total, rangesSupported = true, validator = validator, contentType = contentType)
+                                }
 
-                        200 -> Probe(
-                            totalBytes = response.body.contentLength(),
-                            rangesSupported = false,
-                            validator = validator,
-                            contentType = contentType,
-                        )
+                                200 -> Probe(
+                                    totalBytes = response.body.contentLength(),
+                                    rangesSupported = false,
+                                    validator = validator,
+                                    contentType = contentType,
+                                )
 
-                        else -> Probe(totalBytes = -1L, rangesSupported = false, validator = validator, contentType = contentType)
+                                else -> Probe(totalBytes = -1L, rangesSupported = false, validator = validator, contentType = contentType)
+                            }
                     }
+                } finally {
+                    onCallDone(redirected.call)
                 }
             }
         } catch (e: IOException) {
@@ -283,6 +320,7 @@ object UpdateDownloader {
         onBytes: (Long) -> Unit,
         isAllowed: (String) -> Boolean = { u -> UpdateUrlPolicy.isAllowed(u) },
         onCall: (okhttp3.Call) -> Unit = {},
+        onCallDone: (okhttp3.Call) -> Unit = {},
     ): SegmentOutcome = withContext(Dispatchers.IO) {
         val segmentSize = segmentEndInclusive - segmentStart + 1
         val existing = if (partFile.exists()) partFile.length() else 0L
@@ -304,73 +342,77 @@ object UpdateDownloader {
             .build()
 
         try {
-            when (val redirected = executeWithRedirects(client, request, isAllowed, onCall)) {
+            when (val redirected = executeWithRedirects(client, request, isAllowed, onCall, onCallDone)) {
                 is Redirected.Disallowed -> SegmentOutcome.Fatal(redirected.reason)
-                is Redirected.Ok -> redirected.response.use { response ->
-                    val validator = ResumePolicy.validatorOf(
-                        response.header("ETag"),
-                        response.header("Last-Modified"),
-                    )
+                is Redirected.Ok -> try {
+                    redirected.response.use { response ->
+                            val validator = ResumePolicy.validatorOf(
+                                response.header("ETag"),
+                                response.header("Last-Modified"),
+                            )
 
-                    // Объект сменился между запросами сегментов: продолжать
-                    // нельзя НИ один сегмент этого релиза. Возвращаем новую
-                    // метку, чтобы сервис сделал полный рестарт (иначе сегменты
-                    // зациклились бы: state.validator остался бы старым).
-                    if (!ResumePolicy.objectUnchanged(expectedValidator, validator)) {
-                        return@use SegmentOutcome.Restart(
-                            "object changed: expected=$expectedValidator got=$validator",
-                            newValidator = validator,
-                        )
-                    }
-
-                    when (val outcome = ResumePolicy.classify(
-                        code = response.code,
-                        contentRange = response.header("Content-Range"),
-                        contentLength = response.body.contentLength(),
-                    )) {
-                        is ResumePolicy.Outcome.Partial -> {
-                            // Сервер обязан начать РОВНО с запрошенного байта,
-                            // иначе part-файл побьётся (стык сегментов).
-                            if (outcome.start != resumeFrom) {
+                            // Объект сменился между запросами сегментов: продолжать
+                            // нельзя НИ один сегмент этого релиза. Возвращаем новую
+                            // метку, чтобы сервис сделал полный рестарт (иначе сегменты
+                            // зациклились бы: state.validator остался бы старым).
+                            if (!ResumePolicy.objectUnchanged(expectedValidator, validator)) {
                                 return@use SegmentOutcome.Restart(
-                                    "range start mismatch: want=$resumeFrom got=${outcome.start}"
+                                    "object changed: expected=$expectedValidator got=$validator",
+                                    newValidator = validator,
                                 )
                             }
-                            val written = appendBody(response, partFile, onBytes)
-                            // Пост-запись: part обязан закрыть сегмент ЦЕЛИКОМ.
-                            // Короткое тело при корректном Content-Length okhttp
-                            // не ловит (EOF «чистый»), поэтому без этой проверки
-                            // Complete вернулся бы при неполном сегменте, и
-                            // ошибка всплыла бы только на склейке. Недокачано —
-                            // значит переходящая ошибка: ретрай продолжит с
-                            // фактического конца part-файла.
-                            val have = if (partFile.exists()) partFile.length() else 0L
-                            if (have < segmentSize) {
-                                SegmentOutcome.Transient(
-                                    "truncated body: wrote $written, part $have/$segmentSize"
-                                )
-                            } else {
-                                SegmentOutcome.Complete(bytesWritten = written, validator = validator)
-                            }
-                        }
 
-                        is ResumePolicy.Outcome.FullObject ->
-                            // 200 на Range-запрос сегмента: для сегментной
-                            // докачки тупик (part неполон, дозапросить нельзя).
-                            SegmentOutcome.Restart("server ignored Range (got 200)")
+                            when (val outcome = ResumePolicy.classify(
+                                code = response.code,
+                                contentRange = response.header("Content-Range"),
+                                contentLength = response.body.contentLength(),
+                            )) {
+                                is ResumePolicy.Outcome.Partial -> {
+                                    // Сервер обязан начать РОВНО с запрошенного байта,
+                                    // иначе part-файл побьётся (стык сегментов).
+                                    if (outcome.start != resumeFrom) {
+                                        return@use SegmentOutcome.Restart(
+                                            "range start mismatch: want=$resumeFrom got=${outcome.start}"
+                                        )
+                                    }
+                                    val written = appendBody(response, partFile, onBytes)
+                                    // Пост-запись: part обязан закрыть сегмент ЦЕЛИКОМ.
+                                    // Короткое тело при корректном Content-Length okhttp
+                                    // не ловит (EOF «чистый»), поэтому без этой проверки
+                                    // Complete вернулся бы при неполном сегменте, и
+                                    // ошибка всплыла бы только на склейке. Недокачано —
+                                    // значит переходящая ошибка: ретрай продолжит с
+                                    // фактического конца part-файла.
+                                    val have = if (partFile.exists()) partFile.length() else 0L
+                                    if (have < segmentSize) {
+                                        SegmentOutcome.Transient(
+                                            "truncated body: wrote $written, part $have/$segmentSize"
+                                        )
+                                    } else {
+                                        SegmentOutcome.Complete(bytesWritten = written, validator = validator)
+                                    }
+                                }
 
-                        ResumePolicy.Outcome.RangeNotSatisfiable ->
-                            // 416: resumeFrom за пределами объекта (part длиннее
-                            // сегмента или объект укоротился) — рестарт сегмента.
-                            SegmentOutcome.Restart("416 Range Not Satisfiable (existing=$existing)")
+                                is ResumePolicy.Outcome.FullObject ->
+                                    // 200 на Range-запрос сегмента: для сегментной
+                                    // докачки тупик (part неполон, дозапросить нельзя).
+                                    SegmentOutcome.Restart("server ignored Range (got 200)")
 
-                        is ResumePolicy.Outcome.HttpError ->
-                            if (UpdateDecisions.isRetriableHttp(outcome.code)) {
-                                SegmentOutcome.Transient("HTTP ${outcome.code}")
-                            } else {
-                                SegmentOutcome.Fatal("HTTP ${outcome.code}")
+                                ResumePolicy.Outcome.RangeNotSatisfiable ->
+                                    // 416: resumeFrom за пределами объекта (part длиннее
+                                    // сегмента или объект укоротился) — рестарт сегмента.
+                                    SegmentOutcome.Restart("416 Range Not Satisfiable (existing=$existing)")
+
+                                is ResumePolicy.Outcome.HttpError ->
+                                    if (UpdateDecisions.isRetriableHttp(outcome.code)) {
+                                        SegmentOutcome.Transient("HTTP ${outcome.code}")
+                                    } else {
+                                        SegmentOutcome.Fatal("HTTP ${outcome.code}")
+                                    }
                             }
                     }
+                } finally {
+                    onCallDone(redirected.call)
                 }
             }
         } catch (e: IOException) {
@@ -417,43 +459,48 @@ object UpdateDownloader {
         onBytes: (Long) -> Unit,
         isAllowed: (String) -> Boolean = { u -> UpdateUrlPolicy.isAllowed(u) },
         onCall: (okhttp3.Call) -> Unit = {},
+        onCallDone: (okhttp3.Call) -> Unit = {},
     ): SegmentOutcome = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", USER_AGENT)
             .build()
         try {
-            when (val redirected = executeWithRedirects(client, request, isAllowed, onCall)) {
+            when (val redirected = executeWithRedirects(client, request, isAllowed, onCall, onCallDone)) {
                 is Redirected.Disallowed -> SegmentOutcome.Fatal(redirected.reason)
-                is Redirected.Ok -> redirected.response.use { response ->
-                    val validator = ResumePolicy.validatorOf(
-                        response.header("ETag"),
-                        response.header("Last-Modified"),
-                    )
-                    if (response.code == 200) {
-                        targetFile.parentFile?.let { if (!it.exists()) it.mkdirs() }
-                        var written = 0L
-                        response.body.byteStream().use { input ->
-                            targetFile.outputStream().use { output ->
-                                val buffer = ByteArray(BUFFER_SIZE)
-                                while (true) {
-                                    val read = input.read(buffer)
-                                    if (read < 0) break
-                                    if (read > 0) {
-                                        output.write(buffer, 0, read)
-                                        written += read
-                                        onBytes(read.toLong())
+                is Redirected.Ok -> try {
+                    redirected.response.use { response ->
+                            val validator = ResumePolicy.validatorOf(
+                                response.header("ETag"),
+                                response.header("Last-Modified"),
+                            )
+                            if (response.code == 200) {
+                                targetFile.parentFile?.let { if (!it.exists()) it.mkdirs() }
+                                var written = 0L
+                                response.body.byteStream().use { input ->
+                                    targetFile.outputStream().use { output ->
+                                        val buffer = ByteArray(BUFFER_SIZE)
+                                        while (true) {
+                                            val read = input.read(buffer)
+                                            if (read < 0) break
+                                            if (read > 0) {
+                                                output.write(buffer, 0, read)
+                                                written += read
+                                                onBytes(read.toLong())
+                                            }
+                                        }
+                                        output.flush()
                                     }
                                 }
-                                output.flush()
+                                SegmentOutcome.Complete(written, validator)
+                            } else if (UpdateDecisions.isRetriableHttp(response.code)) {
+                                SegmentOutcome.Transient("HTTP ${response.code}")
+                            } else {
+                                SegmentOutcome.Fatal("HTTP ${response.code}")
                             }
-                        }
-                        SegmentOutcome.Complete(written, validator)
-                    } else if (UpdateDecisions.isRetriableHttp(response.code)) {
-                        SegmentOutcome.Transient("HTTP ${response.code}")
-                    } else {
-                        SegmentOutcome.Fatal("HTTP ${response.code}")
                     }
+                } finally {
+                    onCallDone(redirected.call)
                 }
             }
         } catch (e: IOException) {
