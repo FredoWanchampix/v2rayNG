@@ -61,9 +61,30 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
     private val _showUpdateDialog = MutableStateFlow(false)
     val showUpdateDialog: StateFlow<Boolean> = _showUpdateDialog.asStateFlow()
 
-    /** Живое состояние встроенной загрузки для UI (прогресс/фаза/скорость-строка). */
-    private val _downloadState = MutableStateFlow(UpdateDownloadStore.load() ?: DownloadState())
+    /**
+     * Живое состояние встроенной загрузки для UI (прогресс/фаза/скорость).
+     *
+     * Инициализация НЕ показывает устаревшую готовность: если сохранённая фаза
+     * READY_TO_INSTALL, а проверенный APK по сохранённому пути отсутствует
+     * (удалён вручную), подставляется пустое состояние сразу, без ожидания
+     * фоновой сверки — иначе кнопка «Установить» мелькала бы на мгновение для
+     * несуществующего файла. Проверка здесь — только stat одного файла по
+     * готовому пути (без mkdirs), то есть дешёвая и безопасная в main-потоке;
+     * полная сверка с резервным каталогом идёт фоном в refreshReadyState().
+     */
+    private val _downloadState = MutableStateFlow(initialDownloadState())
     val downloadState: StateFlow<DownloadState> = _downloadState.asStateFlow()
+
+    private fun initialDownloadState(): DownloadState {
+        val persisted = UpdateDownloadStore.load() ?: return DownloadState()
+        if (persisted.phase == DownloadState.Phase.READY_TO_INSTALL) {
+            val apkPath = persisted.apkPath
+            if (apkPath.isNotBlank() && !File(apkPath).exists()) {
+                return DownloadState()
+            }
+        }
+        return persisted
+    }
 
     /**
      * Приёмник сообщений загрузчика (сервис живёт в :tasks, шлёт broadcast).
