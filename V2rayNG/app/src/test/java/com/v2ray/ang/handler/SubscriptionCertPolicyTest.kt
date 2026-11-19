@@ -5,6 +5,7 @@ import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.EConfigType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -263,12 +264,38 @@ class SubscriptionCertPolicyTest {
     // ---------- дедупликация сетевых запросов по эндпоинту ----------
 
     @Test
-    fun `endpoint key ignores protocol password and transport`() {
+    fun `endpoint key ignores password and transport but not configType`() {
         val a = tlsProfile().apply { password = "p1"; network = "ws"; sni = "s.example.com" }
         val b = tlsProfile().apply {
             password = "p2"; network = "grpc"; sni = "s.example.com"
         }
         assertEquals(SubscriptionCertPolicy.endpointKey(a), SubscriptionCertPolicy.endpointKey(b))
+    }
+
+    /**
+     * КРИТИЧНО: отпечаток зависит от типа рукопожатия. VLESS-TLS и Hysteria2-QUIC
+     * на одном host:port:sni должны дать РАЗНЫЕ ключи — иначе второй получит
+     * чужой (TLS) отпечаток из общего кэша. Регрессия, найденная самоаудитом.
+     */
+    @Test
+    fun `endpoint key separates tls from quic on same host`() {
+        val tls = tlsProfile().apply { sni = "s.example.com" }
+        val quic = hy2Profile().apply { sni = "s.example.com" }
+        assertNotEquals(
+            SubscriptionCertPolicy.endpointKey(tls),
+            SubscriptionCertPolicy.endpointKey(quic),
+        )
+    }
+
+    /** MASQUE выбирает QUIC/TLS по alpn — ключ обязан различать alpn. */
+    @Test
+    fun `endpoint key separates different alpn on same host`() {
+        val h2 = tlsProfile().apply { alpn = "h2"; sni = "s.example.com" }
+        val h3 = tlsProfile().apply { alpn = "h3"; sni = "s.example.com" }
+        assertNotEquals(
+            SubscriptionCertPolicy.endpointKey(h2),
+            SubscriptionCertPolicy.endpointKey(h3),
+        )
     }
 
     @Test
