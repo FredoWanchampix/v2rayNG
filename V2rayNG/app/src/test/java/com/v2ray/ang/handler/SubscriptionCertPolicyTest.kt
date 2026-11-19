@@ -156,6 +156,24 @@ class SubscriptionCertPolicyTest {
         assertNull(p.insecure)
     }
 
+    /**
+     * Поведение существующего свитча авто-allowInsecure сохранено ПОСЛОВНО: он
+     * всегда считал сертификатом НЕПУСТОЕ значение (!isNullOrEmpty), включая
+     * пробельное. Новый гейт получения отпечатка строже (isNullOrBlank), поэтому
+     * пробельное «сертификатом» для получения не считается — но сам старый свитч
+     * не меняет поведение ни на одном входе (бережное отношение к рабочей фиче).
+     */
+    @Test
+    fun `auto insecure keeps legacy isNullOrEmpty semantics for blank value`() {
+        val blank = tlsProfile().apply { pinnedCA256 = "   " }
+        // пробел = непустая строка -> старый свитч всё так же включает insecure
+        assertTrue(SubscriptionCertPolicy.applyAutoInsecure(blank, true))
+        assertEquals(true, blank.insecure)
+        // но гейт получения отпечатка считает пробел отсутствием сертификата
+        assertFalse(SubscriptionCertPolicy.hasCertificateFromSubscription(blank))
+        assertTrue(SubscriptionCertPolicy.shouldFetchCertificate(blank, true))
+    }
+
     @Test
     fun `auto insecure applies for pinned and legacy certificates`() {
         val a = tlsProfile().apply { pinnedCA256 = "AA" }

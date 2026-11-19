@@ -33,8 +33,13 @@ object SubscriptionCertPolicy {
      *
      * Проверяются оба поля: актуальное [ProfileItem.pinnedCA256] и устаревшее
      * [ProfileItem.pinSHA256] (Hysteria v1/Hysteria2 несут `pinSHA256`; миграция
-     * SettingsManager переносит его в pinnedCA256 позже). Ровно то же условие
-     * использует существующий авто-allowInsecure, поэтому гейты согласованы.
+     * SettingsManager переносит его в pinnedCA256 позже).
+     *
+     * Пробельное значение сертификатом НЕ считается (isNullOrBlank): оно не может
+     * быть валидным отпечатком SHA-256 (64 hex-символа), а значит не должно ни
+     * блокировать получение настоящего отпечатка, ни защищаться от перезаписи.
+     * Для существующего свитча авто-allowInsecure сохранено прежнее условие
+     * (!isNullOrEmpty) — см. [applyAutoInsecure]: его поведение не менялось.
      */
     fun hasCertificateFromSubscription(profile: ProfileItem): Boolean =
         !profile.pinnedCA256.isNullOrBlank() || !profile.pinSHA256.isNullOrBlank()
@@ -112,17 +117,31 @@ object SubscriptionCertPolicy {
     }
 
     /**
+     * Есть ли у профиля НЕПУСТОЕ значение в любом из полей сертификата.
+     *
+     * В отличие от [hasCertificateFromSubscription] пробельное значение («   »)
+     * здесь сертификатом СЧИТАЕТСЯ — ровно как в прежней реализации
+     * авто-allowInsecure (`!isNullOrEmpty()`), которая до появления автополучения
+     * жила в AngConfigManager.parseConfig. Поведение существующего свитча
+     * сохранено ПОСЛОВНО: ничего, что работало раньше, не меняется.
+     */
+    private fun hasCertificateLiteral(profile: ProfileItem): Boolean =
+        !profile.pinnedCA256.isNullOrEmpty() || !profile.pinSHA256.isNullOrEmpty()
+
+    /**
      * Шаг 3: свитч «Авто-allowInsecure если есть сертификат SHA-256».
      *
      * Вызывается ПОСЛЕ того, как отпечатки получены, и только если сам свитч
-     * включён. Условие применения не изменено: есть pinnedCA256 ИЛИ pinSHA256.
-     * Профиль без сертификата остаётся как был (проверка сертификата не снимается).
+     * включён. Условие применения ПЕРЕНЕСЕНО ИЗ parseConfig БЕЗ ИЗМЕНЕНИЙ
+     * (`!pinnedCA256.isNullOrEmpty() || !pinSHA256.isNullOrEmpty()`) — см.
+     * [hasCertificateLiteral]. Профиль без сертификата остаётся как был
+     * (проверка сертификата не снимается).
      *
      * @return true, если allowInsecure был включён этим вызовом.
      */
     fun applyAutoInsecure(profile: ProfileItem, autoInsecureEnabled: Boolean): Boolean {
         if (!autoInsecureEnabled) return false
-        if (!hasCertificateFromSubscription(profile)) return false
+        if (!hasCertificateLiteral(profile)) return false
         if (profile.insecure == true) return false
         profile.insecure = true
         return true
