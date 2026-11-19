@@ -122,7 +122,14 @@ class WhitelistSearchWorkerService(
         val candidates = pingResults.filterValues { it >= 0L }
             .entries.sortedBy { it.value }
             .map { it.key }
-        val (normalCandidates, fptnCandidates) = candidates.partition { it in fptnSet }
+        // partition возвращает (удовлетворившие предикату, остальные):
+        // first — FPTN (it in fptnSet), second — обычные. Прежняя
+        // деструктуризация (normalCandidates, fptnCandidates) ПЕРЕПУТАЛА
+        // дорожки: все обычные профили уходили в фазу «speed FPTN»
+        // (надпись при сканировании любого протокола — жалоба владельца
+        // 19.11 06:33), а FPTN — в параллельную «speed», что ещё и нарушало
+        // инвариант «FPTN строго по одному» (общие ip rule/iptables).
+        val (fptnCandidates, normalCandidates) = splitProbeLanes(candidates, fptnSet)
 
         runSpeedPhase(normalCandidates, "speed", parallel = true, probeSettings = probeSettings)
         if (!job.isActive) return
@@ -247,5 +254,27 @@ class WhitelistSearchWorkerService(
     companion object {
         /** Live-core ceiling for the download stage regardless of user concurrency. */
         private const val SPEED_PROBE_MAX_PARALLEL = 8
+
+        /**
+         * Разделение кандидатов фазы скорости на дорожки: (FPTN, обычные).
+         *
+         * Чистая функция — доказывается JVM-тестом. Дефект 19.11 06:33:
+         * деструктуризация partition была перевёрнута, и ВСЕ обычные профили
+         * попадали в фазу «speed FPTN» (надпись при любом протоколе), а FPTN —
+         * в параллельную «speed» (нарушение инварианта «строго по одному»).
+         * Порядок пары зафиксирован здесь один раз, чтобы вызов не мог его
+         * перепутать молча.
+         */
+        internal fun splitProbeLanes(
+            candidates: List<String>,
+            fptnGuids: Set<String>,
+        ): Pair<List<String>, List<String>> {
+            val fptn = ArrayList<String>()
+            val normal = ArrayList<String>()
+            for (guid in candidates) {
+                if (guid in fptnGuids) fptn.add(guid) else normal.add(guid)
+            }
+            return fptn to normal
+        }
     }
 }
