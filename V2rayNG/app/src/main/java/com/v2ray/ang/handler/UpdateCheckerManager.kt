@@ -237,6 +237,12 @@ object UpdateCheckerManager {
                 // из-за недоступности API не должен вычищать всю историю
                 // (деградация = прежнее поведение, а не пустой changelog).
                 filterContained = compare != null && !compareTruncated,
+                // Найденный релиз уже внутри установленной сборки (behind/
+                // identical): история форка линейна, значит ВСЕ более старые
+                // беты той же версии — его предки и тоже внутри сборки. Их
+                // нельзя числить «пропущенными» (именно они давали «Пропущено
+                // релизов: 18» на сборке, которая сама новее их всех).
+                foundContained = compareStatus == "behind" || compareStatus == "identical",
             )
             CheckUpdateResult(
                 hasUpdate = true,
@@ -386,6 +392,7 @@ object UpdateCheckerManager {
         route: ActiveProfileRoute.Route,
         commitsNotInInstalled: List<String> = emptyList(),
         filterContained: Boolean = false,
+        foundContained: Boolean = false,
     ): List<GitHubRelease> {
         val collected = ArrayList<GitHubRelease>()
         for (page in 1..RELEASES_MAX_PAGES) {
@@ -443,16 +450,18 @@ object UpdateCheckerManager {
             gitCommit = BuildConfig.GIT_COMMIT,
             includePreRelease = includePreRelease,
         )
-        if (!filterContained || commitsNotInInstalled.isEmpty()) return skipped
-        // Релиз ОДНОЙ с установленной версии считается действительно
-        // пропущенным, только если его коммит есть среди коммитов, которых нет
-        // в установленной сборке. Релизы строго старших версий не фильтруем:
-        // их коммиты не могут содержаться в сборке с меньшим versionName
-        // (версия повышается коммитом раньше тега).
+        if (!filterContained) return skipped
+        // Релизы ОДНОЙ с установленной версии: при foundContained (найденный
+        // релиз уже внутри сборки, история линейна) пропущенными не являются
+        // ВСЕ они; иначе пропущен только тот, чей коммит есть среди коммитов,
+        // которых нет в установленной сборке. Релизы строго старших версий не
+        // фильтруем: их коммиты не могут содержаться в сборке с меньшим
+        // versionName (версия повышается коммитом раньше тега).
         return skipped.filterNot { release ->
             parseVersion(release.tagName) == currentVersion &&
-                release.targetCommitish.isNotEmpty() &&
-                !ChangelogCollector.commitMatchesAny(release.targetCommitish, commitsNotInInstalled)
+                (foundContained ||
+                    (commitsNotInInstalled.isNotEmpty() &&
+                        !ChangelogCollector.commitMatchesAny(release.targetCommitish, commitsNotInInstalled)))
         }
     }
 
