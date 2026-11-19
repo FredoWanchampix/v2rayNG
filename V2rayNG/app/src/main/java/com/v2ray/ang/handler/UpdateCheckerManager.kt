@@ -186,7 +186,7 @@ object UpdateCheckerManager {
         val currentCommit = BuildConfig.GIT_COMMIT
         val releaseCommit = latestRelease.targetCommitish
         val compare = if (currentCommit.isNotEmpty() && releaseCommit.isNotEmpty()) {
-            fetchCompare(route, currentCommit, releaseCommit)
+            fetchCompare(route, currentCommit, releaseCommit, viaActiveProfile)
         } else {
             null
         }
@@ -469,9 +469,23 @@ object UpdateCheckerManager {
         route: ActiveProfileRoute.Route,
         baseCommit: String,
         headCommit: String,
+        viaActiveProfile: Boolean,
     ): GitHubCompare? = try {
         val url = "${AppConfig.APP_COMPARE_URL}/$baseCommit...$headCommit?per_page=$COMPARE_COMMITS_CAP"
-        val body = fetchWithRetry(FETCH_ATTEMPTS) {
+        // Тот же контракт, что у основной проверки: перед КАЖДЫМ повтором
+        // профиль перепроверяется — отключился во время запроса => прерываем
+        // серию сразу (ProfileTurnedOffException не перехватывается здесь и
+        // выйдет наружу, где проверка прервётся с честным тостом), вместо
+        // шести ретраев через мёртвый прокси.
+        val body = fetchWithRetry(
+            attempts = FETCH_ATTEMPTS,
+            onBeforeRetry = {
+                if (viaActiveProfile) {
+                    val nowRoute = ActiveProfileRoute.resolve()
+                    ensureProfileUsable(viaActiveProfile, nowRoute, profileWasWorking = true)
+                }
+            },
+        ) {
             HttpUtil.getUrlContentWithUserAgent(
                 UrlContentRequest(
                     url = url,
@@ -484,6 +498,12 @@ object UpdateCheckerManager {
             )
         }
         JsonUtil.fromJsonSafe(body.orEmpty(), GitHubCompare::class.java)
+    } catch (e: ProfileTurnedOffException) {
+        // Профиль отключился во время compare: прерываем ВСЮ проверку честно,
+        // а не деградируем к правилу «коммиты различаются».
+        throw e
+    } catch (e: NoActiveProfileException) {
+        throw e
     } catch (e: Exception) {
         LogUtil.w(AppConfig.TAG, "Update check: compare request failed: ${e.message}")
         null
