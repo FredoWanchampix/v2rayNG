@@ -809,6 +809,10 @@ class UpdateDownloadService : Service() {
     private fun launchDownload() {
         downloadJob?.cancel()
         val gen = ++downloadGeneration
+        // Новая сессия загрузки: счётчик проблем логгера обнуляется. Лог-файл
+        // удалится после успешного READY только если ЭТА сессия прошла без
+        // единой ошибки/заминки (требование владельца 19.11 07:36).
+        UpdateDownloadLogger.beginSession()
         // Временные файлы склейки прошлых поколений больше не нужны никому:
         // новая склейка создаст свой temp с суффиксом текущего поколения, а
         // брошенные отменёнными склейками temp — мусор размером с APK.
@@ -1418,6 +1422,10 @@ class UpdateDownloadService : Service() {
             )
         )
         UpdateDownloadLogger.log(this, "READY: ${apkFile.absolutePath} sha256=$sha256 size=${apkFile.length()}")
+        // Требование владельца 19.11 07:36: лог-файл удаляется автоматически
+        // после успешного скачивания+склейки+проверки хэша, но ТОЛЬКО если за
+        // эту сессию не было ни одной ошибки/заминки (иначе улики остаются).
+        UpdateDownloadLogger.deleteIfClean()
         showReadyNotification(apkFile)
         requireProfile = false
         stopProfileWatch()
