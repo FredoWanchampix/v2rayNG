@@ -422,49 +422,66 @@ object AngConfigManager {
         val autoInsecure = subItem?.autoSetInsecureWhenSha256Present == true
         if (!autoFetch && !autoInsecure) return
 
-        // Шаг 1: добор недостающих отпечатков. Профили с сертификатом подписки
-        // не опрашиваются вообще — сеть не тратится и значение не перезаписывается.
-        if (autoFetch) {
-            // Один и тот же сервер в подписке встречается много раз (разные
-            // порты/протоколы/пароли). Отпечаток зависит от адреса, порта и SNI,
-            // поэтому опрашиваем каждый эндпоинт ОДИН раз за обновление. Кэш
-            // живёт только в этом вызове: между обновлениями ничего не кэшируется,
-            // смена сертификата сервера будет замечена при следующем обновлении.
-            // Неудача тоже запоминается, чтобы не долбить мёртвый хост по кругу.
-            val fetched = HashMap<String, String?>()
-            profiles.forEach { profile ->
-                if (!SubscriptionCertPolicy.shouldFetchCertificate(profile, autoFetch)) {
-                    return@forEach
-                }
-                val key = SubscriptionCertPolicy.endpointKey(profile)
-                val sha256 = if (fetched.containsKey(key)) {
-                    fetched[key]
-                } else {
-                    val value = try {
-                        CertificateFingerprintManager.fetchForManualFill(profile)
+        // НАДЁЖНОСТЬ: получение отпечатка — это СЕТЬ, которой на этом пути раньше
+        // не было. Ни одна её ошибка (таймаут, сбой DNS/рукопожатия, UnsatisfiedLink,
+        // неожиданное исключение) не имеет права сорвать обновление подписки:
+        // профили обязаны сохраниться, как и до появления этой функции. Поэтому
+        // каждый профиль изолирован своим try/catch, а вся политика — внешним:
+        // при любом раскладе управление возвращается вызывающему коду, который
+        // следом вызывает commitProfiles.
+        try {
+            // Шаг 1: добор недостающих отпечатков. Профили с сертификатом подписки
+            // не опрашиваются вообще — сеть не тратится и значение не перезаписывается.
+            if (autoFetch) {
+                // Один и тот же сервер в подписке встречается много раз (разные
+                // порты/протоколы/пароли). Отпечаток зависит от адреса, порта и SNI,
+                // поэтому опрашиваем каждый эндпоинт ОДИН раз за обновление. Кэш
+                // живёт только в этом вызове: между обновлениями ничего не кэшируется,
+                // смена сертификата сервера будет замечена при следующем обновлении.
+                // Неудача тоже запоминается, чтобы не долбить мёртвый хост по кругу.
+                val fetched = HashMap<String, String?>()
+                profiles.forEach { profile ->
+                    try {
+                        if (!SubscriptionCertPolicy.shouldFetchCertificate(profile, autoFetch)) {
+                            return@forEach
+                        }
+                        val key = SubscriptionCertPolicy.endpointKey(profile)
+                        val sha256 = if (fetched.containsKey(key)) {
+                            fetched[key]
+                        } else {
+                            val value = CertificateFingerprintManager.fetchForManualFill(profile)
+                            fetched[key] = value
+                            value
+                        }
+                        if (SubscriptionCertPolicy.applyFetchedCertificate(profile, sha256)) {
+                            LogUtil.i(
+                                AppConfig.TAG,
+                                "Subscription cert fetched for ${profile.remarks} (${profile.configType})"
+                            )
+                        }
                     } catch (e: Exception) {
                         // Функция получения отпечатка сама глотает свои ошибки; этот
-                        // catch — страховка, чтобы один профиль не сорвал подписку.
+                        // catch — страховка на случай непредвиденного, чтобы один
+                        // профиль не сорвал ни остальные профили, ни сохранение.
                         LogUtil.e(AppConfig.TAG, "Subscription cert fetch failed: ${profile.remarks}", e)
-                        null
                     }
-                    fetched[key] = value
-                    value
-                }
-                if (SubscriptionCertPolicy.applyFetchedCertificate(profile, sha256)) {
-                    LogUtil.i(
-                        AppConfig.TAG,
-                        "Subscription cert fetched for ${profile.remarks} (${profile.configType})"
-                    )
                 }
             }
-        }
 
-        // Шаг 2: авто-allowInsecure — строго ПОСЛЕ получения отпечатков.
-        if (autoInsecure) {
-            profiles.forEach { profile ->
-                SubscriptionCertPolicy.applyAutoInsecure(profile, autoInsecure)
+            // Шаг 2: авто-allowInsecure — строго ПОСЛЕ получения отпечатков.
+            if (autoInsecure) {
+                profiles.forEach { profile ->
+                    try {
+                        SubscriptionCertPolicy.applyAutoInsecure(profile, autoInsecure)
+                    } catch (e: Exception) {
+                        LogUtil.e(AppConfig.TAG, "Auto-allowInsecure failed: ${profile.remarks}", e)
+                    }
+                }
             }
+        } catch (e: Exception) {
+            // Последняя линия защиты: политика сертификатов НИКОГДА не мешает
+            // сохранению подписки. Профили уйдут в хранилище как есть.
+            LogUtil.e(AppConfig.TAG, "applyCertPolicies aborted, saving profiles as-is", e)
         }
     }
 
