@@ -369,6 +369,15 @@ object AngConfigManager {
             val allConfigs = v2raynConfigs + configs
 
             if (allConfigs.isNotEmpty()) {
+                // Выверенный порядок: сначала добираем недостающие отпечатки,
+                // затем применяем авто-allowInsecure, и только потом сохраняем.
+                //
+                // Охват — ВСЕ профили подписки, включая разобранные V2rayNFmt:
+                // требование владельца «в каждом профиле с каждым протоколом».
+                // Раньше авто-allowInsecure жил внутри parseConfig и до v2rayn-
+                // профилей не доходил; теперь правило едино для всех, а условие
+                // его применения (наличие сертификата) не изменилось.
+                applyCertPolicies(allConfigs.map { it.profile }, subItem)
                 commitProfiles(
                     configs = allConfigs,
                     subid = subid,
@@ -383,6 +392,80 @@ object AngConfigManager {
             LogUtil.e(AppConfig.TAG, "Failed to parse batch config", e)
         }
         return 0
+    }
+
+    /**
+     * Применяет политики сертификатов подписки в СТРОГОМ порядке.
+     *
+     * Требование владельца: если включён свитч автополучения отпечатка, то при
+     * обновлении/добавлении подписки каждый профиль, у которого отпечатка ещё
+     * НЕТ и протокол его поддерживает, получает отпечаток той же функцией, что
+     * стоит за кнопкой «Получить отпечаток сертификата» в редакторе профиля.
+     * Сертификат, пришедший вместе с подпиской, лучше автоматически полученного:
+     * он НИКОГДА не перезаписывается (гейт в [SubscriptionCertPolicy]).
+     *
+     * Порядок:
+     *  1. проход получения отпечатков (только для профилей без сертификата);
+     *  2. проход авто-allowInsecure — ПОСЛЕ первого, чтобы свежий отпечаток
+     *     тоже включил пропуск проверки сертификата.
+     *
+     * Оба свитча независимы: выключенный не делает ничего. Сетевые запросы
+     * идут последовательно и с таймаутом внутри менеджера отпечатков; сбой
+     * одного профиля не мешает остальным и не роняет обновление подписки.
+     * Вызывается из фонового потока (Dispatchers.IO у всех вызывающих путей).
+     *
+     * @param profiles профили одной подписки, уже разобранные парсерами.
+     * @param subItem настройки подписки (null — политик нет, поведение прежнее).
+     */
+    private fun applyCertPolicies(profiles: List<ProfileItem>, subItem: SubscriptionItem?) {
+        val autoFetch = subItem?.autoFetchCertSha256 == true
+        val autoInsecure = subItem?.autoSetInsecureWhenSha256Present == true
+        if (!autoFetch && !autoInsecure) return
+
+        // Шаг 1: добор недостающих отпечатков. Профили с сертификатом подписки
+        // не опрашиваются вообще — сеть не тратится и значение не перезаписывается.
+        if (autoFetch) {
+            // Один и тот же сервер в подписке встречается много раз (разные
+            // порты/протоколы/пароли). Отпечаток зависит от адреса, порта и SNI,
+            // поэтому опрашиваем каждый эндпоинт ОДИН раз за обновление. Кэш
+            // живёт только в этом вызове: между обновлениями ничего не кэшируется,
+            // смена сертификата сервера будет замечена при следующем обновлении.
+            // Неудача тоже запоминается, чтобы не долбить мёртвый хост по кругу.
+            val fetched = HashMap<String, String?>()
+            profiles.forEach { profile ->
+                if (!SubscriptionCertPolicy.shouldFetchCertificate(profile, autoFetch)) {
+                    return@forEach
+                }
+                val key = SubscriptionCertPolicy.endpointKey(profile)
+                val sha256 = if (fetched.containsKey(key)) {
+                    fetched[key]
+                } else {
+                    val value = try {
+                        CertificateFingerprintManager.fetchForManualFill(profile)
+                    } catch (e: Exception) {
+                        // Функция получения отпечатка сама глотает свои ошибки; этот
+                        // catch — страховка, чтобы один профиль не сорвал подписку.
+                        LogUtil.e(AppConfig.TAG, "Subscription cert fetch failed: ${profile.remarks}", e)
+                        null
+                    }
+                    fetched[key] = value
+                    value
+                }
+                if (SubscriptionCertPolicy.applyFetchedCertificate(profile, sha256)) {
+                    LogUtil.i(
+                        AppConfig.TAG,
+                        "Subscription cert fetched for ${profile.remarks} (${profile.configType})"
+                    )
+                }
+            }
+        }
+
+        // Шаг 2: авто-allowInsecure — строго ПОСЛЕ получения отпечатков.
+        if (autoInsecure) {
+            profiles.forEach { profile ->
+                SubscriptionCertPolicy.applyAutoInsecure(profile, autoInsecure)
+            }
+        }
     }
 
     /**
@@ -445,6 +528,9 @@ object AngConfigManager {
                             rawConfig = JsonUtil.toJsonPretty(srv) ?: "",
                         )
                     }
+                    // Тот же выверенный порядок, что и для ссылочных профилей:
+                    // отпечатки добираем до авто-allowInsecure и до сохранения.
+                    applyCertPolicies(configs.map { it.profile }, MmkvManager.decodeSubscription(subid))
                     commitProfiles(configs, subid, append)
                     return configs.size
                 }
@@ -459,6 +545,7 @@ object AngConfigManager {
                 val config = CustomFmt.parse(trimmed)
                 config.subscriptionId = subid
                 config.description = generateDescription(config)
+                applyCertPolicies(listOf(config), MmkvManager.decodeSubscription(subid))
                 commitProfiles(
                     configs = listOf(ParsedProfile(config, trimmed)),
                     subid = subid,
@@ -476,6 +563,7 @@ object AngConfigManager {
                 val (config, rawOutbound) = CustomOutboundFmt.parse(server)
                 config.subscriptionId = subid
                 config.description = generateDescription(config)
+                applyCertPolicies(listOf(config), MmkvManager.decodeSubscription(subid))
                 commitProfiles(
                     configs = listOf(ParsedProfile(config, rawOutbound)),
                     subid = subid,
@@ -493,6 +581,7 @@ object AngConfigManager {
                 val config = WireguardFmt.parseWireguardConfFile(server)
                 config.subscriptionId = subid
                 config.description = generateDescription(config)
+                applyCertPolicies(listOf(config), MmkvManager.decodeSubscription(subid))
                 commitProfiles(
                     configs = listOf(ParsedProfile(config, server)),
                     subid = subid,
@@ -555,11 +644,11 @@ object AngConfigManager {
                 if (!matched) return null
             }
 
-            if (subItem?.autoSetInsecureWhenSha256Present == true) {
-                if (!config.pinnedCA256.isNullOrEmpty() || !config.pinSHA256.isNullOrEmpty()) {
-                    config.insecure = true
-                }
-            }
+            // Авто-allowInsecure применяется НЕ здесь, а после прохода получения
+            // отпечатков (см. applyCertPolicies): иначе профиль, у которого
+            // отпечаток будет получен сетевой функцией, остался бы с проверкой
+            // сертификата. Условие применения не изменено и живёт в чистой
+            // SubscriptionCertPolicy.applyAutoInsecure.
 
             config.subscriptionId = subid
             config.description = generateDescription(config)

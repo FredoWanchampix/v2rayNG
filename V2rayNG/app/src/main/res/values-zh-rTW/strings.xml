@@ -653,6 +653,8 @@
     <string name="update_download_profile_lost_notification">代理已關閉 — 下載已停止。已下載的分塊會保留：開啟代理後輕觸「下載」即可繼續。</string>
     <string name="update_check_profile_lost_toast">代理已關閉 — 更新檢查已中止。</string>
     <string name="update_skipped_releases_header">錯過了 %1$d 個版本：</string>
+    <string name="sub_auto_fetch_cert_sha256">自動取得憑證指紋</string>
+    <string name="sub_auto_fetch_cert_sha256_tip">更新或新增訂閱時，沒有憑證的節點會自動取得指紋（僅限支援此功能的協定）。訂閱自帶的憑證不會被取代。此操作在自動 allowInsecure 之前執行。</string>
     <string name="sub_update_via_active_proxy">僅透過作用中代理更新</string>
     <string name="sub_update_via_active_proxy_tip">啟用後，僅當代理設定檔正在執行時才會更新。流量嚴格透過代理。</string>
     <string name="update_download_error_file_missing">已下載的更新檔案不存在，可能已從下載資料夾刪除。</string>

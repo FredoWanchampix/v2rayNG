@@ -23,6 +23,14 @@ data class SubscriptionItem(
     var keepBalancersCustom: Boolean = false,
     /** When true, automatically sets allowInsecure to true if pinnedCA256 is present. */
     var autoSetInsecureWhenSha256Present: Boolean = false,
+    /**
+     * When true, profiles of this subscription that carry NO certificate yet get
+     * their certificate fingerprint fetched on update/import — but only for
+     * protocols that support it, and NEVER overwriting a certificate that came
+     * with the subscription itself. Runs BEFORE autoSetInsecureWhenSha256Present
+     * so a freshly fetched fingerprint is honoured by that switch too.
+     */
+    var autoFetchCertSha256: Boolean = false,
     /** When true, forces the update to be routed through the active proxy profile. */
     var updateViaActiveProxy: Boolean = false,
 )

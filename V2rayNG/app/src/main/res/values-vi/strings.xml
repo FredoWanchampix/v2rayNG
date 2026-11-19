@@ -653,6 +653,8 @@
     <string name="update_download_profile_lost_notification">Hồ sơ đã tắt — tải xuống đã dừng. Các phần đã tải được giữ lại: bật hồ sơ rồi nhấn Tải xuống để tiếp tục.</string>
     <string name="update_check_profile_lost_toast">Hồ sơ đã tắt — việc kiểm tra cập nhật bị gián đoạn.</string>
     <string name="update_skipped_releases_header">Đã bỏ lỡ %1$d bản phát hành:</string>
+    <string name="sub_auto_fetch_cert_sha256">Tự động lấy dấu vân tay chứng chỉ</string>
+    <string name="sub_auto_fetch_cert_sha256_tip">Khi cập nhật hoặc thêm đăng ký, các cấu hình chưa có chứng chỉ sẽ tự động lấy dấu vân tay (chỉ với giao thức hỗ trợ). Chứng chỉ đi kèm đăng ký không bao giờ bị thay thế. Thực hiện trước auto-allowInsecure.</string>
     <string name="sub_update_via_active_proxy">Chỉ cập nhật qua proxy đang hoạt động</string>
     <string name="sub_update_via_active_proxy_tip">Khi bật, việc cập nhật chỉ chạy khi hồ sơ proxy đang hoạt động. Lưu lượng đi nghiêm ngặt qua proxy.</string>
     <string name="update_download_error_file_missing">Tệp cập nhật đã tải không còn. Có thể nó đã bị xóa khỏi thư mục tải xuống.</string>
