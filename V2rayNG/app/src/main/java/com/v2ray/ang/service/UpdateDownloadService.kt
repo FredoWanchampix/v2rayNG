@@ -1722,16 +1722,16 @@ class UpdateDownloadService : Service() {
     }
 
     private fun showCancelledNotification() {
-        val line = if (state.releaseTag.isNotEmpty()) {
-            "${state.releaseTag}\n" + getString(R.string.update_download_cancelled)
-        } else {
-            getString(R.string.update_download_cancelled)
-        }
+        // Свёрнутая строка = смысл («Отменено»), тег цели — только в BigText
+        // (контракт уведомления, см. showProgressNotification).
+        val body = getString(R.string.update_download_cancelled)
         showNotification(
             baseBuilder()
                 .setContentTitle(getString(R.string.update_download_notification_title))
-                .setContentText(line)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(line))
+                .setContentText(body)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(
+                    if (state.releaseTag.isNotEmpty()) "${state.releaseTag}\n$body" else body
+                ))
                 .setOngoing(false)
                 .setAutoCancel(true)
                 .addAction(R.drawable.ic_refresh_24dp, getString(R.string.update_download_action_resume), buildRetryPendingIntent())
@@ -1908,18 +1908,20 @@ class UpdateDownloadService : Service() {
         // Кнопка «Продолжить» этого уведомления возобновляет ИМЕННО эту цель:
         // тег релиза обязан быть виден (имя файла одинаково у бет одной
         // версии, дефект невидимости цели 19.11).
-        val headline = if (state.releaseTag.isNotEmpty()) {
-            "${state.releaseTag}\n" + getString(R.string.update_download_profile_lost_notification)
-        } else {
-            getString(R.string.update_download_profile_lost_notification)
-        }
+        val headline = getString(R.string.update_download_profile_lost_notification)
         // Требование владельца: ПРИЧИНА («почему так произошло») обязана быть не
         // только в логе, но и в уведомлении. Точная причина лежит в
         // state.lastError — туда abortProfileLost кладёт профиль-строку плюс
         // уточнение (профиль выключен / профиль без loopback-прокси). Раскрываем
         // её в BigText, а в одной строке остаёмся в пределах стандартной ширины.
         val reason = state.lastError
-        val bigText = if (reason.isNotBlank()) "$headline\n$reason" else headline
+        // Свёрнутая строка = причина остановки; тег цели и подробная причина —
+        // в развёрнутом тексте.
+        val bigText = buildString {
+            if (state.releaseTag.isNotEmpty()) append(state.releaseTag).append("\n")
+            append(headline)
+            if (reason.isNotBlank()) append("\n").append(reason)
+        }
         showNotification(
             baseBuilder()
                 .setSmallIcon(R.drawable.ic_close_24dp)
