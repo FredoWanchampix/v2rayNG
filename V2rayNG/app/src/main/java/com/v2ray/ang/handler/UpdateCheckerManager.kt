@@ -473,10 +473,10 @@ object UpdateCheckerManager {
     ): GitHubCompare? = try {
         val url = "${AppConfig.APP_COMPARE_URL}/$baseCommit...$headCommit?per_page=$COMPARE_COMMITS_CAP"
         // Тот же контракт, что у основной проверки: перед КАЖДЫМ повтором
-        // профиль перепроверяется — отключился во время запроса => прерываем
-        // серию сразу (ProfileTurnedOffException не перехватывается здесь и
-        // выйдет наружу, где проверка прервётся с честным тостом), вместо
-        // шести ретраев через мёртвый прокси.
+        // профиль перепроверяется — отключился во время запроса => серия
+        // прерывается сразу (исключение выходит наружу через rethrow ниже,
+        // где checkForUpdates покажет честный тост), вместо шести ретраев
+        // через мёртвый прокси.
         val body = fetchWithRetry(
             attempts = FETCH_ATTEMPTS,
             onBeforeRetry = {
