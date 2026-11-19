@@ -240,7 +240,6 @@ object UpdateCheckerManager {
             val skipped = fetchSkippedReleases(
                 includePreRelease = includePreRelease,
                 currentVersion = currentVersion,
-                route = route,
                 commitsNotInInstalled = commitsNotInInstalled,
                 // Фильтр работает ТОЛЬКО при доступном compare: пустой список
                 // из-за недоступности API не должен вычищать всю историю
@@ -392,7 +391,6 @@ object UpdateCheckerManager {
     private fun fetchSkippedReleases(
         includePreRelease: Boolean,
         currentVersion: String,
-        route: ActiveProfileRoute.Route,
         commitsNotInInstalled: List<String> = emptyList(),
         filterContained: Boolean = false,
     ): List<GitHubRelease> {
@@ -401,14 +399,18 @@ object UpdateCheckerManager {
             val pageUrl = "${AppConfig.APP_API_URL}?per_page=$RELEASES_PAGE_SIZE&page=$page"
             val body = try {
                 fetchWithRetry(FETCH_ATTEMPTS) {
+                    // Свежий маршрут на каждой попытке — см. комментарий в
+                    // основной проверке: пагинация истории не должна слать
+                    // ретраи в мёртвый порт после переключения профиля.
+                    val attemptRoute = ActiveProfileRoute.resolve()
                     HttpUtil.getUrlContentWithUserAgent(
                         UrlContentRequest(
                             url = pageUrl,
                             timeout = 15000,
-                            httpHost = route.httpHost,
-                            httpPort = route.httpPort,
-                            proxyUsername = route.proxyUsername,
-                            proxyPassword = route.proxyPassword,
+                            httpHost = attemptRoute.httpHost,
+                            httpPort = attemptRoute.httpPort,
+                            proxyUsername = attemptRoute.proxyUsername,
+                            proxyPassword = attemptRoute.proxyPassword,
                         )
                     )
                 }
