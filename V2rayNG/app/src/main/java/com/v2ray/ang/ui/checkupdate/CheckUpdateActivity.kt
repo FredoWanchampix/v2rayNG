@@ -274,11 +274,20 @@ private fun DownloadProgressBlock(
             } else {
                 stringResource(R.string.update_download_phase_probing)
             }
-        DownloadState.Phase.PAUSED -> stringResource(
-            R.string.update_download_phase_paused,
-            state.progressPercent(),
-        )
-        DownloadState.Phase.WAITING_NETWORK -> stringResource(R.string.update_download_phase_waiting_network)
+        // Пауза/ожидание ДО пробы (totalBytes неизвестен): «Пауза 0%» — ложь,
+        // байты ещё не считались (то же лицо жалобы «зависло на 0%»).
+        DownloadState.Phase.PAUSED ->
+            if (state.totalBytes > 0L) {
+                stringResource(R.string.update_download_phase_paused, state.progressPercent())
+            } else {
+                stringResource(R.string.update_download_phase_probing)
+            }
+        DownloadState.Phase.WAITING_NETWORK ->
+            if (state.totalBytes > 0L) {
+                stringResource(R.string.update_download_phase_waiting_network)
+            } else {
+                stringResource(R.string.update_download_phase_probing)
+            }
         DownloadState.Phase.MERGING -> stringResource(R.string.update_download_phase_merging)
         DownloadState.Phase.VERIFYING -> stringResource(R.string.update_download_phase_verifying)
         DownloadState.Phase.READY_TO_INSTALL -> stringResource(R.string.update_download_ready_toast)

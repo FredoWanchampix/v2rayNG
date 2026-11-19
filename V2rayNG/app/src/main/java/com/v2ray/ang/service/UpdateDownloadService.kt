@@ -1607,10 +1607,19 @@ class UpdateDownloadService : Service() {
 
     private fun showPausedNotification() {
         val percent = currentPercent()
-        val line = if (state.releaseTag.isNotEmpty()) {
-            "${state.releaseTag}\n" + getString(R.string.update_download_paused_line, percent)
+        // Пауза ДО пробы (totalBytes неизвестен): «Пауза 0%» было бы ложью —
+        // байты ещё не считались. Честно: «подготовка» + имя цели (та же
+        // причина жалобы «зависло на 0%», что и у активной загрузки).
+        val body = if (state.totalBytes <= 0L) {
+            getString(R.string.update_download_preparing) +
+                if (state.assetName.isNotEmpty()) " ${state.assetName}" else ""
         } else {
             getString(R.string.update_download_paused_line, percent)
+        }
+        val line = if (state.releaseTag.isNotEmpty()) {
+            "${state.releaseTag}\n" + body
+        } else {
+            body
         }
         showNotification(
             baseBuilder()
@@ -1637,10 +1646,16 @@ class UpdateDownloadService : Service() {
 
     private fun showWaitingNetworkNotification() {
         val percent = currentPercent()
-        val line = if (state.releaseTag.isNotEmpty()) {
-            "${state.releaseTag}\n" + getString(R.string.update_download_waiting_network_line, percent)
+        val body = if (state.totalBytes <= 0L) {
+            getString(R.string.update_download_preparing) +
+                if (state.assetName.isNotEmpty()) " ${state.assetName}" else ""
         } else {
             getString(R.string.update_download_waiting_network_line, percent)
+        }
+        val line = if (state.releaseTag.isNotEmpty()) {
+            "${state.releaseTag}\n" + body
+        } else {
+            body
         }
         showNotification(
             baseBuilder()
