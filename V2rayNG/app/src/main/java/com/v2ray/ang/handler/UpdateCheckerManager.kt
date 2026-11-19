@@ -206,6 +206,15 @@ object UpdateCheckerManager {
         val compareTruncated = (compare?.commits?.size ?: 0) >= COMPARE_COMMITS_CAP
 
         val sameVersion = compareVersions(latestVersion, currentVersion) == 0
+        // Вещдок решения в logcat: какие коммиты сравнивались и что ответил
+        // compare. Без этой строки «обновлений нет» с устройства не
+        // диагностируется: identical (та же сборка) и behind (сборка новее
+        // релиза) выглядят для пользователя одинаково (жалоба 19.11 05:54).
+        LogUtil.i(
+            AppConfig.TAG,
+            "Update check decision: sameVersion=$sameVersion prerelease=${latestRelease.prerelease} " +
+                "installedCommit=$currentCommit releaseCommit=$releaseCommit compare=$compareStatus"
+        )
         val sameVersionNewerBuild = sameVersion &&
             latestRelease.prerelease &&
             when (compareStatus) {
