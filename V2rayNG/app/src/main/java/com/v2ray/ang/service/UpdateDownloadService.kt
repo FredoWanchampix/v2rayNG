@@ -1564,12 +1564,6 @@ class UpdateDownloadService : Service() {
         val speed = speedTracker.bytesPerSecond(System.currentTimeMillis())
         val eta = speedTracker.etaMillis(System.currentTimeMillis(), state.totalBytes)
         val text = buildString {
-            // Тег релиза первой строкой: имя файла одинаково у разных бет
-            // одной версии, без тега пользователь (и возобновление из шторки)
-            // не видит, КАКОЙ релиз качается (дефект 19.11).
-            if (state.releaseTag.isNotEmpty()) {
-                append(state.releaseTag).append("\n")
-            }
             // PROBING: процента ещё физически нет (размер не подтверждён
             // сервером). Показ «0%» на этом этапе читался пользователем как
             // «загрузка зависла на 0%» (жалоба 19.11) — честно пишем
@@ -1591,11 +1585,15 @@ class UpdateDownloadService : Service() {
                 }
             }
         }
+        // Свёрнутая строка уведомления = contentText: там обязан быть прогресс,
+        // а не тег. Тег релиза (видимость цели: имя файла одинаково у разных
+        // бет одной версии, дефект 19.11) живёт в развёрнутом BigText.
+        val big = if (state.releaseTag.isNotEmpty()) "${state.releaseTag}\n$text" else text
         showNotification(
             baseBuilder()
                 .setContentTitle(getString(R.string.update_download_notification_title))
                 .setContentText(text)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setStyle(NotificationCompat.BigTextStyle().bigText(big))
                 // Размер ещё не подтверждён сервером: честный неопределённый
                 // (бегущий) индикатор вместо пустой шкалы «0%».
                 .setProgress(100, percent, state.phase == DownloadState.Phase.PROBING || state.totalBytes <= 0L)
@@ -1616,16 +1614,13 @@ class UpdateDownloadService : Service() {
         } else {
             getString(R.string.update_download_paused_line, percent)
         }
-        val line = if (state.releaseTag.isNotEmpty()) {
-            "${state.releaseTag}\n" + body
-        } else {
-            body
-        }
         showNotification(
             baseBuilder()
                 .setContentTitle(getString(R.string.update_download_notification_title))
-                .setContentText(line)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(line))
+                .setContentText(body)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(
+                    if (state.releaseTag.isNotEmpty()) "${state.releaseTag}\n$body" else body
+                ))
                 // До пробы процента нет: бегущий индикатор вместо пустой шкалы.
                 .setProgress(100, percent, state.totalBytes <= 0L)
                 .setOngoing(true)
@@ -1653,16 +1648,13 @@ class UpdateDownloadService : Service() {
         } else {
             getString(R.string.update_download_waiting_network_line, percent)
         }
-        val line = if (state.releaseTag.isNotEmpty()) {
-            "${state.releaseTag}\n" + body
-        } else {
-            body
-        }
         showNotification(
             baseBuilder()
                 .setContentTitle(getString(R.string.update_download_notification_title))
-                .setContentText(line)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(line))
+                .setContentText(body)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(
+                    if (state.releaseTag.isNotEmpty()) "${state.releaseTag}\n$body" else body
+                ))
                 // До пробы процента нет: бегущий индикатор вместо пустой шкалы.
                 .setProgress(100, percent, state.totalBytes <= 0L)
                 .setOngoing(true)
