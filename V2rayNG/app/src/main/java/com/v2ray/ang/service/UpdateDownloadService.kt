@@ -1422,10 +1422,6 @@ class UpdateDownloadService : Service() {
             )
         )
         UpdateDownloadLogger.log(this, "READY: ${apkFile.absolutePath} sha256=$sha256 size=${apkFile.length()}")
-        // Требование владельца 19.11 07:36: лог-файл удаляется автоматически
-        // после успешного скачивания+склейки+проверки хэша, но ТОЛЬКО если за
-        // эту сессию не было ни одной ошибки/заминки (иначе улики остаются).
-        UpdateDownloadLogger.deleteIfClean()
         showReadyNotification(apkFile)
         requireProfile = false
         stopProfileWatch()
@@ -1438,6 +1434,11 @@ class UpdateDownloadService : Service() {
         } else {
             broadcastReady(apkFile.absolutePath)
         }
+        // Требование владельца 19.11 07:36: лог-файл удаляется автоматически
+        // после успешного скачивания+склейки+проверки хэша, но ТОЛЬКО если за
+        // эту сессию не было ни одной ошибки/заминки (иначе улики остаются).
+        // ПОСЛЕ всех финальных записей — чтобы каждая учитывалась счётчиком.
+        UpdateDownloadLogger.deleteIfClean()
         // Сервис больше не нужен, но уведомление с кнопкой «Установить»
         // обязано жить и после выхода из клиента: DETACH оставляет его в
         // шторке, а сама кнопка — это PendingIntent.getActivity прямо в
