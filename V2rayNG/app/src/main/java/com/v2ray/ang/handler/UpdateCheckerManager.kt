@@ -4,6 +4,7 @@ import android.os.Build
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.dto.CheckUpdateResult
+import com.v2ray.ang.dto.GitHubCompare
 import com.v2ray.ang.dto.GitHubRelease
 import com.v2ray.ang.dto.UrlContentRequest
 import com.v2ray.ang.extension.concatUrl
@@ -47,6 +48,13 @@ object UpdateCheckerManager {
 
     /** Total attempts for one request, including the first one. */
     private const val FETCH_ATTEMPTS = 6
+
+    /**
+     * Потолок списка коммитов ответа compare: GitHub возвращает не больше 250;
+     * берём 100 — с запасом для любой реальной дистанции бет одной версии и
+     * без тяжёлого ответа. При усечении фильтр «пропущенных» отключается.
+     */
+    private const val COMPARE_COMMITS_CAP = 100
 
     /** Размер страницы списка релизов GitHub (максимум для публичного API). */
     private const val RELEASES_PAGE_SIZE = 30
@@ -169,22 +177,66 @@ object UpdateCheckerManager {
         )
 
         // Беты одной версии (2.4.2-beta.X и 2.4.2-beta.Y) неразличимы по
-        // versionName: при равенстве версий предлагаем обновление, если коммит
-        // релиза отличается от коммита установленного APK (BuildConfig.GIT_COMMIT).
-        val sameVersionNewerBuild = compareVersions(latestVersion, currentVersion) == 0 &&
+        // versionName. Прежнее правило «коммит релиза отличается от коммита
+        // APK» не имело НАПРАВЛЕНИЯ: сборка master, ушедшая ВПЕРЁД от цели
+        // беты, получала предложение «обновиться» на уже содержащийся в ней
+        // релиз, а диалог перечислял «пропущенными» релизы, чьи коммиты уже
+        // внутри APK (дефект 19.11, вопрос владельца). Направление даёт только
+        // граф коммитов: один запрос compare(installed...release).
+        val currentCommit = BuildConfig.GIT_COMMIT
+        val releaseCommit = latestRelease.targetCommitish
+        val compare = if (currentCommit.isNotEmpty() && releaseCommit.isNotEmpty()) {
+            fetchCompare(route, currentCommit, releaseCommit)
+        } else {
+            null
+        }
+        val compareStatus = compare?.status
+        // Коммиты, которых НЕТ в установленной сборке (сторона head=release).
+        // Пустой список при недоступном compare = прежняя поведенческая ветка.
+        val commitsNotInInstalled = compare?.commits?.mapNotNull { it.sha }.orEmpty()
+        val compareTruncated = (compare?.commits?.size ?: 0) >= COMPARE_COMMITS_CAP
+
+        val sameVersion = compareVersions(latestVersion, currentVersion) == 0
+        val sameVersionNewerBuild = sameVersion &&
             latestRelease.prerelease &&
-            latestRelease.targetCommitish.isNotEmpty() &&
-            BuildConfig.GIT_COMMIT.isNotEmpty() &&
-            !latestRelease.targetCommitish.startsWith(BuildConfig.GIT_COMMIT)
+            when (compareStatus) {
+                // Релиз строго новее установленной сборки по графу коммитов.
+                "ahead" -> true
+                // Релиз УЖЕ ВНУТРИ установленной сборки (или это тот же коммит):
+                // предложение «обновиться» на него было бы предложением отката.
+                "behind", "identical" -> false
+                // compare недоступен/разошёлся: прежнее правило «коммиты разные».
+                else -> releaseCommit.isNotEmpty() &&
+                    currentCommit.isNotEmpty() &&
+                    !releaseCommit.startsWith(currentCommit)
+            }
+        if (sameVersion && latestRelease.prerelease &&
+            (compareStatus == "behind" || compareStatus == "identical")
+        ) {
+            LogUtil.i(
+                AppConfig.TAG,
+                "Update check: release ${latestRelease.tagName} commit is already inside the installed build " +
+                    "(compare=$compareStatus); not offering it as an update"
+            )
+            return@withContext CheckUpdateResult(hasUpdate = false)
+        }
         return@withContext if (compareVersions(latestVersion, currentVersion) > 0 || sameVersionNewerBuild) {
             val asset = getDownloadAsset(latestRelease)
             // Владелец требует показывать правки ВСЕХ пропущенных релизов:
             // пользователь мог не обновляться месяцами и пропустить несколько
             // версий. Тело ОДНОГО релиза (как раньше) эту историю теряло.
+            // Релизы, чьи коммиты УЖЕ в установленной сборке, из «пропущенных»
+            // исключаются (иначе сборка master показывала 18 «пропущенных»
+            // бет, давно содержащихся в APK).
             val skipped = fetchSkippedReleases(
                 includePreRelease = includePreRelease,
                 currentVersion = currentVersion,
                 route = route,
+                commitsNotInInstalled = commitsNotInInstalled,
+                // Фильтр работает ТОЛЬКО при доступном compare: пустой список
+                // из-за недоступности API не должен вычищать всю историю
+                // (деградация = прежнее поведение, а не пустой changelog).
+                filterContained = compare != null && !compareTruncated,
             )
             CheckUpdateResult(
                 hasUpdate = true,
@@ -332,6 +384,8 @@ object UpdateCheckerManager {
         includePreRelease: Boolean,
         currentVersion: String,
         route: ActiveProfileRoute.Route,
+        commitsNotInInstalled: List<String> = emptyList(),
+        filterContained: Boolean = false,
     ): List<GitHubRelease> {
         val collected = ArrayList<GitHubRelease>()
         for (page in 1..RELEASES_MAX_PAGES) {
@@ -383,12 +437,53 @@ object UpdateCheckerManager {
             if (releases.size < RELEASES_PAGE_SIZE) break
         }
         // Хронологический порядок (старый -> новый) для чтения истории.
-        return ChangelogCollector.skippedReleases(
+        val skipped = ChangelogCollector.skippedReleases(
             releases = collected,
             currentVersion = currentVersion,
             gitCommit = BuildConfig.GIT_COMMIT,
             includePreRelease = includePreRelease,
         )
+        if (!filterContained || commitsNotInInstalled.isEmpty()) return skipped
+        // Релиз ОДНОЙ с установленной версии считается действительно
+        // пропущенным, только если его коммит есть среди коммитов, которых нет
+        // в установленной сборке. Релизы строго старших версий не фильтруем:
+        // их коммиты не могут содержаться в сборке с меньшим versionName
+        // (версия повышается коммитом раньше тега).
+        return skipped.filterNot { release ->
+            parseVersion(release.tagName) == currentVersion &&
+                release.targetCommitish.isNotEmpty() &&
+                !ChangelogCollector.commitMatchesAny(release.targetCommitish, commitsNotInInstalled)
+        }
+    }
+
+    /**
+     * Один запрос compare API: родословная между коммитом установленной сборки
+     * (base) и коммитом релиза (head). Ошибка/недоступность = null: вызывающий
+     * код возвращается к прежнему правилу «коммиты различаются», то есть
+     * деградация безопасна (лишнее предложение обновления, но не пропуск).
+     */
+    private fun fetchCompare(
+        route: ActiveProfileRoute.Route,
+        baseCommit: String,
+        headCommit: String,
+    ): GitHubCompare? = try {
+        val url = "${AppConfig.APP_COMPARE_URL}/$baseCommit...$headCommit?per_page=$COMPARE_COMMITS_CAP"
+        val body = fetchWithRetry(FETCH_ATTEMPTS) {
+            HttpUtil.getUrlContentWithUserAgent(
+                UrlContentRequest(
+                    url = url,
+                    timeout = 15000,
+                    httpHost = route.httpHost,
+                    httpPort = route.httpPort,
+                    proxyUsername = route.proxyUsername,
+                    proxyPassword = route.proxyPassword,
+                )
+            )
+        }
+        JsonUtil.fromJsonSafe(body.orEmpty(), GitHubCompare::class.java)
+    } catch (e: Exception) {
+        LogUtil.w(AppConfig.TAG, "Update check: compare request failed: ${e.message}")
+        null
     }
 
     /**

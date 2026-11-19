@@ -202,4 +202,34 @@ class ChangelogCollectorTest {
         val withDraft = releases + rel("v2.9.9", "2026-09-09T00:00:00Z", draft = true)
         assertEquals("v2.6.0", ChangelogCollector.latestOfChannel(withDraft, false)?.tagName)
     }
+
+    // Дефект 19.11: сборка master, ушедшая вперёд от цели беты ОДНОЙ версии,
+    // получала предложение «обновиться» на уже содержащийся в ней релиз.
+    // Направление различает только граф коммитов: релиз «пропущен», если его
+    // коммит есть среди коммитов, которых НЕТ в установленной сборке.
+    @Test
+    fun `empty head side of compare means release commit is inside installed build`() {
+        // compare(installed...release) вернул пустой head-список: коммит релиза
+        // уже внутри сборки -> релиз НЕ новее по графу.
+        assertTrue(!ChangelogCollector.commitMatchesAny("2f26a9f965697c9389f0cc212fac102475356d64", emptyList()))
+        assertTrue(!ChangelogCollector.commitMatchesAny("2f26a9f9", emptyList()))
+    }
+
+    @Test
+    fun `release commit among commits missing from installed build is newer`() {
+        val notInInstalled = listOf(
+            "11c207912fe3dd6977e585ce9fc5f0dd1da33439",
+            "899bd7f66146b1b045177986377d2aa1c08c52a4",
+        )
+        assertTrue(ChangelogCollector.commitMatchesAny("11c20791", notInInstalled))
+        assertTrue(ChangelogCollector.commitMatchesAny("899bd7f66146b1b045177986377d2aa1c08c52a4", notInInstalled))
+        // коммит, отсутствующий в head-списке, уже внутри установленной сборки
+        assertTrue(!ChangelogCollector.commitMatchesAny("2f26a9f9", notInInstalled))
+    }
+
+    @Test
+    fun `blank commitish never matches`() {
+        assertTrue(!ChangelogCollector.commitMatchesAny("", listOf("abc123")))
+        assertTrue(!ChangelogCollector.commitMatchesAny("   ", listOf("abc123")))
+    }
 }
