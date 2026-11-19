@@ -122,6 +122,15 @@ object UpdateCheckerManager {
                 }
             },
         ) {
+            // Маршрут резолвится НА КАЖДОЙ попытке, а не захватывается один
+            // раз: пользователь мог переключить профиль посреди проверки
+            // (ядро поднимет inbound на другом порту), и захваченный route
+            // отправил бы все ретраи в мёртвый порт (дефект найден самоаудитом
+            // 19.11: compare-запрос унаследовал ту же дыру). Первая попытка
+            // использует уже проверенный выше режим; пригодность маршрута на
+            // повторе контролирует onBeforeRetry, а итоговую достоверность —
+            // финальная сверка ниже.
+            val attemptRoute = ActiveProfileRoute.resolve()
             HttpUtil.getUrlContentWithUserAgent(
                 UrlContentRequest(
                     url = url,
@@ -132,10 +141,10 @@ object UpdateCheckerManager {
                     // httpPort == 0 означает «без прокси, напрямую»; это возможно
                     // только если пользователь НЕ требовал активный профиль —
                     // иначе вызов уже отклонён выше по режимам.
-                    httpHost = route.httpHost,
-                    httpPort = route.httpPort,
-                    proxyUsername = route.proxyUsername,
-                    proxyPassword = route.proxyPassword,
+                    httpHost = attemptRoute.httpHost,
+                    httpPort = attemptRoute.httpPort,
+                    proxyUsername = attemptRoute.proxyUsername,
+                    proxyPassword = attemptRoute.proxyPassword,
                 )
             )
         }.orEmpty()
@@ -486,14 +495,18 @@ object UpdateCheckerManager {
                 }
             },
         ) {
+            // Свежий маршрут на каждой попытке — см. комментарий в основной
+            // проверке: переключение профиля посреди запросов не должно
+            // отправлять ретраи в мёртвый порт.
+            val attemptRoute = ActiveProfileRoute.resolve()
             HttpUtil.getUrlContentWithUserAgent(
                 UrlContentRequest(
                     url = url,
                     timeout = 15000,
-                    httpHost = route.httpHost,
-                    httpPort = route.httpPort,
-                    proxyUsername = route.proxyUsername,
-                    proxyPassword = route.proxyPassword,
+                    httpHost = attemptRoute.httpHost,
+                    httpPort = attemptRoute.httpPort,
+                    proxyUsername = attemptRoute.proxyUsername,
+                    proxyPassword = attemptRoute.proxyPassword,
                 )
             )
         }
