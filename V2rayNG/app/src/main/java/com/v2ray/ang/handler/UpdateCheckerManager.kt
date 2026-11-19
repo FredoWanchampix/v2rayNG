@@ -195,7 +195,7 @@ object UpdateCheckerManager {
         val currentCommit = BuildConfig.GIT_COMMIT
         val releaseCommit = latestRelease.targetCommitish
         val compare = if (currentCommit.isNotEmpty() && releaseCommit.isNotEmpty()) {
-            fetchCompare(route, currentCommit, releaseCommit, viaActiveProfile)
+            fetchCompare(currentCommit, releaseCommit, viaActiveProfile)
         } else {
             null
         }
@@ -477,7 +477,6 @@ object UpdateCheckerManager {
      * деградация безопасна (лишнее предложение обновления, но не пропуск).
      */
     private fun fetchCompare(
-        route: ActiveProfileRoute.Route,
         baseCommit: String,
         headCommit: String,
         viaActiveProfile: Boolean,
