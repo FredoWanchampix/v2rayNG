@@ -295,6 +295,26 @@ class CheckUpdateViewModel(application: Application) : BaseViewModel(application
                 if (result.hasUpdate) {
                     _updateResult.value = result
                     _showUpdateDialog.value = true
+                    // Найденный релиз ЗАМЕЩАЕТ сохранённую цель загрузчика,
+                    // если та не новее установленной и не качается прямо
+                    // сейчас: иначе блок показывал устаревшую цель, а
+                    // «Продолжить» скачал бы её вместо найденной — ровно
+                    // жалоба владельца 19.11 («по кнопке продолжить скачался
+                    // старый апдейт»). Живую загрузку (прогресс свежее 5 с)
+                    // не трогаем: это осознанный выбор пользователя.
+                    val persistedTag = UpdateDownloadStore.load()?.releaseTag.orEmpty()
+                    if (persistedTag.isNotEmpty() &&
+                        persistedTag != result.releaseTag &&
+                        UpdateDecisions.savedTargetStaleness(persistedTag, BuildConfig.VERSION_NAME) <= 0 &&
+                        System.currentTimeMillis() - lastDownloadProgressMs >= 5_000L
+                    ) {
+                        LogUtil.i(
+                            AppConfig.TAG,
+                            "Update check found ${result.releaseTag}; superseding stale saved target $persistedTag",
+                        )
+                        _downloadState.value = DownloadState()
+                        UpdateDownloadService.sendCommand(app, UpdateDownloadService.ACTION_CLEAR_STATE)
+                    }
                 } else {
                     // Обновлений нет: сохранённая цель загрузчика той же или
                     // более старой версии, чем установленная, — УСТАРЕВШАЯ.
