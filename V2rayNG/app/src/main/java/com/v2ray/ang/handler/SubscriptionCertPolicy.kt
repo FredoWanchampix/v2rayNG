@@ -125,6 +125,10 @@ object SubscriptionCertPolicy {
      * жила в AngConfigManager.parseConfig. Поведение существующего свитча
      * сохранено ПОСЛОВНО: ничего, что работало раньше, не меняется.
      */
+    // Обращение к deprecated pinSHA256 здесь ОБЯЗАТЕЛЬНО: метод побуквенно
+    // воспроизводит прежнюю проверку parseConfig, которая тоже читала оба поля.
+    // Подавление локальное — базовая линия warnings проекта (76) не сдвигается.
+    @Suppress("DEPRECATION")
     private fun hasCertificateLiteral(profile: ProfileItem): Boolean =
         !profile.pinnedCA256.isNullOrEmpty() || !profile.pinSHA256.isNullOrEmpty()
 
