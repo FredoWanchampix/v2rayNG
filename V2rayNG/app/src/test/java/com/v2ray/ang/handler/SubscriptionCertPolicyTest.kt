@@ -3,11 +3,11 @@ package com.v2ray.ang.handler
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.enums.EConfigType
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 
 /**
  * Порядок и гейты автополучения отпечатка сертификата при обновлении подписки.
@@ -20,6 +20,11 @@ import org.junit.Test
  *    не увидит свежий сертификат и профиль останется с проверкой;
  *  - выключенный свитч не делает ничего (каждый свитч независим).
  */
+// Тест обязан проверять устаревшее поле pinSHA256: оно ещё живое в сохранённых
+// профилях (миграция SettingsManager переносит его в pinnedCA256 позже), поэтому
+// правило «сертификат из подписки не перезаписывать» обязано учитывать оба поля.
+// Подавление — чтобы не сдвигать базовую линию warnings (76) проекта.
+@Suppress("DEPRECATION")
 class SubscriptionCertPolicyTest {
 
     private fun tlsProfile(name: String = "tls") = ProfileItem(configType = EConfigType.VLESS).apply {
