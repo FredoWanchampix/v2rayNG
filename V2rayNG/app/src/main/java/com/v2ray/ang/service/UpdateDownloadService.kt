@@ -1626,7 +1626,8 @@ class UpdateDownloadService : Service() {
                 .setContentTitle(getString(R.string.update_download_notification_title))
                 .setContentText(line)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(line))
-                .setProgress(100, percent, false)
+                // До пробы процента нет: бегущий индикатор вместо пустой шкалы.
+                .setProgress(100, percent, state.totalBytes <= 0L)
                 .setOngoing(true)
                 .addAction(R.drawable.ic_play_24dp, getString(R.string.update_download_action_resume), servicePendingIntent(ACTION_RESUME))
                 .addAction(R.drawable.ic_close_24dp, getString(R.string.action_cancel), servicePendingIntent(ACTION_CANCEL))
@@ -1662,7 +1663,8 @@ class UpdateDownloadService : Service() {
                 .setContentTitle(getString(R.string.update_download_notification_title))
                 .setContentText(line)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(line))
-                .setProgress(100, percent, false)
+                // До пробы процента нет: бегущий индикатор вместо пустой шкалы.
+                .setProgress(100, percent, state.totalBytes <= 0L)
                 .setOngoing(true)
                 .addAction(R.drawable.ic_close_24dp, getString(R.string.action_cancel), servicePendingIntent(ACTION_CANCEL))
         )
