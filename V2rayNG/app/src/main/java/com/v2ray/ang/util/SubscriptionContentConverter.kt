@@ -1624,11 +1624,21 @@ object SubscriptionContentConverter {
         // CoreOutboundBuilder.populateTransportSettings): password и
         // packetSize("min-max" для gecko). Раньше она молча терялась —
         // сервер отвергал туннель без obfs-password. Читаем оттуда.
+        //
+        // Кроме salamander в finalmask.udp провайдеры кладут:
+        //   - noise — DPI-шум (защита, терять нельзя, инвариант 4jqnm);
+        //   - udphop — смена портов в ФОРМАТЕ ЯДРА (remotePorts/interval).
+        // А в finalmask.quicParams — bbrProfile/congestion/debug (вещдок:
+        // json-теги в libgojni.so). Всё это выражается полями профиля либо
+        // ключом fm, молчаливых потерь не остаётся.
+        // Панельный quicParams.udpHop намеренно НЕ конвертируется в mport —
+        // см. комментарий у блока port hopping ниже.
         val fmObjNode = stream?.optJSONObject("finalmask")
-        val salamander = fmObjNode?.optJSONArray("udp")?.let { udp ->
+        val udpMasks = fmObjNode?.optJSONArray("udp")?.let { udp ->
             (0 until udp.length()).mapNotNull { udp.optJSONObject(it) }
-                .firstOrNull { it.optString("type") == "salamander" }
-        }
+        }.orEmpty()
+        val salamander = udpMasks.firstOrNull { it.optString("type") == "salamander" }
+        val udphop = udpMasks.firstOrNull { it.optString("type") == "udphop" }
 
         val sni = tls?.optString("serverName")
         val alpn = tls?.optJSONArray("alpn")?.let { a ->
@@ -1647,7 +1657,10 @@ object SubscriptionContentConverter {
             ?: salamanderSettings?.optString("password")?.takeIf { it.isNotEmpty() }
         val packetSize = salamanderSettings?.optString("packetSize")?.takeIf { it.isNotEmpty() }
         if (obfsPassword != null) {
-            // packetSize "min-max" означает gecko; salamander без размеров — salamander
+            // packetSize "min-max" означает gecko; salamander без размеров — salamander.
+            // Ядро различает их ТОЛЬКО по наличию MinPacketSize/MaxPacketSize
+            // (GeckoConfig живёт в пакете finalmask.salamander, отдельного типа
+            // «gecko» в ядре нет) — поэтому packetSize обязателен для gecko.
             query.append("&obfs=").append(if (packetSize != null) "gecko" else "salamander")
             query.append("&obfs-password=").append(URLEncoder.encode(obfsPassword, "UTF-8"))
             packetSize?.split("-")?.takeIf { it.size == 2 }?.let { mm ->
@@ -1657,10 +1670,44 @@ object SubscriptionContentConverter {
         }
         hy?.optString("pinSHA256")?.takeIf { it.isNotEmpty() }
             ?.let { query.append("&pinSHA256=").append(URLEncoder.encode(it, "UTF-8")) }
-        // finalmask целиком в ссылку не кладём (URL-encoded JSON раздувает
-        // URI и ломает QR-ёмкость); но ОБФУСКАЦИЯ из него извлечена выше
-        // (salamander/gecko -> obfs/obfs-password/min-max), а прочее в
-        // finalmask hy2 — tuning-подсказки ядра, не требования подключения.
+
+        // Port hopping: читаем ТОЛЬКО формат ядра — маску udp[type=udphop] с
+        // remotePorts/interval (вещдок: json-теги «remotePorts»/«mode»/
+        // «interval» в libgojni.so).
+        //
+        // Панельный формат quicParams.udpHop{ports,interval} сюда НЕ берётся
+        // НАМЕРЕННО: таких json-тегов в ядре нет (0 вхождений «udpHop»/«ports»
+        // в libgojni.so), то есть xray-core его ИГНОРИРУЕТ и смена портов у
+        // такого провайдера не работает. Перенести его в mport означало бы
+        // ВКЛЮЧИТЬ hop на портах, которые сервер может не слушать, — профиль,
+        // который работал, перестал бы работать. Панельный udpHop сохраняется
+        // как есть ключом fm (данные не теряются, видны в редакторе), но
+        // поведение остаётся прежним.
+        val udphopSettings = udphop?.optJSONObject("settings")
+        val hopPorts = udphopSettings?.optString("remotePorts")?.takeIf { it.isNotEmpty() }
+        val hopInterval = udphopSettings?.optString("interval")?.takeIf { it.isNotEmpty() }
+        hopPorts?.let { query.append("&mport=").append(URLEncoder.encode(it, "UTF-8")) }
+        hopInterval?.let { query.append("&mportInterval=").append(URLEncoder.encode(it, "UTF-8")) }
+
+        // TLS-параметры, которые ядро понимает, а ссылка раньше теряла:
+        // fingerprint (вещдок: json-тег «fingerprint», форк пишет его из
+        // ProfileItem.fingerPrint) и enableSessionResumption (вещдок: json-тег
+        // в TlsSettingsBean ядра; провайдер задал false).
+        tls?.optString("fingerprint")?.takeIf { it.isNotEmpty() }
+            ?.let { query.append("&fp=").append(URLEncoder.encode(it, "UTF-8")) }
+        if (tls?.has("enableSessionResumption") == true) {
+            query.append("&esr=").append(if (tls.optBoolean("enableSessionResumption")) "1" else "0")
+        }
+
+        // ОСТАТОК finalmask: маски и ключи, которые полями профиля НЕ
+        // выражаются (noise, bbrProfile/congestion/debug, неизвестные ядру
+        // ключи). Salamander и udphop сюда НЕ кладутся: они уже выражены
+        // obfs/mport, а дубль привёл бы к двойной обёртке. Сборка итогового
+        // finalmask на стороне конфига — Hysteria2FinalMask.merge (явный fm
+        // приоритетен, собранное форком дополняет).
+        val residualFm = buildResidualFinalMask(fmObjNode)
+        residualFm?.let { query.append("&fm=").append(URLEncoder.encode(it, "UTF-8")) }
+
         val queryString = if (query.isNotEmpty()) "?" + query.substring(1) else ""
 
         val encRem = URLEncoder.encode(ob.optString("remarks", rem), "UTF-8").replace("+", "%20")
@@ -1672,6 +1719,66 @@ object SubscriptionContentConverter {
         }
     } catch (_: Exception) {
         null
+    }
+
+    /**
+     * ОСТАТОК finalmask, который полями профиля не выражается.
+     *
+     * Зачем: провайдеры кладут в finalmask.udp шум (`type=noise`) и в
+     * finalmask.quicParams тюнинг ядра (`bbrProfile`, `congestion`, `debug`).
+     * Полей профиля под них нет, поэтому раньше всё это МОЛЧА терялось при
+     * конвертации кастомного конфига в ссылку. Теперь остаток уезжает ключом
+     * `fm`, а на стороне построения конфига сливается с собранным форком
+     * через [com.v2ray.ang.util.Hysteria2FinalMask.merge].
+     *
+     * Что ИСКЛЮЧАЕТСЯ (и почему это не потеря):
+     *  - `udp[type=salamander]` — выражено obfs/obfs-password/minPacketSize/
+     *    maxPacketSize (дубль означал бы двойную обёртку обфускации);
+     *  - `udp[type=udphop]` — выражено mport/mportInterval (формат ядра).
+     *
+     * quicParams сохраняются ЦЕЛИКОМ: панельный `udpHop` ядро не читает
+     * (json-тегов «udpHop»/«ports» в libgojni.so нет), поэтому переносить его
+     * в mport нельзя — это включило бы hop на портах, которые сервер может не
+     * слушать, и сломало бы работающий профиль.
+     *
+     * @return компактный JSON остатка либо null, если остатка нет.
+     */
+    private fun buildResidualFinalMask(fmObjNode: JSONObject?): String? {
+        if (fmObjNode == null) return null
+        val residual = JSONObject()
+
+        fmObjNode.optJSONArray("udp")?.let { udp ->
+            val kept = JSONArray()
+            for (i in 0 until udp.length()) {
+                val mask = udp.optJSONObject(i) ?: continue
+                when (mask.optString("type")) {
+                    // Выражены полями профиля (obfs/mport) — не дублируем.
+                    "salamander", "udphop" -> continue
+                    else -> kept.put(mask)
+                }
+            }
+            if (kept.length() > 0) residual.put("udp", kept)
+        }
+
+        fmObjNode.optJSONArray("tcp")?.takeIf { it.length() > 0 }?.let {
+            residual.put("tcp", it)
+        }
+
+        // quicParams сохраняются ЦЕЛИКОМ, включая панельный udpHop: ядро его
+        // не читает (см. комментарий выше), поэтому ни на что не влияет, а
+        // данные провайдера остаются видны в редакторе и не теряются.
+        fmObjNode.optJSONObject("quicParams")?.takeIf { it.length() > 0 }?.let {
+            residual.put("quicParams", it)
+        }
+
+        // Неизвестные ключи finalmask сохраняем целиком: формат ядра
+        // развивается, терять настройку провайдера нельзя.
+        for (key in fmObjNode.keys()) {
+            if (key == "udp" || key == "tcp" || key == "quicParams") continue
+            residual.put(key, fmObjNode.get(key))
+        }
+
+        return if (residual.length() == 0) null else residual.toString()
     }
 
     /**

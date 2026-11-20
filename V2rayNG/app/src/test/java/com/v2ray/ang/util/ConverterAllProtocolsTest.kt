@@ -891,6 +891,173 @@ class ConverterAllProtocolsTest {
     }
 
     @Test
+    fun `xray hysteria2 noise and quicParams survive conversion via fm`() {
+        // РЕАЛЬНЫЙ конфиг провайдера (вещдок 20.11.2026): salamander + noise +
+        // quicParams{udpHop,bbrProfile,congestion}. Раньше конвертер извлекал
+        // ТОЛЬКО salamander, а шум и тюнинг ядра молча терялись — профиль
+        // работал без DPI-шума и без смены портов (нарушение инварианта
+        // опциональности шума: защита была, но не доезжала).
+        val cfg = """
+            { "remarks": "HY-noise", "outbounds": [ { "tag": "h", "protocol": "hysteria2",
+              "settings": { "address": "hy.example.com", "port": 2097 },
+              "streamSettings": {
+                "hysteriaSettings": { "version": 2, "auth": "authpw" },
+                "tlsSettings": { "serverName": "hy.example.com", "fingerprint": "firefox",
+                  "enableSessionResumption": false },
+                "finalmask": {
+                  "udp": [
+                    { "type": "salamander", "settings": { "password": "obfspw" } },
+                    { "type": "noise", "settings": { "noise": [
+                      { "rand": "100-200", "delay": "5-10", "randRange": "0-127" } ], "reset": "0" } } ],
+                  "quicParams": { "udpHop": { "ports": "40000-41000", "interval": "20-30" },
+                    "bbrProfile": "aggressive", "congestion": "bbr" } } } } ] }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertTrue(out.startsWith("hysteria2://"), out)
+
+        // Обфускация и TLS-параметры выражены полями профиля.
+        assertTrue(out.contains("obfs=salamander"), out)
+        assertTrue(out.contains("obfs-password=obfspw"), out)
+        assertTrue(out.contains("fp=firefox"), "tlsSettings.fingerprint терялся: $out")
+        assertTrue(out.contains("esr=0"), "enableSessionResumption=false обязан доехать: $out")
+        // Панельный quicParams.udpHop НЕ становится mport НАМЕРЕННО: ядро не
+        // читает формат udpHop.ports (json-тегов нет в libgojni.so), то есть
+        // смена портов у такого провайдера не работала. Включение hop на
+        // портах, которые сервер может не слушать, сломало бы работающий
+        // профиль. Данные сохраняются в fm, поведение не меняется.
+        assertFalse(out.contains("mport="), "панельный udpHop нельзя превращать в mport: $out")
+
+        // Шум и тюнинг ядра — ключом fm (полями профиля не выражаются).
+        assertTrue(out.contains("fm="), "остаток finalmask обязан уехать ключом fm: $out")
+        val profile = Hysteria2Fmt.parse(out)!!
+        assertEquals("obfspw", profile.obfsPassword)
+        assertNull(profile.portHopping, "панельный udpHop не должен становиться hop профиля")
+        assertEquals("firefox", profile.fingerPrint)
+        assertEquals(false, profile.enableSessionResumption)
+        assertNotNull(profile.finalMask, "шум/quicParams обязаны попасть в finalMask")
+
+        val fm = JSONObject(profile.finalMask!!)
+        // salamander обязан остаться в obfs и НЕ дублироваться маской в fm:
+        // дубль означал бы двойную обёртку обфускации и нерабочий туннель.
+        assertEquals(
+            listOf("noise"),
+            (0 until fm.getJSONArray("udp").length())
+                .map { fm.getJSONArray("udp").getJSONObject(it).getString("type") },
+            "состав udp-масок неверен: $fm",
+        )
+        assertEquals(
+            "aggressive",
+            fm.getJSONObject("quicParams").getString("bbrProfile"),
+            "bbrProfile потерян: $fm",
+        )
+        assertEquals("bbr", fm.getJSONObject("quicParams").getString("congestion"))
+        assertEquals(
+            "40000-41000",
+            fm.getJSONObject("quicParams").getJSONObject("udpHop").getString("ports"),
+            "панельный udpHop обязан сохраниться в fm без потерь: $fm",
+        )
+
+        // Шум переживает экспорт обратно в ссылку (round-trip без потерь).
+        val again = Hysteria2Fmt.parse("hysteria2://" + Hysteria2Fmt.toUri(profile))
+        assertEquals(profile.finalMask, again.finalMask)
+        assertEquals(profile.obfsPassword, again.obfsPassword)
+        assertEquals(profile.portHopping, again.portHopping)
+        assertEquals(profile.fingerPrint, again.fingerPrint)
+        assertEquals(profile.enableSessionResumption, again.enableSessionResumption)
+    }
+
+    @Test
+    fun `full config with dns routing inbounds and service outbounds still converts`() {
+        // Требование владельца (21.11 01:43): профиль НЕ обязан оставаться
+        // кастомным из-за секций, которые клиент настраивает сам или которые
+        // не относятся к серверу. Конкретно: dns, routing (без balancers),
+        // inbounds и служебные outbounds (freedom/blackhole) НЕ являются
+        // причиной отказа — иначе рабочий профиль терял бы редактируемость
+        // из-за посторонних строк конфига.
+        val cfg = """
+            {
+              "dns": { "servers": ["1.1.1.1", "8.8.8.8"], "queryStrategy": "UseIP" },
+              "routing": { "rules": [ { "type": "field", "protocol": ["bittorrent"],
+                "outboundTag": "direct" } ], "domainMatcher": "hybrid",
+                "domainStrategy": "IPIfNonMatch" },
+              "inbounds": [ { "tag": "socks", "port": 10808, "listen": "127.0.0.1",
+                "protocol": "socks", "settings": { "udp": true, "auth": "noauth" } } ],
+              "outbounds": [
+                { "tag": "proxy", "protocol": "hysteria",
+                  "settings": { "address": "hy.example.com", "port": 2097, "version": 2 },
+                  "streamSettings": {
+                    "network": "hysteria",
+                    "hysteriaSettings": { "version": 2, "auth": "authpw" },
+                    "security": "tls",
+                    "tlsSettings": { "serverName": "hy.example.com", "alpn": ["h3"],
+                      "fingerprint": "firefox", "enableSessionResumption": false },
+                    "finalmask": {
+                      "udp": [ { "type": "salamander", "settings": { "password": "obfspw" } },
+                        { "type": "noise", "settings": { "noise": [
+                          { "rand": "100-200", "delay": "5-10", "randRange": "0-127" } ], "reset": "0" } } ],
+                      "quicParams": { "udpHop": { "ports": "40000-41000", "interval": "20-30" },
+                        "bbrProfile": "aggressive", "congestion": "bbr" } } } },
+                { "tag": "direct", "protocol": "freedom" },
+                { "tag": "block", "protocol": "blackhole" }
+              ],
+              "remarks": "HY-full"
+            }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertTrue(out.startsWith("hysteria2://"), "полный конфиг обязан конвертироваться: $out")
+
+        val profile = Hysteria2Fmt.parse(out)!!
+        assertEquals("hy.example.com", profile.server)
+        assertEquals("2097", profile.serverPort)
+        assertEquals("authpw", profile.password)
+        assertEquals("h3", profile.alpn)
+        assertEquals("salamander", profile.obfs)
+        assertEquals("obfspw", profile.obfsPassword)
+        assertEquals("firefox", profile.fingerPrint)
+        assertEquals(false, profile.enableSessionResumption)
+        assertNotNull(profile.finalMask, "шум и quicParams обязаны переехать в finalMask")
+        assertTrue(profile.finalMask!!.contains("noise"), profile.finalMask)
+    }
+
+    @Test
+    fun `xray hysteria2 without finalmask gets no fm key`() {
+        // Инвариант опциональности: профиль БЕЗ finalmask обязан остаться
+        // простым, fm в ссылку не добавляется (пустой JSON раздувал бы URI).
+        val cfg = """
+            { "remarks": "HY-plain", "outbounds": [ { "tag": "h", "protocol": "hysteria2",
+              "settings": { "address": "hy.example.com", "port": 443 },
+              "streamSettings": {
+                "hysteriaSettings": { "version": 2, "auth": "authpw" },
+                "tlsSettings": { "serverName": "hy.example.com" } } } ] }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertFalse(out.contains("fm="), "пустой fm не должен попадать в ссылку: $out")
+        assertNull(Hysteria2Fmt.parse(out).finalMask)
+    }
+
+    @Test
+    fun `xray hysteria2 core udphop mask maps to mport`() {
+        // Формат ЯДРА (udphop с remotePorts/interval), а не панельный
+        // quicParams.udpHop. Оба обязаны давать mport/mportInterval.
+        val cfg = """
+            { "remarks": "HY-hop", "outbounds": [ { "tag": "h", "protocol": "hysteria2",
+              "settings": { "address": "hy.example.com", "port": 443 },
+              "streamSettings": {
+                "hysteriaSettings": { "version": 2, "auth": "authpw" },
+                "finalmask": { "udp": [ { "type": "udphop", "settings": {
+                  "mode": "intervallocal,intervalremote", "interval": "10-20",
+                  "remotePorts": "30000-40000" } } ] } } } ] }
+        """.trimIndent()
+        val out = convert(cfg)
+        assertTrue(out.contains("mport=30000-40000"), out)
+        assertTrue(out.contains("mportInterval=10-20"), out)
+        assertFalse(out.contains("fm="), "udphop выражен полями профиля, дубль не нужен: $out")
+        val profile = Hysteria2Fmt.parse(out)
+        assertEquals("30000-40000", profile.portHopping)
+        assertEquals("10-20", profile.portHoppingInterval)
+    }
+
+    @Test
     fun `xray hysteria2 round trip via Hysteria2Fmt`() {
         val cfg = """
             { "remarks": "HY", "outbounds": [ { "tag": "h", "protocol": "hysteria2",

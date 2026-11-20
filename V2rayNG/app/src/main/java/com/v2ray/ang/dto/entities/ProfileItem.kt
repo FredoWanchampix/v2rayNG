@@ -49,6 +49,14 @@ data class ProfileItem(
     var echConfigList: String? = null,
     var verifyPeerCertByName: String? = null,
     var pinnedCA256: String? = null,
+    /**
+     * TLS session resumption (`tlsSettings.enableSessionResumption`).
+     *
+     * Поле обязательно: ядро его поддерживает (вещдок: json-тег
+     * «enableSessionResumption» в libgojni.so), а формат share-ссылки раньше
+     * его не нес — настройка из подписки молча терялась при конвертации.
+     */
+    var enableSessionResumption: Boolean? = null,
 
     var publicKey: String? = null,
     var shortId: String? = null,

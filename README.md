@@ -76,6 +76,33 @@ QUIC-рукопожатия (Hysteria v1/v2) через HTTP-CONNECT не тун
 
 Конвертер покрывает **все протоколы форка**: для каждого JSON-профиля либо собирается ссылка (`vless://`, `vmess://`, `ss://`, `trojan://`, `hysteria://`, `hysteria2://`, `socks://`, `wireguard://`, `masque://`, `awg://`, `naive://`, `openconnect://`, `mimic://`), либо профиль остаётся кастомным **с явной причиной в логе**. Явные отказы: `tuic` (парсер ссылок в форке отключён), `http` (схема не импортируется, а для приватного IP строка ушла бы в подписку), `fptn` (собственный TUN, нет Xray-outbound), группы/цепочки (`policygroup`, `proxychain`), multi-peer/multi-server/multi-user outbound, нестандартный allowedIPs wireguard, vmess/trojan xhttp (формат ссылки не выражает mode/extra у vmess v2), ss-плагин кроме obfs=http, recv-window у hysteria v1 (схема ссылки не выражает). Молчаливых потерь нет: если хотя бы один outbound мульти-серверного конфига не конвертируется, конфиг сохраняется целиком. AmneziaWG-опции (jc/jmin/jmax/s1–s4/h1–h4/i1–i5/version) переносятся в `awg://` один-в-один — конвертация в plain `wireguard://` с потерей обфускации запрещена. Переносятся также: obfs Hysteria2 (salamander/gecko, включая packetSize из finalmask), транспорты vless/vmess/trojan (ws/kcp/grpc/h2/xhttp), host-массивы и alpn-списки целиком, DNS туннеля из глобальной секции `dns` конфига в `remoteDNS` wireguard, certificate pinning и uTLS-fingerprint.
 
+#### Hysteria2: полный перенос finalmask и TLS-параметров
+
+Ссылка `hysteria2://` форка несёт **весь контекст** конфига провайдера, а не только обфускацию:
+
+| Что в конфиге | Ключ ссылки | Куда попадает в профиле |
+|---|---|---|
+| `finalmask.udp[type=salamander].password` | `obfs-password` (+ `obfs=salamander`) | `obfs` / `obfsPassword` |
+| `…settings.packetSize = "min-max"` | `obfs=gecko&minPacketSize&maxPacketSize` | `minPacketSize` / `maxPacketSize` |
+| `finalmask.udp[type=udphop]` (`remotePorts`, `interval`) | `mport`, `mportInterval` | `portHopping` / `portHoppingInterval` |
+| `tlsSettings.fingerprint` | `fp` | `fingerPrint` |
+| `tlsSettings.enableSessionResumption` | `esr` | `enableSessionResumption` |
+| `tlsSettings.pinnedPeerCertSha256` / `hysteriaSettings.pinSHA256` | `pinSHA256` / `pcs` | `pinnedCA256` |
+| `finalmask.udp[type=noise]`, `quicParams` (`bbrProfile`, `congestion`, `debug`), любые неизвестные ключи | `fm` (URL-encoded JSON) | `finalMask` |
+
+**Gecko — это не отдельный тип маски.** Ядро различает salamander и gecko **только** по наличию `MinPacketSize`/`MaxPacketSize` (`GeckoConfig` лежит в пакете `finalmask.salamander`, отдельного типа `gecko` в xray-core нет). Поэтому конфиг с `type=salamander` и `packetSize` — это gecko, а без `packetSize` — обычный salamander; конвертер различает их именно так, а редактор профиля показывает оба варианта в выпадающем списке вместе с размерами пакетов.
+
+**Остаток finalmask (`fm`) сливается с собранным форком, а не заменяет его.** Раньше явный `finalMask` профиля перезаписывал finalmask целиком, из-за чего обфускация salamander, собранная из полей профиля, терялась и сервер отвергал туннель. Теперь `Hysteria2FinalMask.merge` объединяет источники: маски одного типа из `fm` приоритетны, отсутствующие типы (salamander/udphop по полям профиля) сохраняются, ключи `quicParams` дополняются, неизвестные ключи переносятся как есть, порядок масок соответствует конфигу провайдера. Пустой `fm` в ссылку не пишется (URI остаётся коротким, QR-ёмкость не расходуется).
+
+**Панельный `quicParams.udpHop` намеренно НЕ превращается в `mport`.** Вещдок: в `libgojni.so` нет json-тегов `udpHop`/`ports` (есть только `remotePorts`/`mode`/`interval` формата ядра), то есть xray-core такой блок **игнорирует** и смена портов у этих провайдеров не работает. Перенос включил бы hop на портах, которые сервер может не слушать, — работающий профиль перестал бы работать. Поэтому панельный `udpHop` сохраняется в `fm` без изменений: данные не теряются и видны в редакторе, а поведение остаётся прежним.
+
+**Всё перечисленное видно и редактируется в UI** редактора Hysteria2: тип обфускации (`none`/`salamander`/`gecko`) с паролем и размерами пакетов, смена портов и её интервал, полоса пропускания (up/down), ALPN, uTLS-отпечаток, возобновление TLS-сессии (три состояния: по умолчанию / включено / выключено), SNI, allowInsecure, ECH, отпечаток сертификата с кнопкой получения и поле `finalMask JSON` для продвинутых случаев. Параметр, который переносит конвертер, обязательно имеет поле в редакторе — иначе его нельзя было бы ни увидеть, ни исправить.
+
+Экспорт (буфер обмена и QR) и импорт (ссылка и QR) идут через один и тот же `Hysteria2Fmt.toUri`/`parse`, поэтому набор ключей одинаков в обе стороны. QR-экспорт не сжимает и не сокращает ссылку: длинная ссылка режется на сегменты протокола `V2NGQR1` (каждый сегмент — целый читаемый кусок в пределах одного QR), импорт собирает серию в любом порядке с контролем CRC.
+
+**Конвертер не отказывает из-за посторонних секций конфига.** `dns`, `routing` (без `balancers`), `inbounds` и служебные outbounds (`freedom`/`blackhole`/`direct`/`block`) НЕ являются причиной оставить профиль кастомным: они относятся к настройкам клиента, а не к серверу. Профиль остаётся кастомным только когда ссылка физически не может выразить содержимое: multi-server/multi-peer outbound, цепочка через `sockopt.dialerProxy`/`detour`, балансер (при включённом тумблере «оставить балансеры кастомными»), неподдерживаемый протокол (`tuic`, `fptn`, `policygroup`, `proxychain`) или отсутствие обязательных полей. Причина всегда пишется в лог.
+
+
 #### Шум (DPI-защита) WireGuard
 
 Шумовые пакеты перед handshake маскируют WireGuard от DPI. В форке шум — **опциональное поле wireguard-профиля, доступное во всех точках входа**:

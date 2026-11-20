@@ -677,4 +677,9 @@
     <string name="update_download_error_no_asset">فایل قابل بارگیری برای این دستگاه یافت نشد.</string>
     <string name="update_via_active_proxy_title">بررسی و بارگیری ازطریق پروفایل فعال</string>
     <string name="update_via_active_proxy_summary">وقتی روشن است، هم بررسی به‌روزرسانی و هم بارگیر داخلی دقیقاً ازطریق پروفایل درحال‌اجرا می‌روند. وقتی خاموش است، مستقیم.</string>
+    <string name="server_lab_session_resumption">از سرگیری نشست TLS</string>
+    <string name="server_lab_session_resumption_hint">اختیاری. برای اینکه هسته تصمیم بگیرد «پیش‌فرض» بگذارید؛ اگر ارائه‌دهنده enableSessionResumption=false می‌خواهد، خاموش کنید.</string>
+    <string name="server_lab_session_resumption_default">پیش‌فرض (هسته تصمیم می‌گیرد)</string>
+    <string name="server_lab_session_resumption_on">روشن</string>
+    <string name="server_lab_session_resumption_off">خاموش</string>
 </resources>

@@ -39,7 +39,16 @@ object Hysteria2Fmt : FmtBase() {
             config.minPacketSize = queryParam["minPacketSize"]
             config.maxPacketSize = queryParam["maxPacketSize"]
             config.portHopping = queryParam["mport"]
-            config.pinnedCA256 = queryParam["pinSHA256"]
+            config.portHoppingInterval = queryParam["mportInterval"]?.nullIfBlank()
+            // pinSHA256 — исторический ключ hy2-ссылки; pcs читает FmtBase.
+            // Без elvis ссылка только с pcs обнуляла отпечаток, полученный там.
+            config.pinnedCA256 = queryParam["pinSHA256"]?.nullIfBlank() ?: config.pinnedCA256
+            // fp (fingerprint) читает FmtBase.getItemFormQuery — не дублируем.
+            config.enableSessionResumption = when (queryParam["esr"]) {
+                "1", "true" -> true
+                "0", "false" -> false
+                else -> null
+            }
             if (config.isGeckoObfs()) {
                 if (config.minPacketSize.isNullOrEmpty()) {
                     config.minPacketSize = "512"
@@ -80,9 +89,20 @@ object Hysteria2Fmt : FmtBase() {
         if (config.portHopping.isNotNullEmpty()) {
             dicQuery["mport"] = config.portHopping.orEmpty()
         }
+        // Интервал смены портов (udphop interval). Без него ядро берёт своё
+        // значение по умолчанию, то есть настройка провайдера терялась.
+        config.portHoppingInterval?.nullIfBlank()?.let { dicQuery["mportInterval"] = it }
         if (config.pinnedCA256.isNotNullEmpty()) {
             dicQuery["pinSHA256"] = config.pinnedCA256.orEmpty()
         }
+        config.fingerPrint?.nullIfBlank()?.let { dicQuery["fp"] = it }
+        config.enableSessionResumption?.let { dicQuery["esr"] = if (it) "1" else "0" }
+        // finalmask: шум DPI-защиты и quicParams (bbrProfile/congestion/debug)
+        // формат ссылки иначе не выражает. Без этого ключа конвертация
+        // кастомного hy2-конфига МОЛЧА теряла защиту (инвариант опциональности
+        // шума нарушался в обратную сторону: шум есть, но не доезжает).
+        // Пустой fm не пишем — ссылка без него короче и QR остаётся читаемым.
+        config.finalMask?.nullIfBlank()?.let { dicQuery["fm"] = it }
 
         return toUri(config, config.password, dicQuery)
     }

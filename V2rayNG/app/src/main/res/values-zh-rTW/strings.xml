@@ -675,4 +675,9 @@
     <string name="update_download_error_no_asset">未找到適合此裝置的可下載檔案。</string>
     <string name="update_via_active_proxy_title">透過作用中設定檔檢查並下載</string>
     <string name="update_via_active_proxy_summary">開啟時，檢查更新與內建下載都嚴格透過執行中的設定檔進行；關閉時則直接連線。</string>
+    <string name="server_lab_session_resumption">TLS 工作階段恢復</string>
+    <string name="server_lab_session_resumption_hint">可選。保留「預設」由核心決定；如果服務商要求 enableSessionResumption=false，請關閉。</string>
+    <string name="server_lab_session_resumption_default">預設（由核心決定）</string>
+    <string name="server_lab_session_resumption_on">開啟</string>
+    <string name="server_lab_session_resumption_off">關閉</string>
 </resources>

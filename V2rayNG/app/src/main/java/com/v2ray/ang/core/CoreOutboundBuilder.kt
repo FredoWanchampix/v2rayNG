@@ -13,6 +13,7 @@ import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
+import com.v2ray.ang.util.Hysteria2FinalMask
 import com.v2ray.ang.util.NoiseProfileUtil
 import com.v2ray.ang.util.Utils
 
@@ -687,7 +688,25 @@ object CoreOutboundBuilder {
         finalMask?.let {
             val parsedFinalMask = JsonUtil.parseString(finalMask)
             if (parsedFinalMask != null) {
-                streamSettings.finalmask = parsedFinalMask
+                // Hysteria2: finalmask выше СОБРАН из полей профиля (salamander
+                // из obfs/obfsPassword, udphop из portHopping, congestion из
+                // полосы). Явный finalMask пользователя ОБЯЗАН ДОПОЛНЯТЬ его,
+                // а не заменять: замена молча теряла обфускацию, и сервер
+                // отвергал туннель (вещдок 20.11.2026 — профиль, где
+                // провайдер задал noise+quicParams). Правила слияния и причина
+                // каждого — в Hysteria2FinalMask.merge (чистая функция, JVM-тест).
+                // Условие — ТИП ПРОФИЛЯ, а не network: у Hysteria v1 поле
+                // obfsPassword несёт obfs-строку mihomo (не salamander), и
+                // слияние ему не нужно (v1 обслуживается сайдкаром).
+                streamSettings.finalmask = if (profileItem.configType == EConfigType.HYSTERIA2) {
+                    val merged = Hysteria2FinalMask.merge(
+                        JsonUtil.toJson(streamSettings.finalmask),
+                        finalMask,
+                    )
+                    JsonUtil.parseString(merged) ?: parsedFinalMask
+                } else {
+                    parsedFinalMask
+                }
             } else {
                 LogUtil.w("V2rayConfigManager", "Invalid finalMask JSON, keeping previously generated finalmask")
             }
@@ -723,6 +742,10 @@ object CoreOutboundBuilder {
             allowInsecure = allowInsecure,
             serverName = sni.nullIfBlank(),
             fingerprint = profileItem.fingerPrint.nullIfBlank(),
+            // Ядро умеет это поле (вещдок: json-тег «enableSessionResumption»
+            // в TlsSettingsBean libgojni.so). Раньше ProfileItem его не нес,
+            // и настройка провайдера терялась при импорте подписки.
+            enableSessionResumption = profileItem.enableSessionResumption,
             alpn = profileItem.alpn?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }.takeIf { !it.isNullOrEmpty() },
             echConfigList = profileItem.echConfigList.nullIfBlank(),
             verifyPeerCertByName = profileItem.verifyPeerCertByName.nullIfBlank(),

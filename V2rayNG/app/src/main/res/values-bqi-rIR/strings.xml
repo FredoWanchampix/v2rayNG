@@ -677,4 +677,9 @@
     <string name="update_download_error_no_asset">فایلی بۉرگاری سی ئی دسگا نڌیارڌا.</string>
     <string name="update_via_active_proxy_title">سیل ڤو بۉرگاری ڤا پروفایل فعال</string>
     <string name="update_via_active_proxy_summary">کە رۉشنە، هەم سیل ڤەروزرسانی هەم بۉرگار دۉرونی دناڤ پروفایل د هال ڕۉڌ شیڌە. کە خامۉشە، راستا شیڌە.</string>
+    <string name="server_lab_session_resumption">از سرگیری نشست TLS</string>
+    <string name="server_lab_session_resumption_hint">اختیاری. سی ای که هسته تصمیم بگیری «پیش‌فرض» هلی بنه؛ اگه فراهم‌کوننده enableSessionResumption=false خوایه، خاموشش کو.</string>
+    <string name="server_lab_session_resumption_default">پیش‌فرض (هسته تصمیم گیری)</string>
+    <string name="server_lab_session_resumption_on">روشن</string>
+    <string name="server_lab_session_resumption_off">خاموش</string>
 </resources>

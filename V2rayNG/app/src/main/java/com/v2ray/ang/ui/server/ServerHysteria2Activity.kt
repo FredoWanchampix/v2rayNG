@@ -128,6 +128,11 @@ class ServerHysteria2Activity : BaseServerActivity() {
     private fun Hysteria2ProtocolFields(state: ServerUiState) {
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
+        // Один вызов rememberFieldOptions на композицию: список значений uTLS
+        // читается из ресурсов, повторный вызов на каждую рекомпозицию не нужен.
+        val fieldOptions = rememberFieldOptions()
+        val uTlsOptions = fieldOptions.uTlsOptions
+        val alpnOptions = fieldOptions.alpnOptions
 
         val obfsOptions = listOf("none", "salamander", "gecko")
         val selectedObfs = when {
@@ -200,6 +205,56 @@ class ServerHysteria2Activity : BaseServerActivity() {
             stringResource(R.string.server_lab_sni),
             state.sni,
             { state.sni = it }
+        )
+        // ALPN. Поле профиля существовало и конвертер его переносил
+        // (tlsSettings.alpn -> &alpn=), но в редакторе Hysteria2 оно НЕ
+        // отображалось: экран не вызывает общий блок CommonStreamSecurityFields,
+        // поэтому alpn был невидим и нередактируем.
+        FormDropdownField(
+            label = stringResource(R.string.server_lab_stream_alpn),
+            value = state.alpn,
+            options = alpnOptions,
+            onValueChange = { state.alpn = it }
+        )
+        // uTLS-отпечаток. Ядро получает его из ProfileItem.fingerPrint
+        // (CoreOutboundBuilder.populateTlsSettings), а провайдеры задают его в
+        // tlsSettings.fingerprint — раньше конвертер его не читал, а редактор
+        // hy2 не показывал, поэтому настройка была невидима.
+        FormDropdownField(
+            label = stringResource(R.string.server_lab_stream_fingerprint),
+            value = state.fingerPrint,
+            options = uTlsOptions,
+            onValueChange = { state.fingerPrint = it }
+        )
+        // TLS session resumption: ядро поддерживает enableSessionResumption
+        // (вещдок: json-тег в TlsSettingsBean libgojni.so). Три состояния:
+        // «не задано» (null — ядро решает само), включить, выключить.
+        // Показываем всегда, чтобы настройка провайдера была видна и правима.
+        val esrOptions = listOf(
+            stringResource(R.string.server_lab_session_resumption_default),
+            stringResource(R.string.server_lab_session_resumption_on),
+            stringResource(R.string.server_lab_session_resumption_off),
+        )
+        val esrIndex = when (state.enableSessionResumption) {
+            null -> 0
+            true -> 1
+            false -> 2
+        }
+        FormDropdownField(
+            label = stringResource(R.string.server_lab_session_resumption),
+            value = esrOptions[esrIndex],
+            options = esrOptions,
+            supportingText = stringResource(R.string.server_lab_session_resumption_hint),
+            onValueChange = { picked ->
+                // Сопоставление по ИНДЕКСУ, а не по тексту: локализации могут
+                // совпадать (например, vi/zh дают одинаковые короткие слова),
+                // и сравнение строк выбрало бы неверное значение.
+                state.enableSessionResumption = when (esrOptions.indexOf(picked)) {
+                    1 -> true
+                    2 -> false
+                    else -> null
+                }
+            }
         )
         FormTextField(
             stringResource(R.string.server_lab_ech_config_list),

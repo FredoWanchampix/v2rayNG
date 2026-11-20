@@ -760,4 +760,9 @@
     <string name="update_download_error_no_asset">Не найден загружаемый ассет для этого устройства.</string>
     <string name="update_via_active_proxy_title">Проверять и скачивать через активный профиль</string>
     <string name="update_via_active_proxy_summary">Когда включено, и проверка обновлений, и встроенная загрузка идут строго через запущенный профиль. Когда выключено — напрямую.</string>
+    <string name="server_lab_session_resumption">Возобновление TLS-сессии</string>
+    <string name="server_lab_session_resumption_hint">Необязательно. Оставьте «по умолчанию», чтобы решало ядро; выключите, если провайдер требует enableSessionResumption=false.</string>
+    <string name="server_lab_session_resumption_default">по умолчанию (решает ядро)</string>
+    <string name="server_lab_session_resumption_on">включено</string>
+    <string name="server_lab_session_resumption_off">выключено</string>
 </resources>

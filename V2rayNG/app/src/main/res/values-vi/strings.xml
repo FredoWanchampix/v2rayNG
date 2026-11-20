@@ -675,4 +675,9 @@
     <string name="update_download_error_no_asset">Không tìm thấy tệp tải được cho thiết bị này.</string>
     <string name="update_via_active_proxy_title">Kiểm tra và tải qua hồ sơ đang bật</string>
     <string name="update_via_active_proxy_summary">Khi bật, cả việc kiểm tra cập nhật và tải tích hợp đều đi nghiêm ngặt qua hồ sơ đang chạy. Khi tắt, đi trực tiếp.</string>
+    <string name="server_lab_session_resumption">Khôi phục phiên TLS</string>
+    <string name="server_lab_session_resumption_hint">Không bắt buộc. Để «mặc định» nếu muốn lõi tự quyết định; tắt nếu nhà cung cấp yêu cầu enableSessionResumption=false.</string>
+    <string name="server_lab_session_resumption_default">mặc định (lõi tự quyết định)</string>
+    <string name="server_lab_session_resumption_on">bật</string>
+    <string name="server_lab_session_resumption_off">tắt</string>
 </resources>
