@@ -11,8 +11,7 @@ import java.security.MessageDigest
  *
  * Формат ОБЯЗАН совпадать с нативной fetchTlsCertSha256 (64 строчных hex) —
  * это значение уходит в pinnedCA256 и затем в pinnedPeerCertSha256 ядра;
- * сверено побайтово на живых данных 20.11.2026 (fr.aichatik.online:8443 →
- * 69103e5ff502314f… = значение из подписки в MMKV).
+ * сверено побайтово на живых данных 20.11.2026.
  *
  * CONNECT-запрос обязан содержать Host (без него inbound ядра отвечает 400)
  * и Proxy-Authorization в UTF-8 (урок загрузчика: ISO-8859-1 ломает пароль

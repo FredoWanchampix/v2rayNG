@@ -1034,17 +1034,17 @@ class ConverterAllProtocolsTest {
               "outbounds": [
                 {
                   "tag": "proxy", "protocol": "vless",
-                  "settings": { "address": "138.124.254.68", "port": 8443,
-                    "encryption": "none", "id": "ca382fc9-d753-45fa-a10d-835478ab4199" },
+                  "settings": { "address": "203.0.113.1", "port": 8443,
+                    "encryption": "none", "id": "11111111-2222-3333-4444-555555555555" },
                   "streamSettings": {
                     "network": "xhttp", "security": "tls",
                     "finalmask": { "base64": [], "mihomo": [], "xrayJson": [
                       { "op": "set", "to": "streamSettings.xhttpSettings.mode", "value": "stream-up" },
                       { "op": "set", "to": "streamSettings.xhttpSettings.extra.xPaddingBytes", "value": "100-1600" }
                     ] },
-                    "tlsSettings": { "serverName": "river-4-416.rtbcdn.ru", "alpn": ["h2"],
+                    "tlsSettings": { "serverName": "river.example.test", "alpn": ["h2"],
                       "fingerprint": "firefox",
-                      "pinnedPeerCertSha256": "69103e5ff502314fad6345ce7f208d70574e65968462dd6168e227055ed294d6" },
+                      "pinnedPeerCertSha256": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff" },
                     "xhttpSettings": { "mode": "stream-up", "path": "/hls/vod/",
                       "extra": { "xPaddingBytes": "64-2048", "scStreamUpServerSecs": "15-40" } }
                   }
@@ -1058,7 +1058,7 @@ class ConverterAllProtocolsTest {
         assertTrue(out.contains("extra="), "xhttp extra обязан попасть в extra: $out")
         assertTrue(out.contains("stream-up"), out)
         assertTrue(out.contains("xPaddingBytes"), out)
-        assertTrue(out.contains("69103e5ff502314fad6345ce7f208d70574e65968462dd6168e227055ed294d6"), "pin обязан дойти: $out")
+        assertTrue(out.contains("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"), "pin обязан дойти: $out")
         // fm в ссылке — тот же xrayJson, без потерь
         val q = out.substringAfter("?").substringBefore("#")
             .split("&").associate { val (k, v) = it.split("=", limit = 2); k to java.net.URLDecoder.decode(v, "UTF-8") }
