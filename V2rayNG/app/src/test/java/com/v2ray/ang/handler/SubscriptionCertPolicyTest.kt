@@ -336,6 +336,55 @@ class SubscriptionCertPolicyTest {
         assertEquals(k, SubscriptionCertPolicy.endpointKey(badPort))
     }
 
+    // ---------- маршрут получения отпечатка (матрица режимов профиля) ----------
+
+    @Test
+    fun `route is direct when via-profile switch is off regardless of profile state`() {
+        // свитч ВЫКЛ — прежнее поведение: напрямую, даже если профиль не запущен
+        assertEquals(
+            SubscriptionCertPolicy.FetchRoute.DIRECT,
+            SubscriptionCertPolicy.decideFetchRoute(false, false, false, false),
+        )
+        assertEquals(
+            SubscriptionCertPolicy.FetchRoute.DIRECT,
+            SubscriptionCertPolicy.decideFetchRoute(false, true, false, true),
+        )
+    }
+
+    @Test
+    fun `route is via profile when switch on and loopback proxy listens`() {
+        assertEquals(
+            SubscriptionCertPolicy.FetchRoute.VIA_PROFILE,
+            SubscriptionCertPolicy.decideFetchRoute(true, true, false, true),
+        )
+    }
+
+    @Test
+    fun `tunnel profile counts as direct because app is inside the tunnel`() {
+        // FPTN: системный TUN, приложение внутри него — «напрямую» физически через профиль
+        assertEquals(
+            SubscriptionCertPolicy.FetchRoute.DIRECT,
+            SubscriptionCertPolicy.decideFetchRoute(true, false, true, true),
+        )
+    }
+
+    @Test
+    fun `skip when switch on but profile runs without usable route`() {
+        // VPN-tun без loopback-прокси: прямой запрос обошёл бы профиль
+        assertEquals(
+            SubscriptionCertPolicy.FetchRoute.SKIP,
+            SubscriptionCertPolicy.decideFetchRoute(true, false, false, true),
+        )
+    }
+
+    @Test
+    fun `skip when switch on and no profile is running`() {
+        assertEquals(
+            SubscriptionCertPolicy.FetchRoute.SKIP,
+            SubscriptionCertPolicy.decideFetchRoute(true, false, false, false),
+        )
+    }
+
     /** Оба свитча выключены — поведение ровно как до фичи. */
     @Test
     fun `both switches off leaves profile untouched`() {

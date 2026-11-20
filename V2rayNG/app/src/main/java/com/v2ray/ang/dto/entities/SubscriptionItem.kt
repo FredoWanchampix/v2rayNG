@@ -31,6 +31,15 @@ data class SubscriptionItem(
      * so a freshly fetched fingerprint is honoured by that switch too.
      */
     var autoFetchCertSha256: Boolean = false,
+    /**
+     * When true, the automatic certificate fetch (autoFetchCertSha256) routes its
+     * TLS handshake through the active profile's loopback HTTP proxy — exactly like
+     * the subscription/update/geo updates do. Needed because a direct TCP handshake
+     * to foreign servers is reset/dropped in restrictive networks, while the same
+     * handshake through the profile succeeds. QUIC (Hysteria) ignores this and goes
+     * direct: QUIC is not tunneled by an HTTP CONNECT proxy and its UDP passes anyway.
+     */
+    var autoFetchCertViaProfile: Boolean = false,
     /** When true, forces the update to be routed through the active proxy profile. */
     var updateViaActiveProxy: Boolean = false,
 )

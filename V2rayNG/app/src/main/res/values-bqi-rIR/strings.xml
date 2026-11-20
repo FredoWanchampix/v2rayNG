@@ -657,6 +657,8 @@
     <string name="update_skipped_releases_header">%1$d ڤەرشین جی دس رفته:</string>
     <string name="sub_auto_fetch_cert_sha256">گرتن خۆکار جا کلک گوواهی</string>
     <string name="sub_auto_fetch_cert_sha256_tip">سی هۊنه‌کردن یا اۿافتن اشتراک، سی پروفایلیا که گوواهی نؽنن جا کلک خۆکار گرتۀ بۉنه (فقط پروتکلایی که پشتیبانی مؽکنن). گوواهی که وا اشتراک ؽؽه هرگز جایگزین نؽبۉنه. پؽش ز allowInsecure خۆکار اؽمال بۉنه.</string>
+    <string name="sub_auto_fetch_cert_via_profile">گرتن جا کلکیا وا پروفایل روشن</string>
+    <string name="sub_auto_fetch_cert_via_profile_tip">گرتن خۆکار جا کلک وا پروکسی محلی پروفایلی که کار مئکنه اؽمال بۉنه (هۊرسن هۊنه‌کردن اشتراک). سی وقتی لازمۀ که TLS مستقیم سروریا خارجی قطع بۉنه. اگه پروفایل کار نئکه، جا کلک گرتۀ نۉبۉنه.</string>
     <string name="sub_update_via_active_proxy">ڤەروزرسانی تنیا دناڤ پروکسی فعال</string>
     <string name="sub_update_via_active_proxy_tip">کە رۉشنە، ڤەروزرسانی تنیا زەمانی ئنجوم میڌه که پروفایل پروکسی د هال کاریه. ترافیک دناڤ پروکسی شیڌە.</string>
     <string name="update_download_error_file_missing">فایل ڤەروزرسانی بۉرگاری ڌیا بو نی. شایڌ جی پۉشە بۉرگاری پاک ڤابی.</string>

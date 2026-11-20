@@ -47,11 +47,11 @@ object SubscriptionCertPolicy {
     /**
      * Поддерживает ли профиль получение отпечатка сертификата.
      *
-     * Условие ТОЧНО совпадает с приватным `isFetchable` внутри
-     * [CertificateFingerprintManager] (QUIC-рукопожатие Hysteria v1/v2 ИЛИ
-     * security == tls). Это фильтр «не звать сеть заведомо зря»: WireGuard,
-     * Shadowsocks, SOCKS, REALITY и прочие не-TLS профили не опрашиваются.
-     * Решение о самом рукопожатии по-прежнему принимает менеджер отпечатков.
+     * Условие совпадает с тем, что умеет [CertificateFingerprintManager]
+     * (QUIC-рукопожатие Hysteria v1/v2 ИЛИ security == tls). Это фильтр
+     * «не звать сеть заведомо зря»: WireGuard, Shadowsocks, SOCKS, REALITY
+     * и прочие не-TLS профили не опрашиваются. Решение о самом рукопожатии
+     * по-прежнему принимает менеджер отпечатков.
      */
     fun supportsCertificateFetch(profile: ProfileItem): Boolean =
         CertificateFingerprintManager.usesQuicHandshake(profile.configType) ||
@@ -131,6 +131,52 @@ object SubscriptionCertPolicy {
     @Suppress("DEPRECATION")
     private fun hasCertificateLiteral(profile: ProfileItem): Boolean =
         !profile.pinnedCA256.isNullOrEmpty() || !profile.pinSHA256.isNullOrEmpty()
+
+    /** Каким маршрутом получать отпечаток в этом обновлении подписки. */
+    enum class FetchRoute {
+        /** Напрямую с устройства (свитч «через профиль» выключен ИЛИ профиль — системный TUN). */
+        DIRECT,
+
+        /** Через loopback HTTP-прокси активного профиля (HTTP CONNECT). */
+        VIA_PROFILE,
+
+        /** Не получать вовсе: свитч требует профиль, а пригодного маршрута нет. */
+        SKIP,
+    }
+
+    /**
+     * Решение о маршруте получения отпечатков — чистая функция (без Android/MMKV),
+     * повторяющая матрицу режимов [com.v2ray.ang.util.ActiveProfileRoute] для
+     * задачи получения сертификата. Доказывается JVM-тестом.
+     *
+     * @param viaProfileEnabled свитч подписки «получать отпечатки через включённый профиль».
+     * @param portListening loopback HTTP inbound профиля отвечает (LOCAL_HTTP_PROXY).
+     * @param tunnelOnly профиль — системный TUN, приложение ВНУТРИ него (FPTN).
+     * @param profileRunning профиль запущен хоть в каком-то виде.
+     *
+     * Правило (то же, что у обновления подписки/проверки обновлений/загрузчика):
+     *  - свитч ВЫКЛ → DIRECT (прежнее поведение, ничего не меняется);
+     *  - свитч ВКЛ и loopback-прокси слушает → VIA_PROFILE;
+     *  - свитч ВКЛ и профиль это системный TUN без прокси → DIRECT, но это
+     *    ФИЗИЧЕСКИ через профиль (приложение внутри fptn0), поэтому корректно;
+     *  - свитч ВКЛ, профиль работает, но прокси нет и это не TUN → SKIP:
+     *    прямой запрос обошёл бы профиль (приложение исключено из собственного
+     *    туннеля), а сертификат, полученный в обход профиля, в ограничительной
+     *    сети может оказаться сертификатом перехватывающего узла;
+     *  - свитч ВКЛ и профиль не запущен → SKIP (требование владельца: строго
+     *    через профиль — как у «обновлять только через включённый профиль»).
+     */
+    fun decideFetchRoute(
+        viaProfileEnabled: Boolean,
+        portListening: Boolean,
+        tunnelOnly: Boolean,
+        profileRunning: Boolean,
+    ): FetchRoute = when {
+        !viaProfileEnabled -> FetchRoute.DIRECT
+        portListening -> FetchRoute.VIA_PROFILE
+        profileRunning && tunnelOnly -> FetchRoute.DIRECT
+        else -> FetchRoute.SKIP
+    }
 
     /**
      * Шаг 3: свитч «Авто-allowInsecure если есть сертификат SHA-256».

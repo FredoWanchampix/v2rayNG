@@ -161,6 +161,7 @@ fun SubEditScreen(
     var keepBalancersCustom by rememberSaveable { mutableStateOf(initial.keepBalancersCustom) }
     var autoSetInsecureWhenSha256Present by rememberSaveable { mutableStateOf(initial.autoSetInsecureWhenSha256Present) }
     var autoFetchCertSha256 by rememberSaveable { mutableStateOf(initial.autoFetchCertSha256) }
+    var autoFetchCertViaProfile by rememberSaveable { mutableStateOf(initial.autoFetchCertViaProfile) }
     var updateViaActiveProxy by rememberSaveable { mutableStateOf(initial.updateViaActiveProxy) }
     var prevProfile by rememberSaveable { mutableStateOf(initial.prevProfile ?: "") }
     var nextProfile by rememberSaveable { mutableStateOf(initial.nextProfile ?: "") }
@@ -216,6 +217,7 @@ fun SubEditScreen(
         subItem.convertCustomToLinks = convertCustomToLinks
         subItem.keepBalancersCustom = keepBalancersCustom
         subItem.autoFetchCertSha256 = autoFetchCertSha256
+        subItem.autoFetchCertViaProfile = autoFetchCertViaProfile
         subItem.autoSetInsecureWhenSha256Present = autoSetInsecureWhenSha256Present
         subItem.updateViaActiveProxy = updateViaActiveProxy
         return subItem
@@ -320,6 +322,13 @@ fun SubEditScreen(
                 summary = stringResource(R.string.sub_auto_fetch_cert_sha256_tip),
                 checked = autoFetchCertSha256,
                 onCheckedChange = { autoFetchCertSha256 = it }
+            )
+            SettingsSwitchItem(
+                title = stringResource(R.string.sub_auto_fetch_cert_via_profile),
+                summary = stringResource(R.string.sub_auto_fetch_cert_via_profile_tip),
+                checked = autoFetchCertViaProfile && autoFetchCertSha256,
+                enabled = autoFetchCertSha256,
+                onCheckedChange = { autoFetchCertViaProfile = it }
             )
             SettingsSwitchItem(
                 title = stringResource(R.string.sub_auto_set_insecure_when_sha256_present),

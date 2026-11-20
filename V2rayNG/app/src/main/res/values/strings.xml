@@ -376,6 +376,8 @@
     <string name="sub_keep_balancers_custom_tip">Configs with balancers stay as custom profiles to preserve routing and load balancing</string>
     <string name="sub_auto_fetch_cert_sha256">Auto-fetch certificate fingerprint</string>
     <string name="sub_auto_fetch_cert_sha256_tip">When updating or adding the subscription, profiles without a certificate get their fingerprint fetched automatically (only protocols that support it). A certificate that came with the subscription is never replaced. Runs before auto-allowInsecure.</string>
+    <string name="sub_auto_fetch_cert_via_profile">Fetch certificates via active profile</string>
+    <string name="sub_auto_fetch_cert_via_profile_tip">Automatic certificate fetch goes through the loopback proxy of the running profile (like subscription updates). Needed when direct TLS handshakes to foreign servers are reset. If no profile is running, certificates are not fetched.</string>
     <string name="sub_auto_set_insecure_when_sha256_present">Auto set allowInsecure if SHA-256 present</string>
     <string name="sub_auto_set_insecure_when_sha256_present_tip">When updating, if a config contains pinnedCA256, automatically skip TLS certificate verification (allowInsecure).</string>
     <string name="asset_action_update_direct">Update directly</string>

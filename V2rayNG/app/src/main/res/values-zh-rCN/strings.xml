@@ -655,6 +655,8 @@
     <string name="update_skipped_releases_header">错过了 %1$d 个版本：</string>
     <string name="sub_auto_fetch_cert_sha256">自动获取证书指纹</string>
     <string name="sub_auto_fetch_cert_sha256_tip">更新或添加订阅时，没有证书的节点会自动获取指纹（仅限支持该功能的协议）。订阅自带的证书不会被替换。此操作在自动 allowInsecure 之前执行。</string>
+    <string name="sub_auto_fetch_cert_via_profile">通过已连接的配置获取证书指纹</string>
+    <string name="sub_auto_fetch_cert_via_profile_tip">自动获取证书指纹将通过运行中配置的本地代理进行（与订阅更新相同）。当到境外服务器的直接 TLS 握手被重置时需要。如果配置未运行，则不会获取指纹。</string>
     <string name="sub_update_via_active_proxy">仅通过活动代理更新</string>
     <string name="sub_update_via_active_proxy_tip">启用后，仅当代理配置文件正在运行时才会执行更新。流量严格通过代理。</string>
     <string name="update_download_error_file_missing">已下载的更新文件不存在，可能已从下载文件夹中删除。</string>

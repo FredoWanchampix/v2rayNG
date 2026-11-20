@@ -39,6 +39,7 @@ import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.QRCodeDecoder
 import com.v2ray.ang.util.SubscriptionContentConverter
+import com.v2ray.ang.util.TlsCertFetcher
 import com.v2ray.ang.util.NoiseProfileUtil
 import com.v2ray.ang.util.Utils
 import okhttp3.Headers
@@ -433,37 +434,78 @@ object AngConfigManager {
             // Шаг 1: добор недостающих отпечатков. Профили с сертификатом подписки
             // не опрашиваются вообще — сеть не тратится и значение не перезаписывается.
             if (autoFetch) {
-                // Один и тот же сервер в подписке встречается много раз (разные
-                // порты/протоколы/пароли). Отпечаток зависит от адреса, порта и SNI,
-                // поэтому опрашиваем каждый эндпоинт ОДИН раз за обновление. Кэш
-                // живёт только в этом вызове: между обновлениями ничего не кэшируется,
-                // смена сертификата сервера будет замечена при следующем обновлении.
-                // Неудача тоже запоминается, чтобы не долбить мёртвый хост по кругу.
-                val fetched = HashMap<String, String?>()
-                profiles.forEach { profile ->
-                    try {
-                        if (!SubscriptionCertPolicy.shouldFetchCertificate(profile, autoFetch)) {
-                            return@forEach
+                // МАРШРУТ (требование владельца 20.11: как у проверки обновлений,
+                // загрузчика, geo-файлов и самого обновления подписки). Резолвится
+                // ОДИН раз на подписку: профиль за минуту обновления не сменится,
+                // а проба порта на каждый профиль дала бы шторм подключений.
+                val route = ActiveProfileRoute.resolve()
+                val fetchRoute = SubscriptionCertPolicy.decideFetchRoute(
+                    viaProfileEnabled = subItem?.autoFetchCertViaProfile == true,
+                    portListening = route.mode == ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY,
+                    tunnelOnly = route.tunnelOnly,
+                    profileRunning = route.profileRunning,
+                )
+                ActiveProfileRoute.log("Subscription cert fetch (${profiles.size} profiles)", route)
+                LogUtil.i(AppConfig.TAG, "Subscription cert fetch route: $fetchRoute")
+                if (fetchRoute == SubscriptionCertPolicy.FetchRoute.SKIP) {
+                    // Свитч «через профиль» включён, а пригодного маршрута нет.
+                    // Прямо не идём: обошли бы профиль, а в ограничительной сети
+                    // сертификат, снятый в обход профиля, может быть подменённым.
+                    LogUtil.w(
+                        AppConfig.TAG,
+                        "Subscription cert fetch skipped: profile route required but unavailable"
+                    )
+                } else {
+                    val proxyRoute = if (fetchRoute == SubscriptionCertPolicy.FetchRoute.VIA_PROFILE) {
+                        TlsCertFetcher.ProxyRoute(
+                            host = route.httpHost,
+                            port = route.httpPort,
+                            username = route.proxyUsername,
+                            password = route.proxyPassword,
+                        )
+                    } else {
+                        null
+                    }
+                    // Один и тот же сервер в подписке встречается много раз (разные
+                    // порты/протоколы/пароли). Отпечаток зависит от адреса, порта и SNI,
+                    // поэтому опрашиваем каждый эндпоинт ОДИН раз за обновление. Кэш
+                    // живёт только в этом вызове: между обновлениями ничего не кэшируется,
+                    // смена сертификата сервера будет замечена при следующем обновлении.
+                    // Неудача тоже запоминается, чтобы не долбить мёртвый хост по кругу.
+                    val fetched = HashMap<String, String?>()
+                    profiles.forEach { profile ->
+                        try {
+                            if (!SubscriptionCertPolicy.shouldFetchCertificate(profile, autoFetch)) {
+                                return@forEach
+                            }
+                            val key = SubscriptionCertPolicy.endpointKey(profile)
+                            val sha256 = if (fetched.containsKey(key)) {
+                                fetched[key]
+                            } else {
+                                val value = CertificateFingerprintManager.fetchWithRoute(profile, proxyRoute)
+                                fetched[key] = value
+                                value
+                            }
+                            if (SubscriptionCertPolicy.applyFetchedCertificate(profile, sha256)) {
+                                LogUtil.i(
+                                    AppConfig.TAG,
+                                    "Subscription cert fetched for ${profile.remarks} (${profile.configType}) via $fetchRoute"
+                                )
+                            } else if (sha256 == null) {
+                                // Видимый в логе отказ (первая версия фичи молчала —
+                                // владелец не мог понять, почему сертификатов нет).
+                                LogUtil.w(
+                                    AppConfig.TAG,
+                                    "Subscription cert NOT fetched for ${profile.remarks} " +
+                                        "(${profile.configType}, ${profile.server}:${profile.serverPort}) via $fetchRoute"
+                                )
+                            }
+                        } catch (e: Exception) {
+                            // Функция получения отпечатка сама глотает свои ошибки; этот
+                            // catch — страховка на случай непредвиденного, чтобы один
+                            // профиль не сорвал ни остальные профили, ни сохранение.
+                            LogUtil.e(AppConfig.TAG, "Subscription cert fetch failed: ${profile.remarks}", e)
                         }
-                        val key = SubscriptionCertPolicy.endpointKey(profile)
-                        val sha256 = if (fetched.containsKey(key)) {
-                            fetched[key]
-                        } else {
-                            val value = CertificateFingerprintManager.fetchForManualFill(profile)
-                            fetched[key] = value
-                            value
-                        }
-                        if (SubscriptionCertPolicy.applyFetchedCertificate(profile, sha256)) {
-                            LogUtil.i(
-                                AppConfig.TAG,
-                                "Subscription cert fetched for ${profile.remarks} (${profile.configType})"
-                            )
-                        }
-                    } catch (e: Exception) {
-                        // Функция получения отпечатка сама глотает свои ошибки; этот
-                        // catch — страховка на случай непредвиденного, чтобы один
-                        // профиль не сорвал ни остальные профили, ни сохранение.
-                        LogUtil.e(AppConfig.TAG, "Subscription cert fetch failed: ${profile.remarks}", e)
                     }
                 }
             }

@@ -657,6 +657,8 @@
     <string name="update_skipped_releases_header">%1$d نسخه از دست رفته:</string>
     <string name="sub_auto_fetch_cert_sha256">دریافت خودکار اثر انگشت گواهی</string>
     <string name="sub_auto_fetch_cert_sha256_tip">هنگام به‌روزرسانی یا افزودن اشتراک، برای پروفایل‌های بدون گواهی، اثر انگشت به‌طور خودکار دریافت می‌شود (فقط پروتکل‌هایی که پشتیبانی می‌کنند). گواهی همراه اشتراک هرگز جایگزین نمی‌شود. پیش از allowInsecure خودکار اجرا می‌شود.</string>
+    <string name="sub_auto_fetch_cert_via_profile">دریافت اثر انگشت از طریق پروفایل فعال</string>
+    <string name="sub_auto_fetch_cert_via_profile_tip">دریافت خودکار اثر انگشت از طریق پروکسی محلی پروفایل در حال اجرا انجام می‌شود (مانند به‌روزرسانی اشتراک). وقتی دسته‌های TLS مستقیم به سرورهای خارجی بازنشانی می‌شوند لازم است. اگر پروفایلی اجرا نشود، اثر انگشت دریافت نمی‌شود.</string>
     <string name="sub_update_via_active_proxy">به‌روزرسانی فقط ازطریق پروکسی فعال</string>
     <string name="sub_update_via_active_proxy_tip">وقتی روشن است، به‌روزرسانی فقط زمانی انجام می‌شود که پروفایل پروکسی در حال اجرا باشد. ترافیک اکیداً از پروکسی عبور می‌کند.</string>
     <string name="update_download_error_file_missing">فایل به‌روزرسانی بارگیری‌شده موجود نیست. شاید از پوشه بارگیری حذف شده باشد.</string>

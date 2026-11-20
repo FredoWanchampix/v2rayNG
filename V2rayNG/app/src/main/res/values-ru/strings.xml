@@ -628,6 +628,8 @@
     <string name="sub_keep_balancers_custom_tip">Конфиги с балансерами останутся кастомными профилями, чтобы сохранить маршрутизацию и распределение нагрузки</string>
     <string name="sub_auto_fetch_cert_sha256">Автополучение отпечатка сертификата</string>
     <string name="sub_auto_fetch_cert_sha256_tip">При обновлении или добавлении подписки профилям без сертификата отпечаток получается автоматически (только там, где протокол это поддерживает). Сертификат, пришедший с подпиской, никогда не перезаписывается. Применяется до авто-allowInsecure.</string>
+    <string name="sub_auto_fetch_cert_via_profile">Получать отпечатки через включённый профиль</string>
+    <string name="sub_auto_fetch_cert_via_profile_tip">Автополучение отпечатков пойдёт через локальный прокси запущенного профиля (как обновление подписки). Нужно, когда прямые TLS-рукопожатия к зарубежным серверам обрываются. Если профиль не запущен — отпечатки не получаются.</string>
     <string name="sub_auto_set_insecure_when_sha256_present">Авто-allowInsecure если есть сертификат SHA-256</string>
     <string name="sub_auto_set_insecure_when_sha256_present_tip">При обновлении подписки: если у прокси есть отпечаток (pinnedCA256), автоматически включать опцию пропуска проверки сертификата (allowInsecure).</string>
     <string name="asset_action_update_direct">Обновить</string>

@@ -665,6 +665,8 @@
     <string name="update_skipped_releases_header">فاتك %1$d إصدارًا:</string>
     <string name="sub_auto_fetch_cert_sha256">جلب بصمة الشهادة تلقائيًا</string>
     <string name="sub_auto_fetch_cert_sha256_tip">عند تحديث الاشتراك أو إضافته، يتم جلب بصمة الشهادة تلقائيًا للبروفايلات التي لا تحتوي على شهادة (فقط البروتوكولات التي تدعم ذلك). لا يتم أبدًا استبدال الشهادة القادمة مع الاشتراك. يتم التنفيذ قبل allowInsecure التلقائي.</string>
+    <string name="sub_auto_fetch_cert_via_profile">جلب البصمات عبر الملف الشخصي النشط</string>
+    <string name="sub_auto_fetch_cert_via_profile_tip">يتم جلب بصمة الشهادة تلقائيًا عبر الوسيط المحلي للملف الشخصي قيد التشغيل (مثل تحديث الاشتراك). يلزم عند إعادة تعيين مصافحات TLS المباشرة مع الخوادم الأجنبية. إذا لم يكن هناك ملف شخصي قيد التشغيل، فلن يتم جلب البصمات.</string>
     <string name="sub_update_via_active_proxy">التحديث فقط عبر الوكيل النشط</string>
     <string name="sub_update_via_active_proxy_tip">عند التفعيل، لا يجري التحديث إلا إذا كان ملف الوكيل يعمل. تمر الحركة строго عبر الوكيل.</string>
     <string name="update_download_error_file_missing">ملف التحديث المُنزّل غير موجود. ربما حُذف من مجلد التنزيلات.</string>

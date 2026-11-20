@@ -657,6 +657,8 @@
     <string name="update_skipped_releases_header">%1$d টি রিলিজ মিস হয়েছে:</string>
     <string name="sub_auto_fetch_cert_sha256">সার্টিফিকেট ফিঙ্গারপ্রিন্ট স্বয়ংক্রিয়ভাবে আনুন</string>
     <string name="sub_auto_fetch_cert_sha256_tip">সাবস্ক্রিপশন আপডেট বা যোগ করার সময়, সার্টিফিকেটবিহীন প্রোফাইলগুলোর ফিঙ্গারপ্রিন্ট স্বয়ংক্রিয়ভাবে আনা হয় (শুধু যেসব প্রোটোকল এটি সমর্থন করে)। সাবস্ক্রিপশনের সাথে আসা সার্টিফিকেট কখনো প্রতিস্থাপন করা হয় না। অটো-allowInsecure এর আগে প্রয়োগ হয়।</string>
+    <string name="sub_auto_fetch_cert_via_profile">সক্রিয় প্রোফাইলের মাধ্যমে ফিঙ্গারপ্রিন্ট আনুন</string>
+    <string name="sub_auto_fetch_cert_via_profile_tip">স্বয়ংক্রিয় ফিঙ্গারপ্রিন্ট সংগ্রহ চলমান প্রোফাইলের লোকাল প্রক্সির মাধ্যমে হয় (সাবস্ক্রিপশন আপডেটের মতো)। বিদেশী সার্ভারে সরাসরি TLS হ্যান্ডশেক রিসেট হলে প্রয়োজন। প্রোফাইল চললে না ফিঙ্গারপ্রিন্ট আনা হয় না।</string>
     <string name="sub_update_via_active_proxy">শুধুমাত্র সক্রিয় প্রক্সির মাধ্যমে আপডেট</string>
     <string name="sub_update_via_active_proxy_tip">চালু থাকলে, আপডেট তখনই চলবে যখন প্রক্সি প্রোফাইল চলমান থাকে। ট্রাফিক কঠোরভাবে প্রক্সির মাধ্যমে যায়।</string>
     <string name="update_download_error_file_missing">ডাউনলোড করা আপডেট ফাইলটি নেই। সম্ভবত ডাউনলোড ফোল্ডার থেকে মুছে ফেলা হয়েছে।</string>
