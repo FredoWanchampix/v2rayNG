@@ -440,7 +440,10 @@ object AngConfigManager {
                 // а проба порта на каждый профиль дала бы шторм подключений.
                 val route = ActiveProfileRoute.resolve()
                 val fetchRoute = SubscriptionCertPolicy.decideFetchRoute(
-                    viaProfileEnabled = subItem?.autoFetchCertViaProfile == true,
+                    // subItem здесь гарантированно не-null: autoFetch == true возможно
+                    // только при subItem != null (см. guard выше), компилятор это видит
+                    // (smart cast), поэтому безопасный вызов не нужен.
+                    viaProfileEnabled = subItem.autoFetchCertViaProfile,
                     portListening = route.mode == ActiveProfileRoute.Mode.LOCAL_HTTP_PROXY,
                     tunnelOnly = route.tunnelOnly,
                     profileRunning = route.profileRunning,
