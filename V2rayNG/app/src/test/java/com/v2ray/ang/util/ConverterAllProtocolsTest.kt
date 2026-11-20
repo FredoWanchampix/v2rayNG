@@ -929,7 +929,7 @@ class ConverterAllProtocolsTest {
 
         // Шум и тюнинг ядра — ключом fm (полями профиля не выражаются).
         assertTrue(out.contains("fm="), "остаток finalmask обязан уехать ключом fm: $out")
-        val profile = Hysteria2Fmt.parse(out)!!
+        val profile = Hysteria2Fmt.parse(out)
         assertEquals("obfspw", profile.obfsPassword)
         assertNull(profile.portHopping, "панельный udpHop не должен становиться hop профиля")
         assertEquals("firefox", profile.fingerPrint)
@@ -1006,7 +1006,7 @@ class ConverterAllProtocolsTest {
         val out = convert(cfg)
         assertTrue(out.startsWith("hysteria2://"), "полный конфиг обязан конвертироваться: $out")
 
-        val profile = Hysteria2Fmt.parse(out)!!
+        val profile = Hysteria2Fmt.parse(out)
         assertEquals("hy.example.com", profile.server)
         assertEquals("2097", profile.serverPort)
         assertEquals("authpw", profile.password)
