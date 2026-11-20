@@ -385,6 +385,60 @@ class SubscriptionCertPolicyTest {
         )
     }
 
+    // ---------- план попыток (QUIC напрямую, TLS через профиль с запасной прямой) ----------
+
+    @Test
+    fun `skip route yields no attempts`() {
+        assertTrue(
+            SubscriptionCertPolicy.planFetchAttempts(
+                SubscriptionCertPolicy.FetchRoute.SKIP, isQuic = false
+            ).isEmpty()
+        )
+    }
+
+    @Test
+    fun `quic always goes direct even when route is via profile`() {
+        // QUIC не туннелируется через HTTP CONNECT — единственный путь прямой.
+        assertEquals(
+            listOf(SubscriptionCertPolicy.FetchAttempt.DIRECT),
+            SubscriptionCertPolicy.planFetchAttempts(
+                SubscriptionCertPolicy.FetchRoute.VIA_PROFILE, isQuic = true
+            ),
+        )
+        assertEquals(
+            listOf(SubscriptionCertPolicy.FetchAttempt.DIRECT),
+            SubscriptionCertPolicy.planFetchAttempts(
+                SubscriptionCertPolicy.FetchRoute.DIRECT, isQuic = true
+            ),
+        )
+    }
+
+    /**
+     * Запасная прямая попытка при маршруте «через профиль» ЗАПРЕЩЕНА: на
+     * устройстве может работать системный перехват TLS (вещдок 20.11.2026:
+     * прямой запрос вернул сертификат с issuer «AdGuard Personal Intermediate»,
+     * а через профиль — настоящий «Google Trust Services»). Прямая попытка
+     * записала бы отпечаток перехватчика и сломала pinning.
+     */
+    @Test
+    fun `tls via profile uses profile only and never falls back to direct`() {
+        val plan = SubscriptionCertPolicy.planFetchAttempts(
+            SubscriptionCertPolicy.FetchRoute.VIA_PROFILE, isQuic = false
+        )
+        assertEquals(listOf(SubscriptionCertPolicy.FetchAttempt.VIA_PROFILE), plan)
+        assertFalse(plan.contains(SubscriptionCertPolicy.FetchAttempt.DIRECT))
+    }
+
+    @Test
+    fun `tls direct route tries direct only`() {
+        assertEquals(
+            listOf(SubscriptionCertPolicy.FetchAttempt.DIRECT),
+            SubscriptionCertPolicy.planFetchAttempts(
+                SubscriptionCertPolicy.FetchRoute.DIRECT, isQuic = false
+            ),
+        )
+    }
+
     /** Оба свитча выключены — поведение ровно как до фичи. */
     @Test
     fun `both switches off leaves profile untouched`() {

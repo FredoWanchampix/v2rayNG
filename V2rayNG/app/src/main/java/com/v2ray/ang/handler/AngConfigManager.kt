@@ -481,26 +481,42 @@ object AngConfigManager {
                             if (!SubscriptionCertPolicy.shouldFetchCertificate(profile, autoFetch)) {
                                 return@forEach
                             }
-                            val key = SubscriptionCertPolicy.endpointKey(profile)
+                            // План попыток зависит ещё и от протокола: QUIC не
+                            // туннелируется через HTTP CONNECT, поэтому для него
+                            // единственный маршрут — прямой (иначе лог врал бы
+                            // «via VIA_PROFILE», как в первой версии).
+                            val attempts = SubscriptionCertPolicy.planFetchAttempts(
+                                route = fetchRoute,
+                                isQuic = CertificateFingerprintManager.usesQuicFor(profile),
+                            )
+                            val key = attempts.joinToString("+") { it.label } +
+                                "|" + SubscriptionCertPolicy.endpointKey(profile)
                             val sha256 = if (fetched.containsKey(key)) {
                                 fetched[key]
                             } else {
-                                val value = CertificateFingerprintManager.fetchWithRoute(profile, proxyRoute)
+                                val value = CertificateFingerprintManager.fetchWithRoute(
+                                    profile = profile,
+                                    proxyRoute = proxyRoute,
+                                    attempts = attempts,
+                                )
                                 fetched[key] = value
                                 value
                             }
                             if (SubscriptionCertPolicy.applyFetchedCertificate(profile, sha256)) {
                                 LogUtil.i(
                                     AppConfig.TAG,
-                                    "Subscription cert fetched for ${profile.remarks} (${profile.configType}) via $fetchRoute"
+                                    "Subscription cert fetched for ${profile.remarks} " +
+                                        "(${profile.configType}) via ${attempts.first().label}"
                                 )
                             } else if (sha256 == null) {
-                                // Видимый в логе отказ (первая версия фичи молчала —
-                                // владелец не мог понять, почему сертификатов нет).
+                                // Видимый в логе отказ со ВСЕМИ сделанными попытками
+                                // (первая версия фичи молчала — владелец не мог
+                                // понять, почему сертификатов нет).
                                 LogUtil.w(
                                     AppConfig.TAG,
                                     "Subscription cert NOT fetched for ${profile.remarks} " +
-                                        "(${profile.configType}, ${profile.server}:${profile.serverPort}) via $fetchRoute"
+                                        "(${profile.configType}, ${profile.server}:${profile.serverPort}) " +
+                                        "tried: ${attempts.joinToString("+") { it.label }}"
                                 )
                             }
                         } catch (e: Exception) {

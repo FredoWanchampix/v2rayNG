@@ -36,48 +36,90 @@ object CertificateFingerprintManager {
      * Прежняя точка входа (кнопка «Получить отпечаток сертификата»): маршрут
      * напрямую, поведение сохранено. [fetchWithRoute] — расширенная версия.
      */
-    fun fetchForManualFill(profile: ProfileItem): String? = fetchWithRoute(profile, null)
+    fun fetchForManualFill(profile: ProfileItem): String? =
+        fetchWithRoute(profile, null, listOf(SubscriptionCertPolicy.FetchAttempt.DIRECT))
 
     /**
-     * Получение отпечатка с явным маршрутом.
+     * Получение отпечатка по списку попыток, заданному вызывающим кодом.
      *
-     * @param proxyRoute маршрут loopback-прокси активного профиля для TLS-ветки.
-     *   Не-null только когда вызывающий хочет идти через активный профиль (свитч
-     *   подписки «получать отпечатки через включённый профиль»); null = напрямую.
-     *   QUIC-ветка параметр игнорирует: QUIC через HTTP-прокси не туннелируется,
-     *   но UDP в ограничительных сетях и так проходит напрямую (вещдок логов).
+     * План попыток строит [SubscriptionCertPolicy.planFetchAttempts] по маршруту и
+     * типу рукопожатия. Смысл попыток (вещдоки логов и сетевых проб от 20.11.2026):
+     *  - через профиль снимается НАСТОЯЩИЙ сертификат сервера (issuer Google Trust
+     *    Services / Let's Encrypt), потому что соединение идёт тем же путём, каким
+     *    реально работает профиль (loopback → ядро → outbound);
+     *  - напрямую сертификат может быть ПОДМЕНЁН системным анализатором трафика:
+     *    один и тот же сервер 104.21.7.43:2053 напрямую вернул сертификат с issuer
+     *    «AdGuard Personal Intermediate», а через профиль — настоящий. Поэтому
+     *    запасной прямой попытки при маршруте «через профиль» НЕТ: записанный
+     *    отпечаток перехватчика не совпал бы с тем, что ядро увидит при работе,
+     *    и pinning сломал бы профиль.
+     *
+     * Адрес попытки берётся ИЗ ПРОФИЛЯ (`server`), а не из sni: у профилей server
+     * часто задан IP (в подписках владельца 776 TLS-профилей из 1051 — по IP), а
+     * sni при этом — маскирующий домен ЧУЖОГО хоста (server=104.21.7.43,
+     * sni=…workers.dev). Подмена адреса на sni сняла бы отпечаток не с того
+     * сервера. Домен, когда он есть, лучше IP: при CONNECT по IP ядро
+     * восстанавливает домен сниффингом ClientHello и применяет СВОИ правила
+     * маршрутизации — вещдок лога: «CONNECT Host [178.176.128.203:443]» →
+     * «sniffed domain: media.ipcheak.online» → «taking detour [block]».
+     *
+     * @param proxyRoute параметры loopback-прокси профиля; null — попытка DIRECT.
+     * @param attempts упорядоченный список попыток; пустой — не делать ничего.
+     * @return 64 строчных hex SHA-256 от DER leaf-сертификата либо null.
      */
-    fun fetchWithRoute(profile: ProfileItem, proxyRoute: TlsCertFetcher.ProxyRoute?): String? {
+    fun fetchWithRoute(
+        profile: ProfileItem,
+        proxyRoute: TlsCertFetcher.ProxyRoute?,
+        attempts: List<SubscriptionCertPolicy.FetchAttempt>,
+    ): String? {
         val server = profile.server?.trim()?.takeIf { it.isNotEmpty() } ?: run {
             LogUtil.w(AppConfig.TAG, "Cert fetch skipped: empty server (${profile.remarks})")
             return null
         }
         val port = profile.serverPort?.toIntOrNull()?.takeIf { it > 0 } ?: AppConfig.DEFAULT_PORT
         val serverName = inferServerName(profile)
-        val address = resolveDialAddress(server)
 
-        // alpn может быть списком "h2,http/1.1" — как в прежней реализации кнопки.
-        val alpn = profile.alpn.orEmpty().split(",").map { it.trim() }
-        val useQuic = usesQuicHandshake(profile.configType) ||
-            (profile.configType == EConfigType.MASQUE && ("h2" !in alpn || "h3" in alpn))
+        val useQuic = usesQuicFor(profile)
 
-        return if (useQuic) {
-            fetchQuic(address, port, serverName)
-        } else {
-            // TLS: только для security == tls (прежнее условие поддержки сохранено:
-            // остальные протоколы отпечаток не поддерживают и сеть звать незачем).
-            if (profile.security != AppConfig.TLS) {
-                null
-            } else {
-                TlsCertFetcher.fetchTls(
-                    address = address,
+        if (!useQuic && profile.security != AppConfig.TLS) {
+            // Прежнее условие поддержки сохранено: прочие протоколы отпечаток не
+            // поддерживают, сеть звать незачем.
+            return null
+        }
+
+        // IP нужен только QUIC-попытке и прямой TLS-попытке; попытка VIA_PROFILE
+        // всегда идёт по server из профиля (см. KDoc выше).
+        val needsIp = useQuic || attempts.any { it == SubscriptionCertPolicy.FetchAttempt.DIRECT }
+        val dialAddress = if (needsIp) resolveDialAddress(server) else server
+
+        for (attempt in attempts) {
+            val sha256 = when {
+                useQuic -> fetchQuic(dialAddress, port, serverName)
+                attempt == SubscriptionCertPolicy.FetchAttempt.VIA_PROFILE && proxyRoute != null ->
+                    TlsCertFetcher.fetchTls(
+                        address = server,
+                        port = port,
+                        serverName = serverName,
+                        timeoutMs = TIMEOUT_MS,
+                        proxy = proxyRoute,
+                    )
+                else -> TlsCertFetcher.fetchTls(
+                    address = dialAddress,
                     port = port,
                     serverName = serverName,
                     timeoutMs = TIMEOUT_MS,
-                    proxy = proxyRoute,
+                    proxy = null,
                 )
             }
+            if (!sha256.isNullOrBlank()) return sha256
         }
+        LogUtil.w(
+            AppConfig.TAG,
+            "Cert fetch: no result after ${attempts.size} attempt(s) " +
+                "(${attempts.joinToString("/") { it.label }}) for ${profile.remarks} " +
+                "[$server:$port sni=$serverName quic=$useQuic]"
+        )
+        return null
     }
 
     /**
@@ -125,6 +167,22 @@ object CertificateFingerprintManager {
      */
     internal fun usesQuicHandshake(type: EConfigType): Boolean =
         type == EConfigType.HYSTERIA2 || type == EConfigType.HYSTERIA
+
+    /**
+     * Каким рукопожатием снимается отпечаток ЭТОГО профиля: QUIC или TLS.
+     *
+     * Вынесено из тела запроса, потому что от ответа зависит ПЛАН ПОПЫТОК
+     * (см. [SubscriptionCertPolicy.planFetchAttempts]): QUIC через HTTP CONNECT
+     * не туннелируется, поэтому для QUIC единственный возможный маршрут — прямой.
+     * Правило прежнее: QUIC для Hysteria v1/v2, а MASQUE — по alpn («h2» значит
+     * TLS, иначе QUIC). Функция чистая, доказывается JVM-тестом.
+     */
+    fun usesQuicFor(profile: ProfileItem): Boolean {
+        // alpn может быть списком "h2,http/1.1", поэтому разбиваем по частям.
+        val alpn = profile.alpn.orEmpty().split(",").map { it.trim() }
+        return usesQuicHandshake(profile.configType) ||
+            (profile.configType == EConfigType.MASQUE && ("h2" !in alpn || "h3" in alpn))
+    }
 
     private fun resolveDialAddress(server: String): String {
         if (Utils.isPureIpAddress(server) || !Utils.isDomainName(server)) return server
