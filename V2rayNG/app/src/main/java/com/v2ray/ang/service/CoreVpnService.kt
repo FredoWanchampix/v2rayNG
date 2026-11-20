@@ -71,6 +71,11 @@ class CoreVpnService : VpnService(), ServiceControl {
         }
 
         unlockStart()
+        // Старт ядра асинхронный: без этой инвалидации запуск, начатый до
+        // уничтожения сервиса, поднял бы ядро ПОСЛЕ него (туннель закрыт,
+        // isRunning()==true блокирует следующий старт). См. KDoc
+        // CoreServiceManager.cancelPendingStart.
+        CoreServiceManager.cancelPendingStart()
         NotificationManager.cancelNotification()
     }
 
@@ -104,16 +109,38 @@ class CoreVpnService : VpnService(), ServiceControl {
     override fun startService() {
         if (!::mInterface.isInitialized) {
             LogUtil.e(AppConfig.TAG, "StartCore-VPN: Interface not initialized")
+            unlockStart()
             return
         }
-        if (!CoreServiceManager.startCoreLoop(mInterface)) {
-            LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to start core loop")
-            stopAllService()
-            return
-        }
+        // Запуск ядра АСИНХРОННЫЙ (см. KDoc CoreServiceManager.startCoreLoopAsync):
+        // сборка конфига делает DNS-резолв, поднимает сайдкар-движок и стартует
+        // нативное ядро — всё блокирующе и недопустимо на главном потоке.
+        // В VPN-режиме NetworkOnMainThreadException не возникал только потому,
+        // что onCreate вызывает StrictMode.permitAll(): main-поток молча
+        // блокировался на несколько секунд (ANR-риск при медленном DNS).
+        //
+        // LAN-шаринг включается ПОСЛЕ успешного старта — порядок прежний.
+        val scheduled = CoreServiceManager.startCoreLoopAsync(mInterface) { started ->
+            // Замок старта снимается в колбэке: стартовое окно закончилось,
+            // повторный запрос из onStartCommand теперь допустим.
+            unlockStart()
+            if (!started) {
+                LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to start core loop")
+                stopAllService()
+                return@startCoreLoopAsync
+            }
 
-        // Start LAN sharing if enabled in settings
-        RootLanSharing.startClientSharing(this)
+            // Start LAN sharing if enabled in settings
+            RootLanSharing.startClientSharing(this)
+        }
+        if (!scheduled) {
+            LogUtil.i(AppConfig.TAG, "StartCore-VPN: старт не запланирован (ядро работает или старт уже идёт)")
+            // Колбэк в этом случае НЕ придёт, поэтому замок снимается здесь:
+            // иначе isStartingLock остался бы навсегда и следующий
+            // onStartCommand (в том числе always-on VPN рестарт) не запустил бы
+            // туннель никогда.
+            unlockStart()
+        }
     }
 
     override fun stopService() {

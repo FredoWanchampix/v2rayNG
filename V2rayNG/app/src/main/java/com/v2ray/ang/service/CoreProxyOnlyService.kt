@@ -38,10 +38,24 @@ class CoreProxyOnlyService : Service(), ServiceControl {
             return START_STICKY
         }
 
-        if (!CoreServiceManager.startCoreLoop(null)) {
-            LogUtil.e(AppConfig.TAG, "StartCore-Proxy: Failed to start core loop")
-            stopSelf()
-            return START_NOT_STICKY
+        // Запуск ядра АСИНХРОННЫЙ (см. KDoc CoreServiceManager.startCoreLoopAsync):
+        // сборка конфига делает DNS-резолв, поднимает сайдкар-движок и стартует
+        // нативное ядро — всё это блокирующе и запрещено на главном потоке
+        // (StrictMode -> NetworkOnMainThreadException, вещдок 20.11.2026).
+        // Foreground уже поднят выше, поэтому ожидание безопасно для FGS.
+        //
+        // START_STICKY возвращается ДО результата намеренно: система должна
+        // считать сервис живым, а провал старта обрабатывается в колбэке —
+        // сервис останавливает сам себя и гасит уведомление.
+        val scheduled = CoreServiceManager.startCoreLoopAsync(null) { started ->
+            if (!started) {
+                LogUtil.e(AppConfig.TAG, "StartCore-Proxy: Failed to start core loop")
+                stopSelf()
+            }
+        }
+        if (!scheduled) {
+            // Ядро уже работает или старт уже идёт — повторный запуск не нужен.
+            LogUtil.i(AppConfig.TAG, "StartCore-Proxy: старт не запланирован (уже работает или идёт)")
         }
 
         return START_STICKY

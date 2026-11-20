@@ -48,37 +48,57 @@ class CoreRootService : Service(), ServiceControl {
             return START_STICKY
         }
 
-        // Start the in-process core first (this also posts the foreground notification),
-        // then install the root routing off the main thread.
-        if (!CoreServiceManager.startCoreLoop(null)) {
-            LogUtil.e(AppConfig.TAG, "StartCore-Root: core failed to start")
-            stopService()
-            return START_NOT_STICKY
-        }
+        // Запуск ядра АСИНХРОННЫЙ (см. KDoc CoreServiceManager.startCoreLoopAsync):
+        // внутри — DNS-резолв домена, подъём сайдкар-движка и нативный старт
+        // ядра; всё это блокирующе и запрещено на главном потоке (StrictMode →
+        // NetworkOnMainThreadException, вещдок 20.11.2026). Foreground поднят
+        // выше, поэтому ожидание безопасно для FGS-контракта.
+        //
+        // ПОРЯДОК СОХРАНЁН: root-маршрутизация ставится ПОСЛЕ того, как ядро
+        // реально поднято (в колбэке), иначе iptables направили бы трафик в ещё
+        // не слушающий SOCKS-порт. Ветвление на FPTN тоже переехало в колбэк:
+        // FptnRootRunner.active до завершения старта ещё не определён.
+        //
+        // START_STICKY возвращается ДО результата намеренно: провал старта
+        // обрабатывается в колбэке (сервис останавливает сам себя и гасит
+        // уведомление), иначе пользователь видел бы «подключено» при мёртвом
+        // профиле.
+        val scheduled = CoreServiceManager.startCoreLoopAsync(null) { started ->
+            if (!started) {
+                LogUtil.e(AppConfig.TAG, "StartCore-Root: core failed to start")
+                stopService()
+                return@startCoreLoopAsync
+            }
 
-        // Профиль FPTN сам владеет системной маршрутизацией: fptn-client поднимает
-        // собственный TUN (fptn0) и устанавливает маршруты устройства. Устанавливать
-        // поверх этого наш root-tun (utun7788 + hev-socks5-tunnel) НЕЛЬЗЯ:
-        //   1) hev перенаправлял бы трафик в SOCKS-порт Xray, а Xray для FPTN
-        //      не запускается вовсе -> весь трафик ушёл бы в чёрную дыру;
-        //   2) два конкурирующих TUN с дефолтными маршрутами ломают сеть устройства;
-        //   3) правило `-m owner --uid-owner <appUid> -j RETURN` исключило бы наше
-        //      приложение из utun7788, тогда как fptn0 его НЕ исключает - получилась
-        //      бы противоречивая картина, где поведение приложения зависело бы от
-        //      того, какой из двух туннелей победил в таблице маршрутов.
-        if (FptnRootRunner.active) {
-            LogUtil.i(
-                AppConfig.TAG,
-                "StartCore-Root: профиль FPTN сам управляет маршрутизацией, " +
-                    "root-tun (hev/utun7788) не устанавливается"
-            )
-        } else {
+            // Профиль FPTN сам владеет системной маршрутизацией: fptn-client
+            // поднимает собственный TUN (fptn0) и устанавливает маршруты
+            // устройства. Устанавливать поверх этого наш root-tun
+            // (utun7788 + hev-socks5-tunnel) НЕЛЬЗЯ:
+            //   1) hev перенаправлял бы трафик в SOCKS-порт Xray, а Xray для FPTN
+            //      не запускается вовсе -> весь трафик ушёл бы в чёрную дыру;
+            //   2) два конкурирующих TUN с дефолтными маршрутами ломают сеть устройства;
+            //   3) правило `-m owner --uid-owner <appUid> -j RETURN` исключило бы наше
+            //      приложение из utun7788, тогда как fptn0 его НЕ исключает - получилась
+            //      бы противоречивая картина, где поведение приложения зависело бы от
+            //      того, какой из двух туннелей победит в таблице маршрутов.
+            if (FptnRootRunner.active) {
+                LogUtil.i(
+                    AppConfig.TAG,
+                    "StartCore-Root: профиль FPTN сам управляет маршрутизацией, " +
+                        "root-tun (hev/utun7788) не устанавливается"
+                )
+                return@startCoreLoopAsync
+            }
+
             setupJob = CoroutineScope(Dispatchers.IO).launch {
                 if (!RootProxyManager.start(this@CoreRootService)) {
                     LogUtil.e(AppConfig.TAG, "StartCore-Root: failed to start root mode, stopping")
                     stopService()
                 }
             }
+        }
+        if (!scheduled) {
+            LogUtil.i(AppConfig.TAG, "StartCore-Root: старт не запланирован (ядро работает или старт уже идёт)")
         }
 
         return START_STICKY

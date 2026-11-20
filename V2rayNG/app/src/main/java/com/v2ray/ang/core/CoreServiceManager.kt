@@ -8,6 +8,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.system.OsConstants
@@ -47,6 +49,8 @@ import libv2ray.CoreController
 import libv2ray.ProcessFinder
 import java.lang.ref.SoftReference
 import java.net.InetSocketAddress
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 object CoreServiceManager {
 
@@ -88,9 +92,150 @@ object CoreServiceManager {
     fun getRunningServerName() = currentConfig?.remarks.orEmpty()
 
     /**
+     * Scope асинхронного запуска ядра. Отдельный от [connectionTestScope]:
+     * тесты задержки отменяются через cancelChildren, а незавершённый запуск
+     * ядра отменять нельзя — иначе профиль остался бы незапущенным без причины.
+     */
+    private val startScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Идёт ли запуск ядра прямо сейчас. Защита от двойного старта: между
+     * [startCoreLoopAsync] и фактическим подъёмом ядра [isRunning] ещё false,
+     * поэтому повторный onStartCommand (или быстрый старт/рестарт) запустил бы
+     * второе ядро на тех же портах.
+     */
+    private val isStarting = AtomicBoolean(false)
+
+    /**
+     * Поколение операции запуска. Защита от гонки «stop во время старта»:
+     * [stopCoreLoop] увеличивает его, и отложенный запуск, увидев чужое
+     * поколение, не поднимает ядро (иначе stop отработал бы раньше launchCore
+     * и оставил работающий core при очищенном состоянии — трафик в чёрную дыру).
+     * Приём тот же, что downloadGeneration в загрузчике обновлений.
+     */
+    private val startGeneration = AtomicInteger(0)
+
+    /**
+     * Асинхронный запуск ядра: тяжёлая часть ([startCoreLoop]) выполняется на
+     * IO-диспетчере, результат приходит в [onFinished] НА ГЛАВНОМ ПОТОКЕ (чтобы
+     * сервис мог безопасно менять своё состояние — см. комментарий у post).
+     * Если старт не запланирован (ядро уже работает или старт уже идёт),
+     * [onFinished] НЕ вызывается вовсе — см. возвращаемое значение.
+     *
+     * Зачем (вещдок 20.11.2026, жалоба «NetworkOnMainThreadException»):
+     * сборка конфига ядра выполнялась СИНХРОННО в onStartCommand трёх сервисов,
+     * то есть на ГЛАВНОМ потоке, а внутри неё блокирующие сетевые и процессные
+     * операции:
+     *  - DNS-резолв домена сервера ([CoreOutboundBuilder.getServerAddress] и
+     *    dns.hosts в [CoreConfigManager]) при
+     *    `pref_outbound_domain_resolve_method=2`;
+     *  - поднятие сайдкар-движка: ProcessBuilder + ожидание открытия порта
+     *    ([SidecarEngineManager.ensureRunning]);
+     *  - поиск свободного порта ([Utils.findRandomFreePort], ServerSocket);
+     *  - сериализация JSON всего конфига и нативный старт ядра.
+     * StrictMode запрещает сеть на главном потоке, поэтому резолв падал с
+     * NetworkOnMainThreadException, [com.v2ray.ang.util.HttpUtil.resolveHostToIP] глотал её и
+     * возвращал null — настройка «резолвить домен» НЕ РАБОТАЛА вовсе
+     * (в outbound уходил домен, dns.hosts не заполнялся), а в лог валился стек.
+     * В VPN-режиме исключения не было только потому, что
+     * CoreVpnService.onCreate вызывает StrictMode.permitAll(): main там
+     * блокировался молча.
+     *
+     * Решение — вынести с главного потока ВСЮ цепочку запуска, а не один
+     * резолв: тогда ни одна из перечисленных операций не может попасть на main,
+     * и новые сетевые вызовы в сборке конфига не вернут дефект. Кэширование
+     * адресов НЕ используется намеренно: адрес, отрезолвленный на умершей сети,
+     * непригоден на новой (см. KDoc [reloadCore]).
+     *
+     * Контракт FGS не нарушается: вызывающий сервис поднимает foreground ДО
+     * этого вызова (NotificationManager.ensureForeground первым в
+     * onStartCommand), поэтому ожидание запуска не грозит FGS-таймаутом.
+     *
+     * @return true, если запуск ЗАПЛАНИРОВАН (колбэк будет вызван); false, если
+     *   ядро уже работает или запуск уже идёт — колбэк в этом случае НЕ
+     *   вызывается.
+     */
+    fun startCoreLoopAsync(
+        vpnInterface: ParcelFileDescriptor?,
+        onFinished: (Boolean) -> Unit,
+    ): Boolean {
+        // Правило — чистая функция [CoreStartPolicy.canStart] (JVM-тест):
+        // старт невозможен, если ядро уже работает ИЛИ старт уже идёт.
+        if (!CoreStartPolicy.canStart(coreRunning = isRunning(), startInFlight = isStarting.get())) {
+            LogUtil.w(
+                AppConfig.TAG,
+                "StartCore-Manager: старт пропущен (running=${isRunning()}, inFlight=${isStarting.get()})"
+            )
+            return false
+        }
+        // CAS обязателен: между проверкой и установкой флага два onStartCommand
+        // успели бы пройти оба (проверка isStarting.get() не атомарна с set).
+        if (!isStarting.compareAndSet(false, true)) {
+            LogUtil.w(AppConfig.TAG, "StartCore-Manager: старт ядра уже идёт, повторный запрос проигнорирован")
+            return false
+        }
+        val generation = startGeneration.incrementAndGet()
+        startScope.launch {
+            val started = try {
+                startCoreLoop(vpnInterface)
+            } catch (e: Exception) {
+                // startCoreLoop сам ловит и логирует свои ошибки; эта ветка —
+                // страховка от исключений вне его try (например, в getService()).
+                LogUtil.e(AppConfig.TAG, "StartCore-Manager: async start failed", e)
+                false
+            }
+            isStarting.set(false)
+            // Устарел ли результат — решает та же чистая функция, что и
+            // поведение сервиса (CoreStartPolicy.decide): STALE = stop/рестарт
+            // пришёл во время старта, колбэк вызывать нельзя.
+            when (
+                CoreStartPolicy.decide(
+                    started = started,
+                    generation = generation,
+                    currentGeneration = startGeneration.get(),
+                )
+            ) {
+                CoreStartPolicy.StartOutcome.STALE -> {
+                    LogUtil.w(
+                        AppConfig.TAG,
+                        "StartCore-Manager: запуск ядра устарел (поколение $generation), результат проигнорирован"
+                    )
+                    // КОМПЕНСАЦИЯ (гонка, появившаяся вместе с асинхронным
+                    // стартом): stopCoreLoop мог отработать, когда ядро ещё НЕ
+                    // было поднято (isRunning()==false), и поэтому не вызвал
+                    // stopLoop. Если launchCore поднял ядро ПОСЛЕ этого, сервис
+                    // уже уничтожён, а core остался работать: isRunning() true
+                    // заблокировал бы следующий старт, а трафик никуда не шёл
+                    // (правила маршрутизации сняты).
+                    if (isRunning()) {
+                        LogUtil.w(
+                            AppConfig.TAG,
+                            "StartCore-Manager: ядро поднялось после stop — останавливаю (компенсация гонки)"
+                        )
+                        abortStaleStart()
+                    }
+                }
+
+                // Колбэк — НА ГЛАВНОМ ПОТОКЕ (намеренно). Сервисы в нём меняют
+                // СВОЁ состояние, которое читается из main: CoreRootService
+                // пишет setupJob (onDestroy делает cancelAndJoin на main),
+                // CoreVpnService трогает isRunning/mInterface. Вызов из IO
+                // открыл бы гонку видимости, поэтому результат доставляется
+                // через Handler главного Looper'а.
+                else -> Handler(Looper.getMainLooper()).post { onFinished(started) }
+            }
+        }
+        return true
+    }
+
+    /**
      * Refer to the official documentation for [registerReceiver](https://developer.android.com/reference/androidx/core/content/ContextCompat#registerReceiver(android.content.Context,android.content.BroadcastReceiver,android.content.IntentFilter,int):
      * `registerReceiver(Context, BroadcastReceiver, IntentFilter, int)`.
      * Starts the V2Ray core service.
+     *
+     * СИНХРОННЫЙ и БЛОКИРУЮЩИЙ (DNS, запуск сайдкара, нативный старт ядра):
+     * вызывается ТОЛЬКО не на главном потоке — из [startCoreLoopAsync] или
+     * [reloadCore] (последний уже идёт на IO через NetworkMonitor).
      */
     fun startCoreLoop(vpnInterface: ParcelFileDescriptor?): Boolean {
         if (isRunning()) {
@@ -256,11 +401,64 @@ object CoreServiceManager {
     }
 
     /**
+     * Гарантированно останавливает ядро, поднятое устаревшим запуском.
+     *
+     * НЕ использует [stopCoreLoop]: тот выходит рано на `getService() ?: return
+     * false`, а в момент компенсации сервис уже уничтожен (SoftReference
+     * очищена), поэтому stopLoop до ядра не дошёл бы. Здесь остановка идёт
+     * напрямую, в том же IO-контексте, плюс снимается опубликованное состояние
+     * (PID демона и снимок прокси), иначе другие процессы считали бы профиль
+     * работающим.
+     */
+    private fun abortStaleStart() {
+        MmkvManager.encodeSettings(AppConfig.PREF_CORE_DAEMON_PID, 0)
+        MmkvManager.encodeSettings(AppConfig.PREF_CORE_PROXY_ENDPOINT, "")
+        try {
+            SidecarEngineManager.stopAll()
+        } catch (e: Exception) {
+            LogUtil.e(AppConfig.TAG, "StartCore-Manager: не удалось остановить сайдкар после устаревшего старта", e)
+        }
+        try {
+            coreController.stopLoop()
+        } catch (e: Exception) {
+            LogUtil.e(AppConfig.TAG, "StartCore-Manager: не удалось остановить ядро после устаревшего старта", e)
+        }
+        NotificationManager.cancelNotification()
+        LogUtil.w(AppConfig.TAG, "StartCore-Manager: устаревший запуск остановлен, состояние очищено")
+    }
+
+    /**
+     * Инвалидирует незавершённый асинхронный старт БЕЗ остановки уже
+     * работающего ядра.
+     *
+     * Зачем отдельно от [stopCoreLoop]: у CoreVpnService.onDestroy исторически
+     * НЕ вызывает stopCoreLoop (он идёт через stopAllService), поэтому при
+     * неожиданном уничтожении сервиса поколение старта не менялось. Асинхронный
+     * запуск в этом окне продолжался и поднимал ядро ПОСЛЕ уничтожения сервиса:
+     * isRunning()==true заблокировал бы следующий старт, а трафик не шёл бы
+     * (туннель закрыт). После этого вызова отложенный старт получит STALE и сам
+     * остановит поднятое ядро (компенсация в startCoreLoopAsync).
+     *
+     * Безопасно вызывать всегда: если старта в полёте нет, метод ничего не
+     * делает.
+     */
+    fun cancelPendingStart() {
+        startGeneration.incrementAndGet()
+        isStarting.set(false)
+    }
+
+    /**
      * Stops the V2Ray core service.
      * Unregisters broadcast receivers, stops notifications, and shuts down plugins.
      * @return True if the core was stopped successfully, false otherwise.
      */
     fun stopCoreLoop(): Boolean {
+        // Инвалидируем незавершённый асинхронный запуск: stop, пришедший во
+        // время старта, обязан победить (см. startGeneration). isStarting
+        // сбрасываем здесь же, иначе следующая попытка старта была бы
+        // заблокирована навсегда (колбэк устаревшего поколения не выполнится).
+        startGeneration.incrementAndGet()
+        isStarting.set(false)
         MmkvManager.encodeSettings(AppConfig.PREF_CORE_DAEMON_PID, 0)
         MmkvManager.encodeSettings(AppConfig.PREF_CORE_PROXY_ENDPOINT, "")
         SidecarEngineManager.stopAll()
