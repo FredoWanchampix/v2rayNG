@@ -48,6 +48,10 @@ class CoreProxyOnlyService : Service(), ServiceControl {
         // считать сервис живым, а провал старта обрабатывается в колбэке —
         // сервис останавливает сам себя и гасит уведомление.
         val scheduled = CoreServiceManager.startCoreLoopAsync(null) { started ->
+            // Колбэк приходит на главный поток и ТОЛЬКО для актуального
+            // поколения запуска: устаревший результат (stop/onDestroy во время
+            // старта) отбрасывает CoreServiceManager, поэтому здесь stopSelf
+            // вызывается только для реально провалившегося запуска.
             if (!started) {
                 LogUtil.e(AppConfig.TAG, "StartCore-Proxy: Failed to start core loop")
                 stopSelf()

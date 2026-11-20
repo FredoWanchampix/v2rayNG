@@ -33,6 +33,16 @@ class CoreRootService : Service(), ServiceControl {
 
     private var setupJob: Job? = null
 
+    /**
+     * Сервис уничтожен. Защита в глубину от гонки «колбэк старта после
+     * onDestroy»: [CoreServiceManager] повторно сверяет поколение запуска уже
+     * на главном потоке, но флаг делает поведение локальным и очевидным —
+     * без него установка iptables/tun на остановленное ядро дала бы чёрную
+     * дыру трафика до следующего start/stop.
+     */
+    @Volatile
+    private var destroyed = false
+
     override fun onCreate() {
         super.onCreate()
         LogUtil.i(AppConfig.TAG, "StartCore-Root: Service created")
@@ -64,6 +74,10 @@ class CoreRootService : Service(), ServiceControl {
         // уведомление), иначе пользователь видел бы «подключено» при мёртвом
         // профиле.
         val scheduled = CoreServiceManager.startCoreLoopAsync(null) { started ->
+            if (destroyed) {
+                LogUtil.w(AppConfig.TAG, "StartCore-Root: сервис уничтожен во время старта — маршрутизация не устанавливается")
+                return@startCoreLoopAsync
+            }
             if (!started) {
                 LogUtil.e(AppConfig.TAG, "StartCore-Root: core failed to start")
                 stopService()
@@ -91,6 +105,10 @@ class CoreRootService : Service(), ServiceControl {
             }
 
             setupJob = CoroutineScope(Dispatchers.IO).launch {
+                if (destroyed) {
+                    LogUtil.w(AppConfig.TAG, "StartCore-Root: сервис уничтожен до установки правил — пропускаю")
+                    return@launch
+                }
                 if (!RootProxyManager.start(this@CoreRootService)) {
                     LogUtil.e(AppConfig.TAG, "StartCore-Root: failed to start root mode, stopping")
                     stopService()
@@ -106,6 +124,7 @@ class CoreRootService : Service(), ServiceControl {
 
     override fun onDestroy() {
         super.onDestroy()
+        destroyed = true
         // Wait for any in-flight async setup to finish before tearing down. The rules are
         // installed off the main thread and can take seconds (the setup script waits for the
         // tun to appear); if a stop arrives during that window, teardown would run first and

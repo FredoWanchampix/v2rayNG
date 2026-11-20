@@ -35,6 +35,25 @@ object CoreStartPolicy {
         !coreRunning && !startInFlight
 
     /**
+     * Можно ли перезапустить ядро на месте (пересборка конфига после смены
+     * сети — [com.v2ray.ang.service.NetworkMonitor.onHandover]).
+     *
+     * @param coreRunning ядро поднято. Без него перезапускать нечего.
+     * @param alreadyReloading reload уже идёт (защита от повторного входа).
+     * @param startInFlight идёт ПЕРВИЧНЫЙ запуск ядра.
+     *
+     * Третье условие обязательно после перевода запуска на IO-диспетчер:
+     * существует окно, в котором [com.v2ray.ang.core.CoreServiceManager]
+     * уже поднял ядро (`startLoop` вернул, isRunning()==true), но флаг
+     * `isStarting` ещё не сброшен. Reload в этом окне выполнил бы второй
+     * `launchCore` параллельно первому — два `startLoop` на одном
+     * coreController. Пропуск безопасен: идущий старт строит конфиг заново на
+     * уже сменившейся сети, то есть делает ровно то, ради чего вызван reload.
+     */
+    fun canReload(coreRunning: Boolean, alreadyReloading: Boolean, startInFlight: Boolean): Boolean =
+        coreRunning && !alreadyReloading && !startInFlight
+
+    /**
      * Что сделать сервису по завершении асинхронного запуска.
      */
     enum class StartOutcome {

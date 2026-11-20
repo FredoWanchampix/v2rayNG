@@ -76,6 +76,46 @@ class CoreStartPolicyTest {
     }
 
     @Test
+    fun `reload allowed when core runs and nothing else in progress`() {
+        assertTrue(
+            CoreStartPolicy.canReload(
+                coreRunning = true, alreadyReloading = false, startInFlight = false,
+            )
+        )
+    }
+
+    @Test
+    fun `reload rejected while primary start is still in flight`() {
+        // Окно после перевода запуска на IO: startLoop уже поднял ядро
+        // (coreRunning=true), но isStarting ещё не сброшен. Два launchCore
+        // параллельно означали бы два startLoop на одном coreController.
+        assertFalse(
+            CoreStartPolicy.canReload(
+                coreRunning = true, alreadyReloading = false, startInFlight = true,
+            )
+        )
+    }
+
+    @Test
+    fun `reload rejected when core is down or already reloading`() {
+        assertFalse(
+            CoreStartPolicy.canReload(
+                coreRunning = false, alreadyReloading = false, startInFlight = false,
+            )
+        )
+        assertFalse(
+            CoreStartPolicy.canReload(
+                coreRunning = true, alreadyReloading = true, startInFlight = false,
+            )
+        )
+        assertFalse(
+            CoreStartPolicy.canReload(
+                coreRunning = true, alreadyReloading = true, startInFlight = true,
+            )
+        )
+    }
+
+    @Test
     fun `older generation is never treated as current`() {
         for (current in 6..12) {
             assertEquals(

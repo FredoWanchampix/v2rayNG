@@ -99,6 +99,13 @@ object CoreServiceManager {
     private val startScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
+     * Доставка результата запуска на главный поток. Один экземпляр на объект,
+     * а не на каждый запуск: колбэки сервисов меняют состояние, которое
+     * читается из main (setupJob, isRunning, mInterface).
+     */
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
      * Идёт ли запуск ядра прямо сейчас. Защита от двойного старта: между
      * [startCoreLoopAsync] и фактическим подъёмом ядра [isRunning] ещё false,
      * поэтому повторный onStartCommand (или быстрый старт/рестарт) запустил бы
@@ -222,7 +229,35 @@ object CoreServiceManager {
                 // CoreVpnService трогает isRunning/mInterface. Вызов из IO
                 // открыл бы гонку видимости, поэтому результат доставляется
                 // через Handler главного Looper'а.
-                else -> Handler(Looper.getMainLooper()).post { onFinished(started) }
+                else -> mainHandler.post {
+                    // ПОВТОРНАЯ проверка поколения — уже на main, в момент
+                    // выполнения колбэка. Проверка выше сделана ДО post, а
+                    // onDestroy (stopCoreLoop / cancelPendingStart) может пройти
+                    // в окне между ними. Без этой проверки колбэк выполнился бы
+                    // ПОСЛЕ уничтожения сервиса: CoreRootService поставил бы
+                    // iptables+tun на уже остановленное ядро (чёрная дыра
+                    // трафика до следующего start/stop), CoreVpnService —
+                    // RootLanSharing/stopAllService на закрытом mInterface.
+                    when (
+                        CoreStartPolicy.decide(
+                            started = started,
+                            generation = generation,
+                            currentGeneration = startGeneration.get(),
+                        )
+                    ) {
+                        CoreStartPolicy.StartOutcome.STALE -> {
+                            LogUtil.w(
+                                AppConfig.TAG,
+                                "StartCore-Manager: сервис остановлен, пока шёл запуск — колбэк отброшен (поколение $generation)"
+                            )
+                            startScope.launch {
+                                if (isRunning()) abortStaleStart()
+                            }
+                        }
+
+                        else -> onFinished(started)
+                    }
+                }
             }
         }
         return true
@@ -526,9 +561,23 @@ object CoreServiceManager {
      * @return True if the core is running again.
      */
     private fun reloadCore(): Boolean {
-        if (isReloading) return false
         val service = getService() ?: return false
-        if (!isRunning()) return false
+        // Правило — чистая функция [CoreStartPolicy.canReload] (JVM-тест):
+        // ядро поднято, reload ещё не идёт и ПЕРВИЧНЫЙ старт завершён.
+        // Третье условие закрывает окно, в котором startLoop уже поднял ядро,
+        // но isStarting ещё не сброшен — иначе два launchCore пошли бы
+        // параллельно и сделали два startLoop на одном coreController.
+        if (!CoreStartPolicy.canReload(
+                coreRunning = isRunning(),
+                alreadyReloading = isReloading,
+                startInFlight = isStarting.get(),
+            )
+        ) {
+            if (isStarting.get()) {
+                LogUtil.w(AppConfig.TAG, "StartCore-Manager: reload пропущен — запуск ядра ещё идёт")
+            }
+            return false
+        }
 
         return try {
             val tunFd = currentVpnInterface

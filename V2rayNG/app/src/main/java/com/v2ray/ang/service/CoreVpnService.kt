@@ -34,6 +34,16 @@ class CoreVpnService : VpnService(), ServiceControl {
     private var tun2SocksService: Tun2SocksControl? = null
     private val isStartingLock = AtomicBoolean(false)
 
+    /**
+     * Сервис уничтожен. Защита в глубину от гонки «колбэк асинхронного старта
+     * после onDestroy»: [CoreServiceManager] повторно сверяет поколение запуска
+     * на главном потоке, но флаг делает поведение локальным — без него колбэк
+     * мог бы включить LAN-шаринг или вызвать stopAllService на уже закрытом
+     * mInterface.
+     */
+    @Volatile
+    private var destroyed = false
+
     override fun onCreate() {
         super.onCreate()
         LogUtil.i(AppConfig.TAG, "StartCore-VPN: Service created")
@@ -54,6 +64,7 @@ class CoreVpnService : VpnService(), ServiceControl {
 
     override fun onDestroy() {
         super.onDestroy()
+        destroyed = true
         LogUtil.i(AppConfig.TAG, "StartCore-VPN: Service destroyed")
 
         // Ensure VPN interface is properly closed when the service is destroyed without
@@ -124,6 +135,10 @@ class CoreVpnService : VpnService(), ServiceControl {
             // Замок старта снимается в колбэке: стартовое окно закончилось,
             // повторный запрос из onStartCommand теперь допустим.
             unlockStart()
+            if (destroyed) {
+                LogUtil.w(AppConfig.TAG, "StartCore-VPN: сервис уничтожен во время старта — LAN-шаринг не включается")
+                return@startCoreLoopAsync
+            }
             if (!started) {
                 LogUtil.e(AppConfig.TAG, "StartCore-VPN: Failed to start core loop")
                 stopAllService()
