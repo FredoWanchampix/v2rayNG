@@ -206,15 +206,21 @@ class ServerHysteria2Activity : BaseServerActivity() {
             state.sni,
             { state.sni = it }
         )
-        // ALPN. Поле профиля существовало и конвертер его переносил
-        // (tlsSettings.alpn -> &alpn=), но в редакторе Hysteria2 оно НЕ
-        // отображалось: экран не вызывает общий блок CommonStreamSecurityFields,
-        // поэтому alpn был невидим и нередактируем.
+        // ALPN — ТОЛЬКО ДЛЯ ЧТЕНИЯ, значение = "h3". Вещдок:
+        // CoreOutboundBuilder.toOutboundHysteria2 БЕЗУСЛОВНО ставит
+        // profileItem.alpn = "h3" при каждой сборке конфига (Hysteria2 = QUIC,
+        // ALPN h3 обязателен), поэтому любое значение из профиля игнорируется.
+        // Показывать state.alpn было бы «ложью UI»: поле могло бы содержать
+        // не то, что реально уходит в ядро. Показываем фактическое h3 без
+        // возможности правки. Если форсинг в ядре когда-нибудь снимут — это
+        // поле и supportingText обновляются вместе с ним.
         FormDropdownField(
             label = stringResource(R.string.server_lab_stream_alpn),
-            value = state.alpn,
+            value = "h3",
             options = alpnOptions,
-            onValueChange = { state.alpn = it }
+            onValueChange = { },
+            enabled = false,
+            supportingText = stringResource(R.string.server_lab_alpn_hy2_fixed),
         )
         // uTLS-отпечаток. Ядро получает его из ProfileItem.fingerPrint
         // (CoreOutboundBuilder.populateTlsSettings), а провайдеры задают его в

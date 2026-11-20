@@ -441,7 +441,9 @@ object CoreServiceManager {
      * НЕ использует [stopCoreLoop]: тот выходит рано на `getService() ?: return
      * false`, а в момент компенсации сервис уже уничтожен (SoftReference
      * очищена), поэтому stopLoop до ядра не дошёл бы. Здесь остановка идёт
-     * напрямую, в том же IO-контексте, плюс снимается опубликованное состояние
+     * напрямую, в том же IO-контексте: и Xray (coreController.stopLoop, если
+     * поднят), и fptn-client (FptnRootRunner.stop, если active) — потому что
+     * isRunning() объединяет обе ветки. Плюс снимается опубликованное состояние
      * (PID демона и снимок прокси), иначе другие процессы считали бы профиль
      * работающим.
      */
@@ -453,10 +455,27 @@ object CoreServiceManager {
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "StartCore-Manager: не удалось остановить сайдкар после устаревшего старта", e)
         }
-        try {
-            coreController.stopLoop()
-        } catch (e: Exception) {
-            LogUtil.e(AppConfig.TAG, "StartCore-Manager: не удалось остановить ядро после устаревшего старта", e)
+        // isRunning() = coreController.isRunning || FptnRootRunner.active,
+        // поэтому устаревшим запуском мог быть поднят КАК Xray, так и
+        // fptn-client. Останавливаем обе ветки, как это делает stopCoreLoop:
+        // fptn-client — своим stop (снимает TUN fptn0 и сбрасывает active),
+        // иначе «залипший» active заблокировал бы следующий старт, а Xray —
+        // только когда он реально поднят (у FPTN coreController не стартует).
+        getService()?.let { service ->
+            if (FptnRootRunner.active) {
+                try {
+                    FptnRootRunner.stop(service)
+                } catch (e: Exception) {
+                    LogUtil.e(AppConfig.TAG, "StartCore-Manager: не удалось остановить fptn-client после устаревшего старта", e)
+                }
+            }
+        }
+        if (coreController.isRunning) {
+            try {
+                coreController.stopLoop()
+            } catch (e: Exception) {
+                LogUtil.e(AppConfig.TAG, "StartCore-Manager: не удалось остановить ядро после устаревшего старта", e)
+            }
         }
         NotificationManager.cancelNotification()
         LogUtil.w(AppConfig.TAG, "StartCore-Manager: устаревший запуск остановлен, состояние очищено")

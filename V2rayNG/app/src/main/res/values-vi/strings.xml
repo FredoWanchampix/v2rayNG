@@ -680,4 +680,5 @@
     <string name="server_lab_session_resumption_default">mặc định (lõi tự quyết định)</string>
     <string name="server_lab_session_resumption_on">bật</string>
     <string name="server_lab_session_resumption_off">tắt</string>
+    <string name="server_lab_alpn_hy2_fixed">Hysteria2 luôn dùng ALPN h3 (QUIC); giá trị này do lõi cố định, không thể sửa.</string>
 </resources>

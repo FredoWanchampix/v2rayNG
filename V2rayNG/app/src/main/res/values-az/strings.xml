@@ -683,4 +683,5 @@
     <string name="server_lab_session_resumption_default">default (nüvə qərar verir)</string>
     <string name="server_lab_session_resumption_on">aktiv</string>
     <string name="server_lab_session_resumption_off">deaktiv</string>
+    <string name="server_lab_alpn_hy2_fixed">Hysteria2 həmişə ALPN h3 (QUIC) istifadə edir; bu dəyəri nüvə təyin edir və dəyişdirilə bilməz.</string>
 </resources>

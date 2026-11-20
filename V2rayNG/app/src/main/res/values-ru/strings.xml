@@ -765,4 +765,5 @@
     <string name="server_lab_session_resumption_default">по умолчанию (решает ядро)</string>
     <string name="server_lab_session_resumption_on">включено</string>
     <string name="server_lab_session_resumption_off">выключено</string>
+    <string name="server_lab_alpn_hy2_fixed">Hysteria2 всегда использует ALPN h3 (QUIC); это значение задаёт ядро, оно неизменяемо.</string>
 </resources>

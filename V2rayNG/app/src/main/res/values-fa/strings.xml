@@ -682,4 +682,5 @@
     <string name="server_lab_session_resumption_default">پیش‌فرض (هسته تصمیم می‌گیرد)</string>
     <string name="server_lab_session_resumption_on">روشن</string>
     <string name="server_lab_session_resumption_off">خاموش</string>
+    <string name="server_lab_alpn_hy2_fixed">Hysteria2 همیشه از ALPN h3 (QUIC) استفاده می‌کند؛ این مقدار توسط هسته تعیین می‌شود و تغییرناپذیر است.</string>
 </resources>
