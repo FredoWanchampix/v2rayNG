@@ -77,15 +77,48 @@ object Utils {
     /**
      * Decode a base64 encoded string.
      *
+     * ВАЖНО ПРО ЛОГИ (вещдок лога владельца 22.11.2026). Этот метод вызывается
+     * как ПРОБА: parseConfigViaSub сначала пробует base64, а если не вышло —
+     * парсит тело подписки как обычный текст/JSON. Для НЕ-base64 подписки отказ
+     * здесь ШТАТНЫЙ, а не ошибка: подписка при этом успешно импортировалась
+     * («Subscription updated: …, 35 configs»), но лог заполнялся 12 полными
+     * стектрейсами уровня E («bad base-64» + «Failed to decode standard/URL-safe
+     * base64»), в которых тонули настоящие ошибки.
+     *
+     * Поэтому неудача отдельной попытки теперь пишется на уровне DEBUG без
+     * стектрейса (это ожидаемый исход пробы), а сводная строка уровня WARNING
+     * появляется ОДИН раз, когда не удалось декодировать НИ одним способом —
+     * то есть когда это действительно может быть проблемой. Диагностика не
+     * потеряна: видно и то, что проба была, и то, что она не удалась, и размер
+     * входа; просто без 12 стектрейсов на каждое обновление подписки.
+     *
      * @param text The base64 encoded string.
      * @return The decoded string, or an empty string if decoding fails.
      */
     fun decode(text: String?): String {
-        return tryDecodeBase64(text) ?: text?.trimEnd('=')?.let { tryDecodeBase64(it) }.orEmpty()
+        val direct = tryDecodeBase64(text)
+        if (direct != null) return direct
+        val trimmed = text?.trimEnd('=')
+        if (trimmed != null && trimmed != text) {
+            val retry = tryDecodeBase64(trimmed)
+            if (retry != null) return retry
+        }
+        if (!text.isNullOrEmpty()) {
+            LogUtil.w(
+                AppConfig.TAG,
+                "Base64 probe failed (standard, URL-safe, without padding): " +
+                    "input ${text.length} chars — treating content as plain text"
+            )
+        }
+        return ""
     }
 
     /**
      * Try to decode a base64 encoded string.
+     *
+     * Отказ — ожидаемый исход пробы (см. KDoc [decode]), поэтому логируется на
+     * уровне DEBUG и БЕЗ стектрейса: IllegalArgumentException("bad base-64") от
+     * android.util.Base64 не несёт полезной информации сверх самого факта.
      *
      * @param text The base64 encoded string.
      * @return The decoded string, or null if decoding fails.
@@ -96,12 +129,12 @@ object Utils {
         try {
             return Base64.decode(text, Base64.NO_WRAP).toString(Charsets.UTF_8)
         } catch (e: Exception) {
-            LogUtil.e(AppConfig.TAG, "Failed to decode standard base64", e)
+            LogUtil.d(AppConfig.TAG, "Base64 probe: standard form rejected (${e.javaClass.simpleName})")
         }
         try {
             return Base64.decode(text, Base64.NO_WRAP.or(Base64.URL_SAFE)).toString(Charsets.UTF_8)
         } catch (e: Exception) {
-            LogUtil.e(AppConfig.TAG, "Failed to decode URL-safe base64", e)
+            LogUtil.d(AppConfig.TAG, "Base64 probe: URL-safe form rejected (${e.javaClass.simpleName})")
         }
         return null
     }
