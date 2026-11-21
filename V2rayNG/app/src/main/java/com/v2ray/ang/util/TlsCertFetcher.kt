@@ -107,6 +107,63 @@ object TlsCertFetcher {
     }
 
     /**
+     * Человекочитаемая причина отказа TLS-рукопожатия — ЧИСТАЯ функция
+     * (без сети и Android), доказывается JVM-тестом [TlsCertFetcherTest].
+     *
+     * Зачем (вещдок лога владельца 22.11.2026): три профиля с SNI-маской не получили
+     * отпечаток, и в логе было только «SSLHandshakeException: connection closed»
+     * — выглядело как поломка функции. Настоящая причина видна лишь в GoLog
+     * рядом: ядро сниффило SNI (`cdn.example.test`), применило СВОЁ
+     * правило маршрутизации и отправило соединение в `detour [direct]`, то есть
+     * МИМО туннеля профиля; сервер такой запрос рвёт. Пользователь не должен
+     * сопоставлять два лога вручную — причина обязана быть в строке отказа.
+     *
+     * Функция НЕ меняет поведение (маршрут и попытки остаются прежними), она
+     * только объясняет уже случившийся отказ.
+     *
+     * @param errorText текст исключения (e.toString()).
+     * @param viaProfile шло ли соединение через loopback-прокси профиля.
+     * @param sni SNI, который был отправлен (может быть маскирующим доменом).
+     */
+    fun explainTlsFailure(errorText: String, viaProfile: Boolean, sni: String?): String {
+        val lower = errorText.lowercase()
+        val sniHint = if (!sni.isNullOrBlank()) " (sni=$sni)" else ""
+        return when {
+            // Соединение установлено, но сервер закрыл его на рукопожатии.
+            lower.contains("connection closed") ||
+                lower.contains("sslhandshakeexception") ||
+                lower.contains("unexpected_eof") ||
+                lower.contains("ssleofexception") -> if (viaProfile) {
+                    "сервер закрыл TLS-рукопожатие$sniHint. Частая причина: SNI попал в " +
+                        "direct-правило маршрутизации ядра, поэтому запрос ушёл МИМО туннеля " +
+                        "профиля (проверьте GoLog: «sniffed domain» + «taking detour [direct]»), " +
+                        "либо сервер недоступен/не отдаёт сертификат на этом адресе"
+                } else {
+                    "сервер закрыл TLS-рукопожатие$sniHint при прямом соединении: " +
+                        "сервер недоступен, блокируется сетью или не отдаёт сертификат"
+                }
+
+            lower.contains("timeout") || lower.contains("timed out") ->
+                "нет ответа на TLS-рукопожатие$sniHint за отведённое время: " +
+                    "адрес/порт не отвечает (для QUIC-портов TLS-сервера может не быть вовсе)"
+
+            lower.contains("connection refused") ->
+                "соединение отклонено (порт закрыт)$sniHint"
+
+            lower.contains("unreachable") || lower.contains("no route to host") ->
+                "адрес недостижим (нет маршрута)$sniHint"
+
+            lower.contains("proxy connect refused") ->
+                "прокси профиля отказал в CONNECT$sniHint — профиль не маршрутизирует этот адрес"
+
+            lower.contains("certificate") || lower.contains("x509") ->
+                "рукопожатие прошло, но сертификат не получен/не разобран$sniHint"
+
+            else -> "TLS-рукопожатие не удалось$sniHint: $errorText"
+        }
+    }
+
+    /**
      * TLS-рукопожатие ради отпечатка leaf-сертификата.
      *
      * @param address IP или хост для соединения (вызывающий уже разрешил DNS).
@@ -181,7 +238,8 @@ object TlsCertFetcher {
             // в логах владельца не было ни одной строчки о неудаче).
             LogUtil.w(
                 AppConfig.TAG,
-                "TLS cert fetch failed for $address:$port sni=$serverName via $via: $e"
+                "TLS cert fetch failed for $address:$port sni=$serverName via $via: " +
+                    explainTlsFailure(e.toString(), viaProfile = proxy != null, sni = serverName)
             )
             return null
         } finally {

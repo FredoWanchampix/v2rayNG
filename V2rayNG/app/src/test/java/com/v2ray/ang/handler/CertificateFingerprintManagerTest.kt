@@ -212,4 +212,106 @@ class CertificateFingerprintManagerTest {
             )
         }
     }
+
+    // ---------- подсказка о причине отказа (failureHint) ----------
+    //
+    // Вещдок лога владельца 22.11.2026: профили группы заданы IP, а sni —
+    // маскирующий домен чужого хоста; ядро сниффирует его и применяет СВОЁ
+    // правило маршрутизации (detour [direct]), поэтому запрос уходит мимо
+    // туннеля и сервер рвёт TLS. Отказ не должен выглядеть поломкой функции.
+
+    private fun vlessIpWithMaskedSni(): ProfileItem =
+        ProfileItem(configType = EConfigType.VLESS).apply {
+            security = AppConfig.TLS
+            server = "203.0.113.10"
+            serverPort = "443"
+            sni = "cdn.example.test"
+        }
+
+    @Test
+    fun `masked sni on ip server explains direct routing`() {
+        val p = vlessIpWithMaskedSni()
+        val hint = CertificateFingerprintManager.failureHint(
+            profile = p,
+            server = p.server!!,
+            serverName = p.sni,
+            useQuic = false,
+            attempts = listOf(SubscriptionCertPolicy.FetchAttempt.VIA_PROFILE),
+        )
+
+        assertTrue(hint.contains("маскирующий домен"), hint)
+        assertTrue(hint.contains("direct"), hint)
+        assertTrue(hint.contains("GoLog"), hint)
+    }
+
+    @Test
+    fun `same sni and server gives generic profile hint`() {
+        val p = ProfileItem(configType = EConfigType.VLESS).apply {
+            security = AppConfig.TLS
+            server = "example.com"
+            serverPort = "443"
+            sni = "example.com"
+        }
+        val hint = CertificateFingerprintManager.failureHint(
+            profile = p,
+            server = p.server!!,
+            serverName = p.sni,
+            useQuic = false,
+            attempts = listOf(SubscriptionCertPolicy.FetchAttempt.VIA_PROFILE),
+        )
+
+        assertFalse(hint.contains("маскирующий домен"), hint)
+        assertTrue(hint.contains("через профиль"), hint)
+    }
+
+    @Test
+    fun `direct attempt gives no profile routing hint`() {
+        val p = vlessIpWithMaskedSni()
+        val hint = CertificateFingerprintManager.failureHint(
+            profile = p,
+            server = p.server!!,
+            serverName = p.sni,
+            useQuic = false,
+            attempts = listOf(SubscriptionCertPolicy.FetchAttempt.DIRECT),
+        )
+
+        assertEquals("", hint)
+    }
+
+    @Test
+    fun `quic with obfs mentions obfuscation requirement`() {
+        val p = ProfileItem(configType = EConfigType.HYSTERIA2).apply {
+            obfs = "salamander"
+            obfsPassword = "secretpsk"
+            server = "example.com"
+            serverPort = "2096"
+        }
+        val hint = CertificateFingerprintManager.failureHint(
+            profile = p,
+            server = p.server!!,
+            serverName = p.sni,
+            useQuic = true,
+            attempts = listOf(SubscriptionCertPolicy.FetchAttempt.DIRECT),
+        )
+
+        assertTrue(hint.contains("obfs=salamander"), hint)
+        assertTrue(hint.contains("обфусцированное"), hint)
+    }
+
+    @Test
+    fun `plain quic without obfs gives no obfs hint`() {
+        val p = ProfileItem(configType = EConfigType.HYSTERIA2).apply {
+            server = "example.com"
+            serverPort = "443"
+        }
+        val hint = CertificateFingerprintManager.failureHint(
+            profile = p,
+            server = p.server!!,
+            serverName = null,
+            useQuic = true,
+            attempts = listOf(SubscriptionCertPolicy.FetchAttempt.DIRECT),
+        )
+
+        assertEquals("", hint)
+    }
 }

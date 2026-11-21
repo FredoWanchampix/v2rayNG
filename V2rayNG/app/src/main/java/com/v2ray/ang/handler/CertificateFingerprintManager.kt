@@ -117,13 +117,60 @@ object CertificateFingerprintManager {
             }
             if (!sha256.isNullOrBlank()) return sha256
         }
+        // Сводная строка отказа. Дополнительно объясняет ВЕРОЯТНУЮ причину,
+        // чтобы отказ не выглядел поломкой функции (вещдок лога владельца
+        // 22.11.2026: три профиля с SNI-маской чужого домена —
+        // ядро отправило их в detour [direct] мимо туннеля, сервер рвал TLS;
+        // в логе клиента было только «no result», а причина — лишь в GoLog).
         LogUtil.w(
             AppConfig.TAG,
             "Cert fetch: no result after ${attempts.size} attempt(s) " +
                 "(${attempts.joinToString("/") { it.label }}) for ${profile.remarks} " +
-                "[$server:$port sni=$serverName quic=$useQuic]"
+                "[$server:$port sni=$serverName quic=$useQuic]" +
+                failureHint(profile, server, serverName, useQuic, attempts)
         )
         return null
+    }
+
+    /**
+     * Подсказка о вероятной причине отказа — ЧИСТАЯ функция (без сети/Android),
+     * доказывается JVM-тестом [CertificateFingerprintManagerTest].
+     *
+     * Не меняет поведение: маршрут, число попыток и запись отпечатка остаются
+     * прежними. Только объясняет уже случившийся отказ, чтобы пользователь не
+     * сопоставлял лог клиента с GoLog вручную.
+     *
+     * Главный случай (вещдок 22.11.2026, профили группы): server задан IP, а sni —
+     * маскирующий домен ЧУЖОГО хоста. Ядро сниффирует этот домен из ClientHello
+     * и применяет СВОИ правила маршрутизации; если домен попадает в direct-правило
+     * (например, российский CDN), соединение уходит МИМО туннеля профиля и
+     * сервер рвёт рукопожатие. Это НЕ поломка получения отпечатка.
+     */
+    internal fun failureHint(
+        profile: ProfileItem,
+        server: String,
+        serverName: String?,
+        useQuic: Boolean,
+        attempts: List<SubscriptionCertPolicy.FetchAttempt>,
+    ): String {
+        val viaProfile = attempts.any { it == SubscriptionCertPolicy.FetchAttempt.VIA_PROFILE }
+        val sniDiffersFromServer = !serverName.isNullOrBlank() &&
+            !serverName.equals(server, ignoreCase = true)
+        val parts = ArrayList<String>()
+
+        if (useQuic && !quicObfuscationFor(profile).type.isEmpty()) {
+            parts += "obfs=${quicObfuscationFor(profile).type}: сервер требует обфусцированное " +
+                "рукопожатие; отказ возможен, если пароль/тип не совпадают с сервером"
+        }
+        if (viaProfile && sniDiffersFromServer && Utils.isPureIpAddress(server)) {
+            parts += "server=IP, sni — маскирующий домен: ядро может применить к нему СВОЁ " +
+                "правило маршрутизации и отправить запрос в direct мимо туннеля " +
+                "(см. GoLog: «sniffed domain» → «taking detour [direct]»)"
+        }
+        if (viaProfile && !sniDiffersFromServer) {
+            parts += "запрос шёл через профиль: проверьте, доступен ли сервер из туннеля"
+        }
+        return if (parts.isEmpty()) "" else " — вероятно: " + parts.joinToString("; ")
     }
 
     /**

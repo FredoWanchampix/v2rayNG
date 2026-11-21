@@ -110,4 +110,90 @@ class TlsCertFetcherTest {
         assertTrue(lines.size >= 2)
         assertTrue(lines.drop(1).all { it.matches(Regex("[A-Za-z-]+: .+")) })
     }
+
+    // ---------- причина отказа TLS (explainTlsFailure) ----------
+    //
+    // Вещдок лога владельца 22.11.2026: три профиля одной группы не получили отпечаток,
+    // в логе было лишь «SSLHandshakeException: connection closed» — выглядело как
+    // поломка. Настоящая причина (SNI попал в direct-правило ядра, запрос ушёл
+    // мимо туннеля) была видна только в GoLog. Теперь причина объясняется в
+    // самой строке отказа.
+
+    @Test
+    fun `connection closed via profile explains direct routing rule`() {
+        val reason = TlsCertFetcher.explainTlsFailure(
+            "javax.net.ssl.SSLHandshakeException: connection closed",
+            viaProfile = true,
+            sni = "cdn.example.test",
+        )
+
+        assertTrue(reason.contains("direct"), reason)
+        assertTrue(reason.contains("МИМО туннеля"), reason)
+        assertTrue(reason.contains("sni=cdn.example.test"), reason)
+    }
+
+    @Test
+    fun `connection closed direct does not blame profile routing`() {
+        val reason = TlsCertFetcher.explainTlsFailure(
+            "javax.net.ssl.SSLHandshakeException: connection closed",
+            viaProfile = false,
+            sni = "example.com",
+        )
+
+        assertTrue(reason.contains("прямом соединении"), reason)
+        assertFalse(reason.contains("МИМО туннеля"), reason)
+    }
+
+    @Test
+    fun `timeout explains no response and possible quic port`() {
+        val reason = TlsCertFetcher.explainTlsFailure(
+            "java.net.SocketTimeoutException: failed to connect",
+            viaProfile = true,
+            sni = null,
+        )
+
+        assertTrue(reason.contains("нет ответа"), reason)
+        assertTrue(reason.contains("QUIC"), reason)
+        // sni не задан — подсказка про sni не добавляется
+        assertFalse(reason.contains("sni="), reason)
+    }
+
+    @Test
+    fun `connection refused and unreachable have distinct reasons`() {
+        val refused = TlsCertFetcher.explainTlsFailure(
+            "java.net.ConnectException: Connection refused", true, "s.example"
+        )
+        val unreachable = TlsCertFetcher.explainTlsFailure(
+            "java.net.ConnectException: failed to connect: ENETUNREACH (Network is unreachable)", true, "s.example"
+        )
+
+        assertTrue(refused.contains("порт закрыт"), refused)
+        assertTrue(unreachable.contains("нет маршрута"), unreachable)
+    }
+
+    @Test
+    fun `proxy connect refusal is explained`() {
+        val reason = TlsCertFetcher.explainTlsFailure(
+            "proxy CONNECT refused for host: 403 Forbidden", true, "s.example"
+        )
+
+        assertTrue(reason.contains("прокси профиля отказал"), reason)
+    }
+
+    @Test
+    fun `unknown error keeps original text`() {
+        val reason = TlsCertFetcher.explainTlsFailure(
+            "java.lang.IllegalStateException: something odd", false, null
+        )
+
+        assertTrue(reason.contains("something odd"), reason)
+    }
+
+    @Test
+    fun `reason never blank for any error`() {
+        for (err in listOf("", "x", "SSLHandshakeException", "timeout", "certificate")) {
+            val reason = TlsCertFetcher.explainTlsFailure(err, viaProfile = true, sni = "h")
+            assertTrue(reason.isNotBlank(), "пустая причина для '$err'")
+        }
+    }
 }
