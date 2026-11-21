@@ -280,13 +280,28 @@ jobs:
       # Тег задан ЯВНО: submodule AndroidLibXrayLite указывает на upstream
       # (2dust), поэтому `git -C AndroidLibXrayLite describe --tags` вернул бы
       # тег БЕЗ поддержки obfs, и фикс молча не попал бы в APK.
+      #
+      # obfs.3 вместо obfs.1/obfs.2 (обе правки найдены аудитом своего кода):
+      #  - obfs.1: рукопожатие шло через Transport.DialEarly (0-RTT), который
+      #    возвращает соединение ДО завершения TLS handshake, поэтому
+      #    PeerCertificates был пуст и отпечаток не снялся бы даже с рабочего
+      #    сервера. В obfs.2+ используется Transport.Dial — он ждёт полного
+      #    рукопожатия (вещдок: DialAddr вызывает tr.dial(..., use0RTT=false)).
+      #  - obfs.2: hasObfuscation отсекала неизвестные типы obfs, из-за чего
+      #    такой профиль молча уходил в чистое QUIC и получал «context deadline
+      #    exceeded» без внятной причины, а ветка «unsupported obfs type» в
+      #    buildUDPMask была недостижима (гейт по маркеру проверял мёртвую
+      #    строку). В obfs.3 неизвестный тип даёт ЯВНУЮ ошибку с именем типа.
+      # Вещдок сборки obfs.3: прогон форка 7 — шаг Build без ошибок компиляции
+      # Go (0), гейт «4 ABI + маркер obfs» ПРОЙДЕН (arm64-v8a e_machine=183,
+      # armeabi-v7a 40, x86 3, x86_64 62), реальных ::error:: — 0.
       - name: Set libv2ray source (fork with QUIC obfs support)
         shell: bash
         run: |
           set -euo pipefail
           echo "LIBV2RAY_REPO=FredoWanchampix/AndroidLibXrayLite" >> "$GITHUB_ENV"
-          echo "CURRENT_TAG=v26.11.9-obfs.1" >> "$GITHUB_ENV"
-          echo "Using libv2ray from FredoWanchampix/AndroidLibXrayLite @ v26.11.9-obfs.1"
+          echo "CURRENT_TAG=v26.11.9-obfs.3" >> "$GITHUB_ENV"
+          echo "Using libv2ray from FredoWanchampix/AndroidLibXrayLite @ v26.11.9-obfs.3"
 
       - name: Download libv2ray
         uses: robinraju/release-downloader@v1.13

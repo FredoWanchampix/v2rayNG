@@ -429,8 +429,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "LIBV2RAY_REPO=FredoWanchampix/AndroidLibXrayLite" >> "$GITHUB_ENV"
-          echo "CURRENT_TAG=v26.11.9-obfs.1" >> "$GITHUB_ENV"
-          echo "Using libv2ray from FredoWanchampix/AndroidLibXrayLite @ v26.11.9-obfs.1"
+          echo "CURRENT_TAG=v26.11.9-obfs.3" >> "$GITHUB_ENV"
+          echo "Using libv2ray from FredoWanchampix/AndroidLibXrayLite @ v26.11.9-obfs.3"
 
       - name: Download libv2ray
         uses: robinraju/release-downloader@v1.13
