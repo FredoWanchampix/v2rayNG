@@ -16,8 +16,12 @@ import libv2ray.Libv2ray
  * Получение отпечатка сертификата (SHA-256 leaf, 64 hex) для профиля.
  *
  * Два пути рукопожатия:
- *  - QUIC (Hysteria v1/v2) — нативная [Libv2ray.fetchQuicCertSha256] (без изменений:
- *    UDP в ограничительных сетях проходит и напрямую, вещдок логов 20.11.2026);
+ *  - QUIC (Hysteria v1/v2) — нативная [Libv2ray.fetchQuicCertSha256].
+ *    UDP в ограничительных сетях проходит и напрямую (вещдок логов 20.11.2026),
+ *    но для Hysteria2 с обфускацией чистого рукопожатия НЕДОСТАТОЧНО: сервер с
+ *    salamander/gecko игнорирует необфусцированные пакеты. Поэтому в запрос
+ *    передаются obfs/obfsPassword/min-max из профиля, а применяет их либа форка
+ *    кодом самого xray-core (см. KDoc [fetchQuic]);
  *  - TLS — собственный рукопожатчик [TlsCertFetcher.fetchTls] БЕЗ проверки цепочки
  *    (trust-all) и с возможностью идти через loopback-прокси активного профиля.
  *    Прежняя нативная [Libv2ray.fetchTlsCertSha256] проверяла цепочку и не умела
@@ -94,7 +98,7 @@ object CertificateFingerprintManager {
 
         for (attempt in attempts) {
             val sha256 = when {
-                useQuic -> fetchQuic(dialAddress, port, serverName)
+                useQuic -> fetchQuic(dialAddress, port, serverName, profile)
                 attempt == SubscriptionCertPolicy.FetchAttempt.VIA_PROFILE && proxyRoute != null ->
                     TlsCertFetcher.fetchTls(
                         address = server,
@@ -123,16 +127,116 @@ object CertificateFingerprintManager {
     }
 
     /**
-     * QUIC-рукопожатие — нативная функция (не изменена, хрупкая).
-     * Возвращает отпечаток либо null; причина всегда в логе.
+     * Параметры обфускации QUIC, которые уйдут в нативный запрос.
+     *
+     * @param type "salamander" / "gecko" либо пустая строка (без обфускации —
+     *   прежнее поведение нативной функции).
+     * @param password PSK обфускации.
+     * @param minPacketSize / maxPacketSize размеры фрагментов gecko; значимы
+     *   только для gecko, иначе 0 (нативная сторона заменит нули умолчаниями
+     *   xray-core 512/1200, а для salamander размеры не используются вовсе).
      */
-    private fun fetchQuic(address: String, port: Int, serverName: String?): String? {
+    data class QuicObfuscation(
+        val type: String,
+        val password: String,
+        val minPacketSize: Int,
+        val maxPacketSize: Int,
+    ) {
+        companion object {
+            /** Отсутствие обфускации. */
+            val None = QuicObfuscation(type = "", password = "", minPacketSize = 0, maxPacketSize = 0)
+
+            /** Умолчания gecko, совпадают с xray-core (geckoDefaultMinPacket/MaxPacket). */
+            const val GECKO_DEFAULT_MIN_PACKET = 512
+            const val GECKO_DEFAULT_MAX_PACKET = 1200
+        }
+    }
+
+    /**
+     * Какую обфускацию передать нативному QUIC-рукопожатию — ЧИСТАЯ функция
+     * (без сети, без Android), доказывается JVM-тестом
+     * [com.v2ray.ang.handler.CertificateFingerprintManagerTest].
+     *
+     * Обфускация включается только при ВСЕХ условиях:
+     *  1. профиль — [EConfigType.HYSTERIA2]. У Hysteria v1 поле obfsPassword
+     *     несёт obfs-СТРОКУ mihomo (это не PSK salamander), а поле obfs для v1
+     *     вообще обнуляется редактором (ServerUiState.toProfileItem), поэтому
+     *     передача обфускации для v1 была бы неверной;
+     *  2. obfsPassword непустой — salamander без PSK не работает (xray-core
+     *     требует не менее 4 байт);
+     *  3. obfs не равен "none" — явное отключение обфускации в профиле.
+     *
+     * Тип gecko выбирается по [ProfileItem.isGeckoObfs]: obfs == "gecko" ИЛИ
+     * заполнен min/max packet size. Это ровно тот критерий, по которому ядро
+     * отличает GeckoConfig от salamander Config (вещдок: отдельного типа
+     * «gecko» в xray-core нет, различие — в наличии MinPacketSize/MaxPacketSize).
+     *
+     * Если обфускация НЕ включена, возвращается [QuicObfuscation.None] —
+     * нативная функция делает чистое рукопожатие, как раньше.
+     */
+    fun quicObfuscationFor(profile: ProfileItem): QuicObfuscation {
+        val enabled = profile.configType == EConfigType.HYSTERIA2 &&
+            !profile.obfsPassword.isNullOrBlank() &&
+            !profile.obfs.equals("none", ignoreCase = true)
+        if (!enabled) return QuicObfuscation.None
+
+        val gecko = profile.isGeckoObfs()
+        return QuicObfuscation(
+            type = if (gecko) "gecko" else "salamander",
+            password = profile.obfsPassword.orEmpty(),
+            minPacketSize = if (gecko) {
+                profile.minPacketSize?.toIntOrNull() ?: QuicObfuscation.GECKO_DEFAULT_MIN_PACKET
+            } else {
+                0
+            },
+            maxPacketSize = if (gecko) {
+                profile.maxPacketSize?.toIntOrNull() ?: QuicObfuscation.GECKO_DEFAULT_MAX_PACKET
+            } else {
+                0
+            },
+        )
+    }
+
+    /**
+     * QUIC-рукопожатие — нативная функция либы форка.
+     * Возвращает отпечаток либо null; причина всегда в логе.
+     *
+     * ОБФУСКАЦИЯ (вещдок 20.11.2026). Нативная функция делала ЧИСТОЕ
+     * QUIC-рукопожатие, а серверы Hysteria2 с obfs=salamander/gecko ждут
+     * обфусцированные пакеты и молча роняют рукопожатие. Результат: 21 из 21
+     * QUIC-отказа у профилей с obfs и 4 из 4 успеха у профилей без него
+     * (дамп 135 HY2-профилей владельца + его лог 11:50–11:53). Ядро при этом
+     * работает, потому что применяет obfs из настроек профиля — поэтому
+     * владелец пользовался профилем, а отпечаток не получался.
+     *
+     * Теперь обфускация передаётся в нативный вызов, и там её применяет код
+     * САМОГО xray-core (пакет transport/internet/finalmask/salamander), то есть
+     * байт-в-байт так же, как при работе профиля. Ничего на серверах
+     * провайдеров менять не нужно: сервер видит ровно то же рукопожатие, что
+     * видел бы от работающего профиля.
+     *
+     * Гейт строго по [EConfigType.HYSTERIA2]: у Hysteria v1 поле obfsPassword
+     * несёт obfs-СТРОКУ mihomo (не пароль salamander), а поле obfs не
+     * используется вовсе (ServerUiState.toProfileItem обнуляет его для не-hy2),
+     * поэтому передача обфускации для v1 была бы неверной.
+     */
+    private fun fetchQuic(
+        address: String,
+        port: Int,
+        serverName: String?,
+        profile: ProfileItem,
+    ): String? {
+        val obfs = quicObfuscationFor(profile)
         val requestJson = JsonUtil.toJson(
             CertSha256Request(
                 address = address,
                 port = port,
                 serverName = serverName,
                 timeoutMs = TIMEOUT_MS,
+                obfs = obfs.type,
+                obfsPassword = obfs.password,
+                minPacketSize = obfs.minPacketSize,
+                maxPacketSize = obfs.maxPacketSize,
             )
         )
         val result = try {
@@ -154,7 +258,9 @@ object CertificateFingerprintManager {
             ?: run {
                 LogUtil.w(
                     AppConfig.TAG,
-                    "QUIC cert fetch returned nothing for $address:$port (error=${result?.error ?: "null"})"
+                    "QUIC cert fetch returned nothing for $address:$port " +
+                        "(obfs=${obfs.type.ifEmpty { "none" }}, " +
+                        "error=${result?.error ?: "null"})"
                 )
                 null
             }
