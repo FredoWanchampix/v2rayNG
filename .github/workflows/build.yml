@@ -669,6 +669,59 @@ jobs:
           ls -la release-assets
           cat release-assets/SHA256SUMS.txt >> "$GITHUB_STEP_SUMMARY"
 
+      # ТРЕБОВАНИЕ ВЛАДЕЛЬЦА (21.11 03:37): в каждом APK обязаны быть нужные
+      # архитектуры. 4 per-ABI APK (arm64-v8a, armeabi-v7a, x86, x86_64) +
+      # universal со ВСЕМИ четырьмя libgojni.so монолитно. Подпись и разбиение
+      # проверяются другими шагами, но СОДЕРЖИМОЕ APK до этого не проверялось
+      # вовсе: APK без libgojni.so или universal не с 4, а с 1 архитектурой
+      # прошёл бы все шаги и упал только на устройстве (UnsatisfiedLinkError).
+      # Гейт читает zip-каталог каждого APK и сверяет набор lib/<abi>/.
+      - name: Verify libgojni.so per ABI inside every APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF'
+          import sys, zipfile, os, glob
+          ALL = {"arm64-v8a", "armeabi-v7a", "x86", "x86_64"}
+          LIB = "libgojni.so"
+          failed = 0
+          apks = sorted(glob.glob("release-assets/*.apk"))
+          if not apks:
+              print("::error::нет APK для проверки содержимого")
+              sys.exit(1)
+          for apk in apks:
+              base = os.path.basename(apk)[:-4]
+              abi = None
+              # порядок важен: x86_64 раньше x86 (x86 — подстрока x86_64)
+              for cand in ("armeabi-v7a", "arm64-v8a", "x86_64", "x86", "universal"):
+                  if base.endswith("_" + cand):
+                      abi = cand
+                      break
+              if abi is None:
+                  print("::error::не удалось определить ABI из имени %s" % base)
+                  failed = 1
+                  continue
+              with zipfile.ZipFile(apk) as z:
+                  names = z.namelist()
+              want = ALL if abi == "universal" else {abi}
+              missing = sorted(w for w in want if ("lib/%s/%s" % (w, LIB)) not in names)
+              present = sorted(a for a in ALL if ("lib/%s/%s" % (a, LIB)) in names)
+              if abi == "universal":
+                  status = "universal: все 4 ABI" if not missing else "universal: НЕ ХВАТАЕТ %s" % missing
+              else:
+                  ok = (not missing) and (set(present) == {abi})
+                  status = ("%s: только %s" % (abi, abi)) if ok else ("%s: present=%s missing=%s" % (abi, present, missing))
+                  if not ok:
+                      failed = 1
+              if missing and abi == "universal":
+                  failed = 1
+              print("  %-16s %s" % (abi, status))
+          if failed:
+              print("::error::ГЕЙТ ПРОВАЛЕН: состав libgojni.so в APK неверен (см. выше)")
+              sys.exit(1)
+          print("ГЕЙТ ПРОЙДЕН: 4 per-ABI APK содержат только свою libgojni.so, universal — все 4.")
+          PYEOF
+
       - name: Upload APK artifacts (all in one)
         uses: actions/upload-artifact@v7
         with:
