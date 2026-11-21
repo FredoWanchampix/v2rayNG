@@ -267,28 +267,31 @@ jobs:
           set -euo pipefail
           cp -r "${{ github.workspace }}/libs" "${{ github.workspace }}/V2rayNG/app"
 
-      - name: Fetch AndroidLibXrayLite tag
+      # libv2ray.aar берётся из ФОРКА владельца, а не из upstream 2dust.
+      # Причина (вещдок 20.11.2026): нативная fetchQuicCertSha256 делала чистое
+      # QUIC-рукопожатие без обфускации, поэтому ВСЕ Hysteria2-профили с
+      # obfs=salamander/gecko получали «context deadline exceeded» (21 из 21
+      # отказа против 4 из 4 успеха у профилей без obfs). Форк передаёт
+      # obfs/obfsPassword/min-max из профиля и применяет их кодом самого
+      # xray-core (transport/internet/finalmask/salamander), то есть байт-в-байт
+      # как это делает ядро при работе профиля. Серверы провайдеров при этом
+      # менять НЕ нужно.
+      #
+      # Тег задан ЯВНО: submodule AndroidLibXrayLite указывает на upstream
+      # (2dust), поэтому `git -C AndroidLibXrayLite describe --tags` вернул бы
+      # тег БЕЗ поддержки obfs, и фикс молча не попал бы в APK.
+      - name: Set libv2ray source (fork with QUIC obfs support)
         shell: bash
         run: |
           set -euo pipefail
-          CURRENT_TAG="$(git -C AndroidLibXrayLite describe --tags --abbrev=0 || true)"
-          if [ -z "$CURRENT_TAG" ]; then
-            echo "::warning::No tag in the pinned submodule; falling back to the latest upstream release."
-            CURRENT_TAG="$(curl -fsSL --retry 3 \
-              https://api.github.com/repos/2dust/AndroidLibXrayLite/releases/latest \
-              | jq -r '.tag_name')"
-          fi
-          if [ -z "$CURRENT_TAG" ] || [ "$CURRENT_TAG" = "null" ]; then
-            echo "::error::Cannot determine AndroidLibXrayLite release tag."
-            exit 1
-          fi
-          echo "CURRENT_TAG=$CURRENT_TAG" >> "$GITHUB_ENV"
-          echo "Using AndroidLibXrayLite tag: $CURRENT_TAG"
+          echo "LIBV2RAY_REPO=FredoWanchampix/AndroidLibXrayLite" >> "$GITHUB_ENV"
+          echo "CURRENT_TAG=v26.11.9-obfs.1" >> "$GITHUB_ENV"
+          echo "Using libv2ray from FredoWanchampix/AndroidLibXrayLite @ v26.11.9-obfs.1"
 
       - name: Download libv2ray
         uses: robinraju/release-downloader@v1.13
         with:
-          repository: 2dust/AndroidLibXrayLite
+          repository: ${{ env.LIBV2RAY_REPO }}
           tag: ${{ env.CURRENT_TAG }}
           fileName: libv2ray.aar
           out-file-path: V2rayNG/app/libs/
@@ -310,6 +313,73 @@ jobs:
           done
           [ "$missing" -eq 0 ] || exit 1
           echo "All required native libraries are staged."
+
+      # ТРЕБОВАНИЕ ВЛАДЕЛЬЦА: клиент выпускает 5 APK — по одному на каждую из
+      # 4 ABI (arm64-v8a, armeabi-v7a, x86, x86_64) плюс universal со всеми
+      # четырьмя .so монолитно. libgojni.so берётся из libv2ray.aar, поэтому
+      # здесь проверяется, что aar содержит ВСЕ ЧЕТЫРЕ архитектуры, каждая .so
+      # — валидный ELF нужной машины, и что aar собран именно из форка с
+      # поддержкой obfs (маркер в бинарнике). Провал гейта останавливает сборку:
+      # universal-APK без одной из архитектур дал бы UnsatisfiedLinkError в
+      # рантайме, а aar без obfs молча вернул бы прежний баг с сертификатами.
+      - name: Verify libv2ray.aar has all four ABIs and obfs support
+        shell: bash
+        run: |
+          set -euo pipefail
+          AAR="V2rayNG/app/libs/libv2ray.aar"
+          echo "Checking $AAR ($(stat -c%s "$AAR") bytes)"
+          rm -rf /tmp/aarcheck && mkdir -p /tmp/aarcheck
+          unzip -q -o "$AAR" -d /tmp/aarcheck
+
+          failed=0
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            so="/tmp/aarcheck/jni/$abi/libgojni.so"
+            if [ ! -f "$so" ]; then
+              echo "::error::libv2ray.aar: ОТСУТСТВУЕТ jni/$abi/libgojni.so"
+              failed=1
+              continue
+            fi
+            # ELF-заголовок: e_machine — 2 байта на смещении 18 (little-endian)
+            machine="$(od -An -tu2 -j18 -N2 "$so" | tr -d ' ')"
+            case "$abi" in
+              armeabi-v7a) want=40;  wname="ARM" ;;
+              arm64-v8a)   want=183; wname="AArch64" ;;
+              x86)         want=3;   wname="Intel 80386" ;;
+              x86_64)      want=62;  wname="x86-64" ;;
+            esac
+            size="$(stat -c%s "$so")"
+            echo "  $abi: ${size} bytes, e_machine=${machine} (want ${want} = ${wname})"
+            if [ "$machine" != "$want" ]; then
+              echo "::error::libv2ray.aar: $abi e_machine=${machine}, ожидалось ${want} (${wname})"
+              failed=1
+            fi
+          done
+
+          # geo-данные обязательны (клиент их использует из assets aar)
+          for dat in geoip.dat geosite.dat geoip-only-cn-private.dat; do
+            if [ ! -f "/tmp/aarcheck/assets/$dat" ]; then
+              echo "::error::libv2ray.aar: ОТСУТСТВУЕТ assets/$dat"; failed=1
+            fi
+          done
+
+          # Маркер обфускации: доказывает, что взят aar ФОРКА, а не upstream
+          marker_found=0
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            so="/tmp/aarcheck/jni/$abi/libgojni.so"
+            [ -f "$so" ] || continue
+            if python3 -c "import sys; sys.exit(0 if b'unsupported obfs type' in open(sys.argv[1],'rb').read() else 1)" "$so"; then
+              marker_found=$((marker_found+1))
+            else
+              echo "::error::libv2ray.aar: $abi — маркер obfs-поддержки НЕ найден (взят upstream-без obfs?)"
+              failed=1
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::ГЕЙТ ПРОВАЛЕН: libv2ray.aar непригоден (нет 4 ABI и/или нет obfs)"
+            exit 1
+          fi
+          echo "ГЕЙТ ПРОЙДЕН: 4/4 ABI валидны (e_machine), geo-данные на месте, obfs-маркер найден в ${marker_found}/4 .so."
 
       - name: Setup Java
         uses: actions/setup-java@v6.2.0

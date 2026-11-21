@@ -418,26 +418,24 @@ jobs:
           mkdir -p V2rayNG/app/libs
           cp -r libs/. V2rayNG/app/libs/
 
-      - name: Find AndroidLibXrayLite release tag
+      # libv2ray.aar — из ФОРКА владельца (поддержка обфускации QUIC при
+      # получении отпечатка сертификата), см. подробный комментарий в build.yml.
+      # Тег задан ЯВНО: submodule указывает на upstream 2dust, и describe вернул
+      # бы тег без obfs. Совпадение с build.yml ОБЯЗАТЕЛЬНО: иначе sync-сборка и
+      # release-сборка дали бы APK с разным поведением сертификатов — ровно то
+      # расхождение, которое устранялось общим бандлингом движков.
+      - name: Set libv2ray source (fork with QUIC obfs support)
         shell: bash
         run: |
           set -euo pipefail
-          CURRENT_TAG="$(git -C AndroidLibXrayLite describe --tags --abbrev=0 || true)"
-          if [ -z "$CURRENT_TAG" ]; then
-            CURRENT_TAG="$(curl -fsSL --retry 3 \
-              "https://api.github.com/repos/${UPSTREAM_REPO%/*}/AndroidLibXrayLite/releases/latest" \
-              | jq -r '.tag_name')"
-          fi
-          if [ -z "$CURRENT_TAG" ] || [ "$CURRENT_TAG" = "null" ]; then
-            echo "::error::AndroidLibXrayLite tag not found."; exit 1
-          fi
-          echo "CURRENT_TAG=$CURRENT_TAG" >> "$GITHUB_ENV"
-          echo "Using AndroidLibXrayLite tag: $CURRENT_TAG"
+          echo "LIBV2RAY_REPO=FredoWanchampix/AndroidLibXrayLite" >> "$GITHUB_ENV"
+          echo "CURRENT_TAG=v26.11.9-obfs.1" >> "$GITHUB_ENV"
+          echo "Using libv2ray from FredoWanchampix/AndroidLibXrayLite @ v26.11.9-obfs.1"
 
       - name: Download libv2ray
         uses: robinraju/release-downloader@v1.13
         with:
-          repository: 2dust/AndroidLibXrayLite
+          repository: ${{ env.LIBV2RAY_REPO }}
           tag: ${{ env.CURRENT_TAG }}
           fileName: libv2ray.aar
           out-file-path: V2rayNG/app/libs/
@@ -453,6 +451,32 @@ jobs:
               [ -f "V2rayNG/app/libs/$abi/$lib" ] || { echo "::error::libs/$abi/$lib missing"; fail=1; }
             done
           done
+          # Все 4 ABI libgojni.so внутри aar + маркер obfs (см. build.yml).
+          if [ -f V2rayNG/app/libs/libv2ray.aar ]; then
+            rm -rf /tmp/aarcheck && mkdir -p /tmp/aarcheck
+            unzip -q -o V2rayNG/app/libs/libv2ray.aar -d /tmp/aarcheck
+            for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+              so="/tmp/aarcheck/jni/$abi/libgojni.so"
+              if [ ! -f "$so" ]; then
+                echo "::error::libv2ray.aar: нет jni/$abi/libgojni.so"; fail=1; continue
+              fi
+              machine="$(od -An -tu2 -j18 -N2 "$so" | tr -d ' ')"
+              case "$abi" in
+                armeabi-v7a) want=40 ;;
+                arm64-v8a)   want=183 ;;
+                x86)         want=3 ;;
+                x86_64)      want=62 ;;
+              esac
+              echo "  $abi: $(stat -c%s "$so") bytes, e_machine=${machine} (want ${want})"
+              [ "$machine" = "$want" ] || { echo "::error::libv2ray.aar: $abi e_machine=${machine} != ${want}"; fail=1; }
+              if ! python3 -c "import sys; sys.exit(0 if b'unsupported obfs type' in open(sys.argv[1],'rb').read() else 1)" "$so"; then
+                echo "::error::libv2ray.aar: $abi — нет маркера obfs-поддержки"; fail=1
+              fi
+            done
+            for dat in geoip.dat geosite.dat geoip-only-cn-private.dat; do
+              [ -f "/tmp/aarcheck/assets/$dat" ] || { echo "::error::libv2ray.aar: нет assets/$dat"; fail=1; }
+            done
+          fi
           [ "$fail" -eq 0 ] || exit 1
           echo "Native libraries OK"
 
