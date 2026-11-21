@@ -127,7 +127,11 @@ class CoreTestService : Service() {
             worker = WhitelistSearchWorkerService(
                 context = this,
                 guids = guidsList,
-                onEvent = { event -> handleWorkerEvent(event, message) { activeWhitelistWorkers.remove(worker) } }
+                onEvent = { event ->
+                    handleWorkerEvent(event, message, isWhitelistSearch = true) {
+                        activeWhitelistWorkers.remove(worker)
+                    }
+                }
             )
             activeWhitelistWorkers.add(worker)
             worker.start()
@@ -153,7 +157,11 @@ class CoreTestService : Service() {
                 guids = guidsList,
                 onlyTcp = message.onlyTcp,
                 onlyIcmp = message.onlyIcmp,
-                onEvent = { event -> handleWorkerEvent(event, message) { activeWorkers.remove(worker) } }
+                onEvent = { event ->
+                    handleWorkerEvent(event, message, isWhitelistSearch = false) {
+                        activeWorkers.remove(worker)
+                    }
+                }
             )
             activeWorkers.add(worker)
             worker.start()
@@ -163,7 +171,27 @@ class CoreTestService : Service() {
         }
     }
 
-    private fun handleWorkerEvent(event: RealPingEvent, message: TestServiceMessage, onWorkerDone: () -> Unit) {
+    /**
+     * Общий обработчик событий воркеров.
+     *
+     * @param isWhitelistSearch true — событие пришло от «Поиска стабильных
+     *   профилей» ([WhitelistSearchWorkerService]), false — от обычного теста
+     *   задержки ([RealPingWorkerService]). Нужен, потому что обработчик ОДИН на
+     *   два вида воркеров, а сортировка по итогу у них должна быть РАЗНОЙ:
+     *   обычный тест меряет задержку → сортировка по пингу (прежнее поведение),
+     *   поиск стабильных профилей меряет ещё и скорость → сортировка по скорости.
+     *
+     *   Требование владельца (22.11.2026): «когда именно функция поиск стабильных
+     *   профилей закончит работать, чтобы она сортировала не по пингу, а по
+     *   скорости». Сам поиск (две фазы, дорожки FPTN, ранний выход) НЕ меняется —
+     *   меняется только выбор готовой функции сортировки на его финише.
+     */
+    private fun handleWorkerEvent(
+        event: RealPingEvent,
+        message: TestServiceMessage,
+        isWhitelistSearch: Boolean,
+        onWorkerDone: () -> Unit,
+    ) {
         when (event) {
             is RealPingEvent.Progress -> {
                 NotificationHelper.updateNotification(
@@ -192,13 +220,29 @@ class CoreTestService : Service() {
                     }
 
                     if (MmkvManager.decodeSettingsBool(AppConfig.PREF_AUTO_SORT_AFTER_TEST, false)) {
-                        AngConfigManager.sortByTestResultsForSub(message.subscriptionId)
+                        // Поиск стабильных профилей заканчивается фазой СКОРОСТИ,
+                        // поэтому итоговый порядок — по скорости (быстрые сверху,
+                        // непроверенные/нестабильные снизу). Обычный тест задержки
+                        // сортирует по пингу, как и раньше.
+                        if (isWhitelistSearch) {
+                            AngConfigManager.sortBySpeedResultsForSub(message.subscriptionId)
+                            LogUtil.i(
+                                AppConfig.TAG,
+                                "Whitelist search finished: sorted by SPEED for sub ${message.subscriptionId}"
+                            )
+                        } else {
+                            AngConfigManager.sortByTestResultsForSub(message.subscriptionId)
+                        }
                     }
                 }
 
                 MessageHelper.sendMsg2UI(this, AppConfig.MSG_MEASURE_CONFIG_FINISH, event.status)
                 onWorkerDone()
-                if (activeWorkers.isEmpty()) {
+                // Останавливаемся, только когда не осталось НИ ОДНОГО воркера
+                // обоих видов. Прежняя проверка учитывала лишь activeWorkers,
+                // поэтому финиш обычного теста задержки мог остановить сервис,
+                // пока «Поиск стабильных профилей» ещё работал (и наоборот).
+                if (activeWorkers.isEmpty() && activeWhitelistWorkers.isEmpty()) {
                     NotificationHelper.stopForeground(this)
                     stopSelf()
                 }
