@@ -314,4 +314,79 @@ class CertificateFingerprintManagerTest {
 
         assertEquals("", hint)
     }
+
+    // ---------- обёртка failureHintFor (причина в видимой строке отказа) ----------
+    //
+    // Разрыв «видит юзер» ↔ «хранит код»: строка «Subscription cert NOT fetched»
+    // (AngConfigManager.applyCertPolicies) шла БЕЗ причины, а причина писалась в
+    // отдельную строку «no result after N attempt(s)». Вещдок лога владельца
+    // 22.11.2026: три строки «NOT fetched … tried: profile» без объяснения.
+
+    @Test
+    fun `failureHintFor derives sni and quic from profile itself`() {
+        val p = vlessIpWithMaskedSni()
+        val hint = CertificateFingerprintManager.failureHintFor(
+            p,
+            listOf(SubscriptionCertPolicy.FetchAttempt.VIA_PROFILE),
+        )
+
+        // Тот же результат, что и у failureHint с вручную переданными параметрами.
+        val direct = CertificateFingerprintManager.failureHint(
+            profile = p,
+            server = p.server!!,
+            serverName = p.sni,
+            useQuic = false,
+            attempts = listOf(SubscriptionCertPolicy.FetchAttempt.VIA_PROFILE),
+        )
+        assertEquals(direct, hint)
+        assertTrue(hint.contains("маскирующий домен"), hint)
+    }
+
+    @Test
+    fun `failureHintFor detects quic profile without caller telling it`() {
+        val p = ProfileItem(configType = EConfigType.HYSTERIA2).apply {
+            obfs = "salamander"
+            obfsPassword = "secretpsk"
+            server = "example.com"
+            serverPort = "2096"
+        }
+        val hint = CertificateFingerprintManager.failureHintFor(
+            p,
+            listOf(SubscriptionCertPolicy.FetchAttempt.DIRECT),
+        )
+
+        assertTrue(hint.contains("obfs=salamander"), hint)
+    }
+
+    @Test
+    fun `failureHintFor returns empty for profile without server`() {
+        val p = ProfileItem(configType = EConfigType.VLESS).apply {
+            security = AppConfig.TLS
+            server = "   "
+            sni = "cdn.example.test"
+        }
+        assertEquals(
+            "",
+            CertificateFingerprintManager.failureHintFor(
+                p,
+                listOf(SubscriptionCertPolicy.FetchAttempt.VIA_PROFILE),
+            ),
+        )
+    }
+
+    @Test
+    fun `failureHintFor keeps empty string when nothing to explain`() {
+        val p = ProfileItem(configType = EConfigType.VLESS).apply {
+            security = AppConfig.TLS
+            server = "203.0.113.10"
+            serverPort = "443"
+        }
+        assertEquals(
+            "",
+            CertificateFingerprintManager.failureHintFor(
+                p,
+                listOf(SubscriptionCertPolicy.FetchAttempt.DIRECT),
+            ),
+        )
+    }
 }

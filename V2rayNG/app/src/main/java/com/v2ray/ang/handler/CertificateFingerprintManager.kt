@@ -174,6 +174,42 @@ object CertificateFingerprintManager {
     }
 
     /**
+     * Подсказка о причине отказа для ПРОФИЛЯ — обёртка над [failureHint] для
+     * вызывающих, у которых нет уже разобранных адреса/SNI (например
+     * `AngConfigManager.applyCertPolicies`, который пишет видимую владельцем
+     * строку «Subscription cert NOT fetched»).
+     *
+     * Зачем: отказ читался в ДВУХ разных строках лога — сводная «NOT fetched»
+     * была без причины, а причина уходила в «no result after N attempt(s)».
+     * Вещдок лога владельца 22.11.2026: три строки «NOT fetched … tried:
+     * profile» БЕЗ объяснения, при этом GoLog рядом показывает настоящую
+     * причину (SNI-маска чужого домена → «taking detour [direct]» → разрыв TLS).
+     * Поверхностей у симптома несколько (см. метод аудита), поэтому причина
+     * обязана быть в каждой видимой строке отказа, а не только в одной.
+     *
+     * Пустой server даёт пустую подсказку: на таком профиле [fetchWithRoute]
+     * отказывается ещё до попыток и пишет свою строку.
+     *
+     * @param profile профиль, по которому получен отказ.
+     * @param attempts список фактически сделанных попыток.
+     * @return « — вероятно: …» либо пустая строка.
+     */
+    fun failureHintFor(
+        profile: ProfileItem,
+        attempts: List<SubscriptionCertPolicy.FetchAttempt>,
+    ): String {
+        val server = profile.server?.trim().orEmpty()
+        if (server.isEmpty()) return ""
+        return failureHint(
+            profile = profile,
+            server = server,
+            serverName = inferServerName(profile),
+            useQuic = usesQuicFor(profile),
+            attempts = attempts,
+        )
+    }
+
+    /**
      * Параметры обфускации QUIC, которые уйдут в нативный запрос.
      *
      * @param type "salamander" / "gecko" либо пустая строка (без обфускации —

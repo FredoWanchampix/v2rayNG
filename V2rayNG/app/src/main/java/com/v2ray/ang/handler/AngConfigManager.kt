@@ -511,12 +511,17 @@ object AngConfigManager {
                             } else if (sha256 == null) {
                                 // Видимый в логе отказ со ВСЕМИ сделанными попытками
                                 // (первая версия фичи молчала — владелец не мог
-                                // понять, почему сертификатов нет).
+                                // понять, почему сертификатов нет) И с вероятной
+                                // причиной в этой же строке: раньше причина
+                                // уходила только в строку «no result after N
+                                // attempt(s)», а «NOT fetched» выглядела как
+                                // поломка функции (вещдок лога 22.11.2026).
                                 LogUtil.w(
                                     AppConfig.TAG,
                                     "Subscription cert NOT fetched for ${profile.remarks} " +
                                         "(${profile.configType}, ${profile.server}:${profile.serverPort}) " +
-                                        "tried: ${attempts.joinToString("+") { it.label }}"
+                                        "tried: ${attempts.joinToString("+") { it.label }}" +
+                                        CertificateFingerprintManager.failureHintFor(profile, attempts)
                                 )
                             }
                         } catch (e: Exception) {
