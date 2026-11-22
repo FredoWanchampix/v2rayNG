@@ -29,6 +29,7 @@ import com.v2ray.ang.dto.entities.WebDavConfig
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.Utils
+import com.v2ray.ang.util.ZeroSpeedRemovalPolicy
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -656,7 +657,7 @@ object MmkvManager {
         var count = 0
         if (guid.isNotEmpty()) {
             decodeServerAffiliationInfo(guid)?.let { aff ->
-                if (aff.testSpeedBytesPerSec != null && aff.testSpeedBytesPerSec == 0L) {
+                if (ZeroSpeedRemovalPolicy.shouldRemove(aff.testSpeedPresent, aff.testSpeedBytesPerSec)) {
                     removeServer(guid)
                     count++
                 }
@@ -664,7 +665,7 @@ object MmkvManager {
         } else {
             serverAffStorage.allKeys()?.forEach { key ->
                 decodeServerAffiliationInfo(key)?.let { aff ->
-                    if (aff.testSpeedBytesPerSec != null && aff.testSpeedBytesPerSec == 0L) {
+                    if (ZeroSpeedRemovalPolicy.shouldRemove(aff.testSpeedPresent, aff.testSpeedBytesPerSec)) {
                         removeServer(key)
                         count++
                     }
