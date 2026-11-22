@@ -504,8 +504,18 @@ object MmkvManager {
             return
         }
 
-        val config = decodeServerConfig(guid)
-        val subId = getSubscriptionId(config?.subscriptionId)
+        // Подписка читается НАПРЯМУЮ из сохранённого JSON, а не через
+        // decodeServerConfig. ФОРК-ДЕФЕКТ: decodeServerConfig возвращает null ещё и
+        // когда не удалось восстановить configType (форк-логика
+        // recoverStoredConfigType) — при валидном JSON и известной подписке. Тогда
+        // сюда подставлялась DEFAULT-подписка: payload стирался, а guid навсегда
+        // оставался мёртвым в индексе СВОЕЙ подписки, и удалить его тем же способом
+        // было уже нельзя. Для чтения subscriptionId configType не нужен вовсе.
+        // Подробности и вещдоки (27036/27036 записей, 7134/7134 совпадений с
+        // индексом) — в KDoc [StoredProfileSubscription].
+        val subId = getSubscriptionId(
+            StoredProfileSubscription.fromProfileJson(profileFullStorage.decodeString(guid))
+        )
         val serverList = decodeServerList(subId)
         serverList.remove(guid)
         encodeServerList(serverList, subId)
