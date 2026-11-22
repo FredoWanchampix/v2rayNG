@@ -85,12 +85,14 @@ object Utils {
      * стектрейсами уровня E («bad base-64» + «Failed to decode standard/URL-safe
      * base64»), в которых тонули настоящие ошибки.
      *
-     * Поэтому неудача отдельной попытки теперь пишется на уровне DEBUG без
-     * стектрейса (это ожидаемый исход пробы), а сводная строка уровня WARNING
-     * появляется ОДИН раз, когда не удалось декодировать НИ одним способом —
-     * то есть когда это действительно может быть проблемой. Диагностика не
-     * потеряна: видно и то, что проба была, и то, что она не удалась, и размер
-     * входа; просто без 12 стектрейсов на каждое обновление подписки.
+     * Выбор уровня и текста вынесен в [Base64ProbePolicy] — чистый объект без
+     * Android, доказывается JVM-тестом Base64ProbePolicyTest. Неудача отдельной
+     * попытки пишется на уровне DEBUG и без стектрейса (это ожидаемый исход
+     * пробы); сводная строка уровня WARNING появляется ОДИН раз и только когда
+     * не удалось декодировать НИ одним способом, то есть когда это действительно
+     * может быть проблемой. Диагностика не потеряна: видно и то, что проба была,
+     * и то, что она не удалась, и размер входа — просто без 12 стектрейсов на
+     * каждое обновление подписки.
      *
      * @param text The base64 encoded string.
      * @return The decoded string, or an empty string if decoding fails.
@@ -103,14 +105,23 @@ object Utils {
             val retry = tryDecodeBase64(trimmed)
             if (retry != null) return retry
         }
-        if (!text.isNullOrEmpty()) {
-            LogUtil.w(
-                AppConfig.TAG,
-                "Base64 probe failed (standard, URL-safe, without padding): " +
-                    "input ${text.length} chars — treating content as plain text"
-            )
-        }
+        logProbeEntry(Base64ProbePolicy.allAttemptsRejected(text?.length ?: 0))
         return ""
+    }
+
+    /**
+     * Запись сообщения пробы base64 на уровне, выбранном [Base64ProbePolicy].
+     *
+     * `when` по enum БЕЗ else (инвариант полноты): добавление нового уровня
+     * сломает компиляцию, а не пройдёт молча. [Base64ProbePolicy.Level.NONE]
+     * не пишет ничего — пустой вход проблемой не считается.
+     */
+    private fun logProbeEntry(entry: Base64ProbePolicy.Entry) {
+        when (entry.level) {
+            Base64ProbePolicy.Level.DEBUG -> LogUtil.d(AppConfig.TAG, entry.message)
+            Base64ProbePolicy.Level.WARNING -> LogUtil.w(AppConfig.TAG, entry.message)
+            Base64ProbePolicy.Level.NONE -> Unit
+        }
     }
 
     /**
@@ -129,12 +140,12 @@ object Utils {
         try {
             return Base64.decode(text, Base64.NO_WRAP).toString(Charsets.UTF_8)
         } catch (e: Exception) {
-            LogUtil.d(AppConfig.TAG, "Base64 probe: standard form rejected (${e.javaClass.simpleName})")
+            logProbeEntry(Base64ProbePolicy.attemptRejected("standard", e.javaClass.simpleName))
         }
         try {
             return Base64.decode(text, Base64.NO_WRAP.or(Base64.URL_SAFE)).toString(Charsets.UTF_8)
         } catch (e: Exception) {
-            LogUtil.d(AppConfig.TAG, "Base64 probe: URL-safe form rejected (${e.javaClass.simpleName})")
+            logProbeEntry(Base64ProbePolicy.attemptRejected("URL-safe", e.javaClass.simpleName))
         }
         return null
     }
