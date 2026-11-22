@@ -177,14 +177,20 @@ class CoreTestService : Service() {
      * @param isWhitelistSearch true — событие пришло от «Поиска стабильных
      *   профилей» ([WhitelistSearchWorkerService]), false — от обычного теста
      *   задержки ([RealPingWorkerService]). Нужен, потому что обработчик ОДИН на
-     *   два вида воркеров, а сортировка по итогу у них должна быть РАЗНОЙ:
-     *   обычный тест меряет задержку → сортировка по пингу (прежнее поведение),
-     *   поиск стабильных профилей меряет ещё и скорость → сортировка по скорости.
+     *   два вида воркеров, а итоговая сортировка у них РАЗНАЯ:
+     *   обычный тест меряет только задержку → сортировка по пингу, как и раньше,
+     *   под свитчом [AppConfig.PREF_AUTO_SORT_AFTER_TEST];
+     *   поиск стабильных профилей меряет ещё и скорость → сортировка по скорости
+     *   БЕЗУСЛОВНО.
      *
      *   Требование владельца (22.11.2026): «когда именно функция поиск стабильных
      *   профилей закончит работать, чтобы она сортировала не по пингу, а по
-     *   скорости». Сам поиск (две фазы, дорожки FPTN, ранний выход) НЕ меняется —
-     *   меняется только выбор готовой функции сортировки на его финише.
+     *   скорости». Требование БЕЗУСЛОВНОЕ, поэтому сортировка по скорости на
+     *   финише поиска НЕ зависит от свитча «авто-сортировка после теста»: тот
+     *   свитч управляет прежним поведением обычного теста задержки и не должен
+     *   гасить эту сортировку. Сам поиск (две фазы, разделение дорожек FPTN,
+     *   намеренное отсутствие раннего выхода) НЕ меняется ни на строку — меняется
+     *   только выбор готовой функции сортировки на его финише.
      */
     private fun handleWorkerEvent(
         event: RealPingEvent,
@@ -219,21 +225,21 @@ class CoreTestService : Service() {
                         AngConfigManager.removeInvalidServer(message.subscriptionId)
                     }
 
-                    if (MmkvManager.decodeSettingsBool(AppConfig.PREF_AUTO_SORT_AFTER_TEST, false)) {
-                        // Поиск стабильных профилей заканчивается фазой СКОРОСТИ,
-                        // поэтому итоговый порядок — по скорости (быстрые сверху,
-                        // непроверенные/нестабильные снизу). Обычный тест задержки
-                        // сортирует по пингу, как и раньше.
-                        if (isWhitelistSearch) {
-                            AngConfigManager.sortBySpeedResultsForSub(message.subscriptionId)
-                            LogUtil.i(
-                                AppConfig.TAG,
-                                "Whitelist search finished: sorted by SPEED for sub ${message.subscriptionId}"
-                            )
-                        } else {
-                            AngConfigManager.sortByTestResultsForSub(message.subscriptionId)
-                        }
+                    // Обычный тест задержки сортирует по пингу и ТОЛЬКО по свитчу —
+                    // прежнее поведение сохранено.
+                    if (!isWhitelistSearch &&
+                        MmkvManager.decodeSettingsBool(AppConfig.PREF_AUTO_SORT_AFTER_TEST, false)
+                    ) {
+                        AngConfigManager.sortByTestResultsForSub(message.subscriptionId)
                     }
+                }
+
+                // Поиск стабильных профилей заканчивается фазой СКОРОСТИ, поэтому
+                // итоговый порядок — по скорости (быстрые сверху, непроверенные и
+                // неустойчивые снизу), БЕЗУСЛОВНО и ДО отправки FINISH: UI
+                // перезагружает список по FINISH, значит новый порядок виден сразу.
+                if (isWhitelistSearch) {
+                    sortAfterWhitelistSearch(message.subscriptionId)
                 }
 
                 MessageHelper.sendMsg2UI(this, AppConfig.MSG_MEASURE_CONFIG_FINISH, event.status)
@@ -248,6 +254,28 @@ class CoreTestService : Service() {
                 }
             }
         }
+    }
+
+    /**
+     * Итоговая сортировка после «Поиска стабильных профилей» — по СКОРОСТИ,
+     * БЕЗУСЛОВНО (не под свитчом «авто-сортировка после теста»: тот свитч
+     * управляет прежним поведением обычного теста задержки).
+     *
+     * Используется готовая [AngConfigManager.sortBySpeedResultsForSub]: быстрые
+     * сверху, непроверенные (0) и неустойчивые (-1) — снизу. Выбор списков —
+     * чистая функция [WhitelistSortPolicy.targets] (доказывается JVM-тестом).
+     */
+    private fun sortAfterWhitelistSearch(subscriptionId: String) {
+        val targets = WhitelistSortPolicy.targets(
+            subscriptionId = subscriptionId,
+            subsList = MmkvManager.decodeSubsList(),
+            defaultSubId = AppConfig.DEFAULT_SUBSCRIPTION_ID,
+        )
+        targets.forEach { AngConfigManager.sortBySpeedResultsForSub(it) }
+        LogUtil.i(
+            AppConfig.TAG,
+            "Whitelist search finished: sorted by SPEED, ${targets.size} list(s)"
+        )
     }
 
     private fun handleMeasureCancel() {
