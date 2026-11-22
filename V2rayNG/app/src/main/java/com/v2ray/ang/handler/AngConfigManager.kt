@@ -958,15 +958,23 @@ object AngConfigManager {
     /**
      * Removes invalid server configurations for a subscription.
      *
+     * Возвращает число удалённых профилей: вызывающему (авто-удаление после
+     * теста в [com.v2ray.ang.service.CoreTestService]) нужно писать в лог
+     * честное количество, а не «-1/неизвестно». Добавление возвращаемого типа к
+     * функции, раньше возвращавшей Unit, обратно совместимо: прежние вызовы
+     * выражением-оператором продолжают компилироваться.
+     *
      * @param subId The subscription ID.
+     * @return число удалённых профилей (с `testDelayMillis < 0`).
      */
-    fun removeInvalidServer(subId: String) {
+    fun removeInvalidServer(subId: String): Int {
         val serverList = MmkvManager.decodeServerList(subId)
         val invalidServers = serverList.filter {
             val aff = MmkvManager.decodeServerAffiliationInfo(it)
             aff != null && aff.testDelayMillis < 0L
         }
         MmkvManager.removeServers(invalidServers, subId)
+        return invalidServers.size
     }
 
     /**

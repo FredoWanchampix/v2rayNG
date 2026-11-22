@@ -191,6 +191,12 @@ class CoreTestService : Service() {
      *   гасить эту сортировку. Сам поиск (две фазы, разделение дорожек FPTN,
      *   намеренное отсутствие раннего выхода) НЕ меняется ни на строку — меняется
      *   только выбор готовой функции сортировки на его финише.
+     *
+     *   СКОУП действий на финише (авто-удаление недействительных и сортировка)
+     *   берётся из [TestFinishScopePolicy] и обязан совпадать со скоупом
+     *   ИЗМЕРЕНИЯ воркера: вкладка «Все», одна подписка или только отфильтрованные
+     *   по слову профили. Прежняя привязка к `subscriptionId.isNotEmpty()` давала
+     *   три дефекта — см. KDoc политики.
      */
     private fun handleWorkerEvent(
         event: RealPingEvent,
@@ -220,27 +226,7 @@ class CoreTestService : Service() {
             }
 
             is RealPingEvent.Finish -> {
-                if (message.subscriptionId.isNotEmpty()) {
-                    if (MmkvManager.decodeSettingsBool(AppConfig.PREF_AUTO_REMOVE_INVALID_AFTER_TEST, false)) {
-                        AngConfigManager.removeInvalidServer(message.subscriptionId)
-                    }
-
-                    // Обычный тест задержки сортирует по пингу и ТОЛЬКО по свитчу —
-                    // прежнее поведение сохранено.
-                    if (!isWhitelistSearch &&
-                        MmkvManager.decodeSettingsBool(AppConfig.PREF_AUTO_SORT_AFTER_TEST, false)
-                    ) {
-                        AngConfigManager.sortByTestResultsForSub(message.subscriptionId)
-                    }
-                }
-
-                // Поиск стабильных профилей заканчивается фазой СКОРОСТИ, поэтому
-                // итоговый порядок — по скорости (быстрые сверху, непроверенные и
-                // неустойчивые снизу), БЕЗУСЛОВНО и ДО отправки FINISH: UI
-                // перезагружает список по FINISH, значит новый порядок виден сразу.
-                if (isWhitelistSearch) {
-                    sortAfterWhitelistSearch(message.subscriptionId)
-                }
+                applyFinishActions(message, isWhitelistSearch)
 
                 MessageHelper.sendMsg2UI(this, AppConfig.MSG_MEASURE_CONFIG_FINISH, event.status)
                 onWorkerDone()
@@ -257,25 +243,75 @@ class CoreTestService : Service() {
     }
 
     /**
-     * Итоговая сортировка после «Поиска стабильных профилей» — по СКОРОСТИ,
-     * БЕЗУСЛОВНО (не под свитчом «авто-сортировка после теста»: тот свитч
-     * управляет прежним поведением обычного теста задержки).
+     * Действия на финише теста: авто-удаление недействительных профилей и
+     * итоговая сортировка. СКОУП обоих берётся из [TestFinishScopePolicy] и
+     * совпадает со скоупом измерения воркера — иначе на вкладке «Все» действия
+     * не выполнялись вовсе, а при активном фильтре удалялись ещё и НЕ измеренные
+     * в этом прогоне профили (потеря данных).
      *
-     * Используется готовая [AngConfigManager.sortBySpeedResultsForSub]: быстрые
-     * сверху, непроверенные (0) и неустойчивые (-1) — снизу. Выбор списков —
-     * чистая функция [WhitelistSortPolicy.targets] (доказывается JVM-тестом).
+     * Все три ветки авто-удаления используют ГОТОВЫЕ функции — ничего нового не
+     * изобретается:
+     *  - [TestFinishScopePolicy.InvalidCleanup.GUIDS] →
+     *    `MmkvManager.removeInvalidServer(guid)` по каждому измеренному guid
+     *    (функция сама удаляет только при `testDelayMillis < 0`);
+     *  - [TestFinishScopePolicy.InvalidCleanup.SUBSCRIPTION] →
+     *    [AngConfigManager.removeInvalidServer] (прежнее поведение);
+     *  - [TestFinishScopePolicy.InvalidCleanup.ALL] →
+     *    `MmkvManager.removeInvalidServer("")` — перебор всех записей, ровно как
+     *    пункт меню «Удалить недействительные» на вкладке «Все».
+     *
+     * Сортировка: обычный тест задержки — по пингу и только под свитчом
+     * [AppConfig.PREF_AUTO_SORT_AFTER_TEST] (прежнее поведение); «Поиск
+     * стабильных профилей» — по СКОРОСТИ и БЕЗУСЛОВНО (требование владельца
+     * 22.11.2026), потому что поиск заканчивается фазой скорости. Обе выполняются
+     * ДО отправки FINISH: UI перезагружает список по FINISH, значит новый порядок
+     * виден сразу, гонки нет.
+     *
+     * @param message сообщение запуска теста: из него берутся скоуп и подписка.
+     * @param isWhitelistSearch true — финиш «Поиска стабильных профилей».
      */
-    private fun sortAfterWhitelistSearch(subscriptionId: String) {
-        val targets = WhitelistSortPolicy.targets(
-            subscriptionId = subscriptionId,
+    private fun applyFinishActions(message: TestServiceMessage, isWhitelistSearch: Boolean) {
+        // Шаг 1: авто-удаление недействительных — только по свитчу (как и раньше).
+        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_AUTO_REMOVE_INVALID_AFTER_TEST, false)) {
+            val removed = when (
+                TestFinishScopePolicy.invalidCleanup(message.serverGuids, message.subscriptionId)
+            ) {
+                TestFinishScopePolicy.InvalidCleanup.GUIDS ->
+                    message.serverGuids.sumOf { MmkvManager.removeInvalidServer(it) }
+
+                TestFinishScopePolicy.InvalidCleanup.SUBSCRIPTION ->
+                    AngConfigManager.removeInvalidServer(message.subscriptionId)
+
+                TestFinishScopePolicy.InvalidCleanup.ALL ->
+                    MmkvManager.removeInvalidServer("")
+            }
+            LogUtil.i(
+                AppConfig.TAG,
+                "Auto-remove invalid after test: $removed profile(s) removed " +
+                    "(sub=${message.subscriptionId.ifEmpty { "all" }}, " +
+                    "guids=${message.serverGuids.size})"
+            )
+        }
+
+        // Шаг 2: итоговая сортировка. Скоуп списков общий для обоих видов теста.
+        val sortTargets = TestFinishScopePolicy.sortTargets(
+            subscriptionId = message.subscriptionId,
             subsList = MmkvManager.decodeSubsList(),
             defaultSubId = AppConfig.DEFAULT_SUBSCRIPTION_ID,
         )
-        targets.forEach { AngConfigManager.sortBySpeedResultsForSub(it) }
-        LogUtil.i(
-            AppConfig.TAG,
-            "Whitelist search finished: sorted by SPEED, ${targets.size} list(s)"
-        )
+        if (isWhitelistSearch) {
+            sortTargets.forEach { AngConfigManager.sortBySpeedResultsForSub(it) }
+            LogUtil.i(
+                AppConfig.TAG,
+                "Whitelist search finished: sorted by SPEED, ${sortTargets.size} list(s)"
+            )
+        } else if (MmkvManager.decodeSettingsBool(AppConfig.PREF_AUTO_SORT_AFTER_TEST, false)) {
+            sortTargets.forEach { AngConfigManager.sortByTestResultsForSub(it) }
+            LogUtil.i(
+                AppConfig.TAG,
+                "Delay test finished: sorted by PING, ${sortTargets.size} list(s)"
+            )
+        }
     }
 
     private fun handleMeasureCancel() {
