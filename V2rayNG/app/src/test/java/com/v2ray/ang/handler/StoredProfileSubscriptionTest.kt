@@ -54,11 +54,10 @@ class StoredProfileSubscriptionTest {
     }
 
     @Test
-    fun `empty subscription id is returned as is so caller falls back to default`() {
-        assertEquals(
-            "",
-            StoredProfileSubscription.fromProfileJson("""{"subscriptionId":""}"""),
-        )
+    fun `empty subscription id gives null so caller falls back to default`() {
+        // Пустая строка и null для вызывающего эквивалентны: getSubscriptionId
+        // приводит и то и другое к DEFAULT-подписке (прежнее поведение).
+        assertNull(StoredProfileSubscription.fromProfileJson("""{"subscriptionId":""}"""))
     }
 
     @Test

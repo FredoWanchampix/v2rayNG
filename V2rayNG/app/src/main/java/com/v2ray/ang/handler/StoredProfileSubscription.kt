@@ -1,6 +1,6 @@
 package com.v2ray.ang.handler
 
-import com.v2ray.ang.util.JsonUtil
+import org.json.JSONObject
 
 /**
  * Чтение идентификатора подписки ПРЯМО из сохранённого JSON профиля.
@@ -31,8 +31,12 @@ import com.v2ray.ang.util.JsonUtil
  *  - один guid принадлежит ровно одной подписке (в нескольких индексах — 0 случаев),
  *    поэтому подстановка найденной подписки не может задеть чужую группу.
  *
- * Чистая функция (только разбор JSON, без MMKV/Android) — доказывается JVM-тестом
- * StoredProfileSubscriptionTest.
+ * Чистая функция: только разбор JSON через org.json, без MMKV, без логирования и
+ * без Android-framework классов — поэтому доказуема JVM-тестом
+ * (StoredProfileSubscriptionTest). ВАЖНО: нельзя брать JsonUtil.parseString — он
+ * пишет ошибку через android.util.Log, который в unit-тестах не замокан и бросает
+ * IllegalStateException (вещдок: падение прогона 240 на шаге «Run unit tests»,
+ * «603 tests completed, 1 failed»).
  */
 object StoredProfileSubscription {
 
@@ -47,9 +51,21 @@ object StoredProfileSubscription {
      */
     fun fromProfileJson(profileJson: String?): String? {
         if (profileJson.isNullOrBlank()) return null
-        val obj = JsonUtil.parseString(profileJson) ?: return null
-        val element = obj.get(FIELD) ?: return null
-        if (element.isJsonNull || !element.isJsonPrimitive) return null
-        return element.asString
+        val obj = try {
+            JSONObject(profileJson)
+        } catch (_: Exception) {
+            // Нечитаемый JSON: прежнее поведение сохранено — вызывающий получит
+            // null и подставит DEFAULT-подписку.
+            return null
+        }
+        // optString НЕ подходит: для не-примитивного значения (вложенный объект или
+        // массив) org.json возвращает его JSON-текст, а не fallback — проверено
+        // прогоном настоящей библиотеки json-20250107 на JDK 21 (вещдок:
+        // optString на {"subscriptionId":{"nested":true}} вернул '{"nested":true}').
+        // Поэтому opt + явная проверка типа: строкой признаётся только примитив,
+        // JSONObject.NULL и всё прочее дают null -> DEFAULT-подписка как раньше.
+        val value = obj.opt(FIELD) ?: return null
+        if (value !is String) return null
+        return value.ifEmpty { null }
     }
 }
